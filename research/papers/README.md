@@ -5,7 +5,7 @@
 Kaunitz, L., Zhong, S., & Kreiner, J.
 "Beating the Bookies with Their Own Numbers — and How the Online Sports Betting Market Is Rigged"
 
-## Original research repository
+### Original research repository
 
 The authors' original implementation/research code:
 
