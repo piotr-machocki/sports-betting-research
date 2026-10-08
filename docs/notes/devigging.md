@@ -1,12 +1,59 @@
-The Favorite-Longshot Bias (The Most Common Method)
+## Proportional normalization (Multiplicative method)
 
-In reality, bookmakers know human psychology. Casual bettors love placing small amounts of money on massive underdogs for a dream payout. Because of this, sportsbooks frequently load way more juice onto the underdog and leave the favorite closer to its "fair" price.
+Proportional normalization is the baseline devigging method used in this project. It assumes that the bookmaker's overround is distributed proportionally across the implied probabilities.
 
-Proportional normalization relies on the assumption that the juice is distributed evenly relative to the odds. It works on Pinnacle because:
-• Low Margins: Pinnacle operates on tight margins (often 2% to 4% on main tennis markets). When the overround is this small, the difference between proportional normalization and more complex models is mathematically negligible.
-• Sharp Pricing: Unlike casual "soft" books, Pinnacle relies on accurate lines to attract heavy, sharp volume. They do not heavily distort their underdogs just to exploit casual public biases
+For decimal odds \(o_i\), the raw implied probability is:
 
-The One Exception: Heavy Longshots
+$$
+q_i = \frac{1}{o_i}
+$$
 
-While proportional normalization is excellent for close matches and moderate favorites, it struggles when there is an extreme talent disparity (e.g., Round 1 at a Grand Slam where a favorite is 1.05 and the underdog is 11.00).
-In those extreme cases, sportsbooks tend to use Shin's method or the Odds Ratio (OR) method because public psychological bias forces more risk onto the heavy underdog. If you use proportional normalization on a 11.00 underdog, you will slightly overestimate the underdog's true chance of winning.
+The devigged probability is then:
+
+$$
+p_i = \frac{q_i}{\sum_j q_j}
+$$
+
+For a two-way market, the resulting probabilities sum to 1.
+
+### Why start with it?
+
+Proportional normalization is simple, transparent, and provides a useful baseline for comparing more complex devigging models.
+
+Pinnacle is also known for operating with relatively low margins on major markets. When the overround is small, different reasonable margin-removal methods can produce relatively similar estimates, particularly when the market is not highly asymmetric.
+
+However, proportional normalization makes a strong assumption: that the bookmaker's margin is distributed proportionally across the outcomes. There is no reason to assume that this must always be true.
+
+## Favorite-longshot bias
+
+One reason to test alternative methods is the possibility of a favorite-longshot bias (FLB).
+
+If the bookmaker's margin is not distributed proportionally, proportional normalization can produce systematically different estimates for favorites and longshots. This becomes particularly relevant when the probabilities of the outcomes are highly asymmetric.
+
+For example, consider a tennis match priced at approximately 1.05 versus 11.00. The proportional method distributes the overround according to the implied probabilities, but another devigging model may assign a different share of the margin to the favorite and the longshot.
+
+Rather than assuming in advance which method is most accurate, this project will test whether these differences are meaningful for the betting strategy.
+
+## Alternative approaches
+
+| Method                                          | Role                                      |
+| ----------------------------------------------- | ----------------------------------------- |
+| **Multiplicative / proportional normalization** | Baseline                                  |
+| **Power method**                                | Alternative                               |
+| **Shin method**                                 | Alternative                               |
+| **Odds Ratio / MPTO**                           | Potentially important for Pinnacle tennis |
+| **Logarithmic method**                          | Additional comparison                     |
+
+The Power and Shin methods provide alternative assumptions about how the bookmaker's margin is distributed. Odds Ratio and MPTO are particularly interesting to investigate because they have been studied in the context of estimating true probabilities from bookmaker odds, including tennis markets.
+
+## Testing
+
+The project will initially use proportional normalization to calculate the reference probabilities from Pinnacle.
+
+The alternative methods will then be implemented and compared to determine whether the choice of devigging model materially changes the resulting probabilities and EV signals when comparing Pinnacle with Betclic.
+
+The key research question is:
+
+> **Does the choice of devigging method materially change the EV opportunities identified by the Pinnacle → Betclic comparison?**
+
+Rather than assuming that one method is universally superior, the project will evaluate their differences empirically.
