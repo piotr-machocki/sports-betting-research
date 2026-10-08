@@ -27,6 +27,8 @@ data/
 *.sqlite
 *.sqlite3
 
-# Research papers
-research/papers/*
-!research/papers/README.md
+# Private bookmaker integrations
+src/betting/books/
+
+# Private research
+research/
