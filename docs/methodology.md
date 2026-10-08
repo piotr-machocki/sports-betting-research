@@ -2,7 +2,7 @@
 
 The initial implementation will use **proportional normalization** to remove the bookmaker margin from two-way tennis match-winner markets.
 
-For decimal odds ($o_i$), the raw implied probability is:
+For decimal odds \(o_i\), the raw implied probability is:
 
 $$
 q_i = \frac{1}{o_i}
@@ -26,4 +26,4 @@ $$
 
 This will serve as the baseline devigging method for the research phase.
 
-The methodology will later be compared against alternative approaches, particularly the **power method** and **Shin's method**.
+The baseline will later be compared with alternative approaches, particularly the **Power method** and **Shin's method**, to determine whether the choice of devigging method affects the resulting probabilities and EV signals.
