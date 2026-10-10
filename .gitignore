@@ -21,11 +21,13 @@ build/
 dist/
 *.egg-info/
 
-# Local data / databases
-data/
+# databases
 *.db
 *.sqlite
 *.sqlite3
+
+# Scraped betting data
+data/
 
 # Private bookmaker integrations
 src/betting/books/
