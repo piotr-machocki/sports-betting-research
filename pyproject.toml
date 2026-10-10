@@ -3,9 +3,12 @@ name = "sports-betting-research"
 version = "0.1.0"
 description = "Research and implementation of sports betting value and arbitrage strategies"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+"beautifulsoup4>=4.12",
+"playwright>=1.50",
+]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
+"pytest>=8.0",
 ]
