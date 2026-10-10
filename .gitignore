@@ -29,6 +29,11 @@ data/
 
 # Private bookmaker integrations
 src/betting/books/
+test_betclic.py
+test_pinnacle.py
 
 # Private research
 research/
+
+# Private Todo list
+TODO
