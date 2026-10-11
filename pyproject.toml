@@ -4,11 +4,13 @@ version = "0.1.0"
 description = "Research and implementation of sports betting value and arbitrage strategies"
 requires-python = ">=3.12"
 dependencies = [
-"beautifulsoup4>=4.12",
-"playwright>=1.50",
+    "beautifulsoup4>=4.12",
+    "playwright>=1.50",
+    "python-dotenv>=1.0",
+    "requests>=2.31",
 ]
 
 [project.optional-dependencies]
 dev = [
-"pytest>=8.0",
+    "pytest>=8.0",
 ]
