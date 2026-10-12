@@ -439,6 +439,22 @@ def md_table(rows, min_ev):
     return html_table(headers, body, aligns)
 
 
+def legend_md(args) -> list[str]:
+    """Small 'Legend' heading + one row per colour. Thresholds come from args."""
+    t = f"{args.min_ev * 100:g}%"
+    return [
+        "### Legend",
+        "",
+        f"- 🟢 EV >= {t} and data age <= {args.max_age:g} min (signal)",
+        f"- 🟡 EV between 0% and {t}, or EV >= {t} but data older than {args.max_age:g} min",
+        "- 🔴 EV < 0%",
+        "",
+        "**Bold player** = the side the odds and EV in that row refer to. "
+        "Margin = overround of the two-way market (1/o1 + 1/o2 - 1).",
+        "",
+    ]
+
+
 def build_report(rows, stats, args, generated_at):
     signals = [r for r in rows if r["ev"] >= args.min_ev and not r["stale"]]
     parts = [
@@ -450,10 +466,7 @@ def build_report(rows, stats, args, generated_at):
         "",
         summary_md(summary_items(rows, stats, args)),
         "",
-        "Legend: 🟢 signal, 🟡 EV >= 0 but below threshold or stale, 🔴 negative EV. "
-        "**Bold player** = the side the odds and EV in that row refer to. "
-        "Margin = overround of the two-way market (1/o1 + 1/o2 - 1).",
-        "",
+        *legend_md(args),
         "## Signals",
         "",
         md_table(signals, args.min_ev) if signals else "_No signals above the threshold._",
