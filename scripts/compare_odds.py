@@ -16,12 +16,16 @@ Matching is done against ALL Betclic rows; matches that are live on Betclic are
 dropped only afterwards (unless --include-live) and listed separately in the
 report, so they do not show up as "without a Betclic pair".
 
+The report tables are HTML (Markdown has no syntax for vertical grid lines),
+so they render with a full grid in a Markdown preview.
+
 Usage:  python scripts/compare_odds.py [--include-live] [--min-ev 0.02]
                                         [--max-age 15] [--top 20]
                                         [--color auto|always|never]
 """
 import argparse
 import csv
+import html
 import io
 import os
 import re
@@ -215,6 +219,9 @@ def ev_rows(matches, max_age):
         bet_odds = (b["odds1"], b["odds2"]) if order == "straight" else (b["odds2"], b["odds1"])
         age_min = abs((p["ts"] - b["ts"]).total_seconds()) / 60
         tour_ok = tournaments_agree(p["tournament"], b["tournament"])
+        # Margin (overround) = sum of raw implied probabilities - 1.
+        pin_margin = 1 / p["odds1"] + 1 / p["odds2"] - 1
+        bet_margin = 1 / bet_odds[0] + 1 / bet_odds[1] - 1
         for side in (0, 1):
             out.append({
                 "ev": calculate_ev(probs[side], bet_odds[side]),
@@ -222,6 +229,8 @@ def ev_rows(matches, max_age):
                 "opponent": (p["player2"], p["player1"])[side],
                 "betclic_odds": bet_odds[side],
                 "pinnacle_odds": (p["odds1"], p["odds2"])[side],
+                "pinnacle_margin": pin_margin,
+                "betclic_margin": bet_margin,
                 "p_ref": probs[side],
                 "tournament": p["tournament"],
                 "doubles": p["t1"].is_double,
@@ -246,6 +255,36 @@ def fmt_odds(x: float) -> str:
     s = f"{x:.4f}".rstrip("0")
     whole, dec = s.split(".")
     return f"{whole}.{dec.ljust(2, '0')}"
+
+
+def fmt_age(minutes: float) -> str:
+    """Data age: seconds when < 1 min, then min + s, then h + min."""
+    s = round(minutes * 60)
+    if s < 60:
+        return f"{s} s"
+    if s < 3600:
+        return f"{s // 60} min {s % 60:02d} s"
+    return f"{s // 3600} h {s % 3600 // 60:02d} min"
+
+
+def fmt_pct(x: float) -> str:
+    return f"{x * 100:.2f}%"
+
+
+CELL_STYLE = "border:1px solid #888;padding:4px 8px;"
+
+
+def html_table(headers: list[str], rows: list[list[str]], aligns: list[str]) -> str:
+    """HTML table with a full grid. Cells must already be escaped."""
+    def cell(tag: str, text: str, align: str) -> str:
+        return f'<{tag} align="{align}" style="{CELL_STYLE}text-align:{align}">{text}</{tag}>'
+
+    out = ['<table border="1" cellspacing="0" style="border-collapse:collapse">']
+    out.append("<tr>" + "".join(cell("th", h, a) for h, a in zip(headers, aligns)) + "</tr>")
+    for row in rows:
+        out.append("<tr>" + "".join(cell("td", c, a) for c, a in zip(row, aligns)) + "</tr>")
+    out.append("</table>")
+    return "\n".join(out)
 
 
 # ---------- colours ----------
@@ -304,7 +343,7 @@ def summary_items(rows, stats, args) -> list[tuple[str, str]]:
         ("Ambiguous", str(stats["ambiguous"])),
         ("Sides with EV > 0", f"{sum(r['ev'] > 0 for r in rows)} / {len(rows)}"),
         (f"Signals (EV >= {args.min_ev * 100:.1f}%, age <= {args.max_age:g} min)", str(len(signals))),
-        ("Data age min / max", f"{min(ages, default=0):.1f} / {max(ages, default=0):.1f} min"),
+        ("Data age min / max", f"{fmt_age(min(ages, default=0))} / {fmt_age(max(ages, default=0))}"),
         (f"Stale sides (> {args.max_age:g} min)", str(sum(r["stale"] for r in rows))),
     ]
 
@@ -321,14 +360,17 @@ def summary_terminal(items: list[tuple[str, str]]) -> str:
 
 
 def summary_md(items: list[tuple[str, str]]) -> str:
-    out = ["| Metric | Value |", "|---|---|"]
-    out += [f"| {k} | {v} |" for k, v in items]
-    return "\n".join(out)
+    return html_table(
+        ["Metric", "Value"],
+        [[html.escape(k), html.escape(v)] for k, v in items],
+        ["left", "left"],
+    )
 
 
 # ---------- tables ----------
 
 PW = 26  # name column width
+AW = 11  # age column width in the terminal table ("59 min 59 s")
 
 
 def flag_list(r: dict, ascii_only: bool) -> list[str]:
@@ -347,7 +389,7 @@ def terminal_table(rows, top, min_ev):
     odds, P(ref) and EV in that row all refer to him; the opponent is dimmed."""
     header = (
         f"{'#':>3}  {'BET ON':<{PW}} {'Betclic':>7} {'Pinnacle':>8} {'P(ref)':>7} {'EV':>8}  "
-        f"{'OPPONENT':<{PW + 3}} {'Age':>4}"
+        f"{'OPPONENT':<{PW + 3}} {'Age':>{AW}}"
     )
     lines = [paint(header, "1"), "-" * len(header)]
     for i, r in enumerate(rows[:top], 1):
@@ -358,7 +400,7 @@ def terminal_table(rows, top, min_ev):
         stale = "".join(" " + paint(f, *flag_style[f]) for f in flag_list(r, True))
         lines.append(
             f"{i:>3}  {player} {fmt_odds(r['betclic_odds']):>7} {fmt_odds(r['pinnacle_odds']):>8} "
-            f"{r['p_ref'] * 100:>6.2f}% {ev}  {opp} {r['age_min']:>3.0f}m{stale}"
+            f"{r['p_ref'] * 100:>6.2f}% {ev}  {opp} {fmt_age(r['age_min']):>{AW}}{stale}"
         )
     if len(rows) > top:
         lines.append(f"... {len(rows) - top} more rows in the CSV / report")
@@ -374,17 +416,27 @@ def terminal_table(rows, top, min_ev):
 
 
 def md_table(rows, min_ev):
-    out = [
-        "| # | EV | Bet on | Betclic | Pinnacle | P(ref) | Opponent | Data age | Tournament | Flags |",
-        "|--:|--:|---|--:|--:|--:|---|--:|---|---|",
-    ]
+    headers = ["#", "EV", "Bet on", "Betclic", "Pinnacle", "Margin Pinnacle",
+               "Margin Betclic", "P(ref)", "Opponent", "Data age", "Tournament", "Flags"]
+    aligns = ["right", "right", "left", "right", "right", "right",
+              "right", "right", "left", "right", "left", "left"]
+    body = []
     for i, r in enumerate(rows, 1):
-        out.append(
-            f"| {i} | {ev_icon(r, min_ev)} {r['ev'] * 100:+.2f}% | **{r['player']}** | "
-            f"{fmt_odds(r['betclic_odds'])} | {fmt_odds(r['pinnacle_odds'])} | {r['p_ref'] * 100:.2f}% | "
-            f"{r['opponent']} | {r['age_min']:.0f} min | {r['tournament'] or ''} | {', '.join(flag_list(r, False))} |"
-        )
-    return "\n".join(out)
+        body.append([
+            str(i),
+            f"{ev_icon(r, min_ev)} {r['ev'] * 100:+.2f}%",
+            f"<b>{html.escape(r['player'])}</b>",
+            fmt_odds(r["betclic_odds"]),
+            fmt_odds(r["pinnacle_odds"]),
+            fmt_pct(r["pinnacle_margin"]),
+            fmt_pct(r["betclic_margin"]),
+            fmt_pct(r["p_ref"]),
+            html.escape(r["opponent"]),
+            fmt_age(r["age_min"]),
+            html.escape(r["tournament"] or ""),
+            html.escape(", ".join(flag_list(r, False))),
+        ])
+    return html_table(headers, body, aligns)
 
 
 def build_report(rows, stats, args, generated_at):
@@ -399,7 +451,8 @@ def build_report(rows, stats, args, generated_at):
         summary_md(summary_items(rows, stats, args)),
         "",
         "Legend: 🟢 signal, 🟡 EV >= 0 but below threshold or stale, 🔴 negative EV. "
-        "**Bold player** = the side the odds and EV in that row refer to.",
+        "**Bold player** = the side the odds and EV in that row refer to. "
+        "Margin = overround of the two-way market (1/o1 + 1/o2 - 1).",
         "",
         "## Signals",
         "",
@@ -510,7 +563,8 @@ def main():
     now = datetime.now(timezone.utc)
     stamp = now.strftime("%Y%m%dT%H%M%SZ")
 
-    fields = ["ev", "player", "opponent", "betclic_odds", "pinnacle_odds", "p_ref",
+    fields = ["ev", "player", "opponent", "betclic_odds", "pinnacle_odds",
+              "pinnacle_margin", "betclic_margin", "p_ref",
               "tournament", "betclic_tournament", "doubles", "match_type", "tournament_match",
               "verified", "betclic_name",
               "pinnacle_captured_at", "betclic_captured_at", "age_min", "stale"]
