@@ -6,12 +6,24 @@ sides of every matched match, prints a table sorted from best to worst EV and
 appends a full-precision CSV to data/results/history/ (skipped when identical
 to the newest entry) and overwrites data/results/latest_report.md.
 
+Names decide the match (exact, then loose). Tournaments are only an extra
+confidence signal: a match is "verified" when the names match exactly, or loosely
+AND the tournaments share a meaningful token. Unverified loose matches are
+flagged CHECK and listed in the report. Tournament names are normalized with
+the Polish->English city dictionary in src/betting/tournament_names.py.
+
+Matching is done against ALL Betclic rows; matches that are live on Betclic are
+dropped only afterwards (unless --include-live) and listed separately in the
+report, so they do not show up as "without a Betclic pair".
+
 Usage:  python scripts/compare_odds.py [--include-live] [--min-ev 0.02]
                                         [--max-age 15] [--top 20]
+                                        [--color auto|always|never]
 """
 import argparse
 import csv
 import io
+import os
 import re
 import sys
 import unicodedata
@@ -23,6 +35,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from betting.margin import remove_margin  # noqa: E402
+from betting.tournament_names import CITY_ALIASES, TOURNAMENT_STOPWORDS  # noqa: E402
 from betting.value import calculate_ev  # noqa: E402
 
 PINNACLE_CSV = ROOT / "data" / "pinnacle" / "odds.csv"
@@ -34,13 +47,27 @@ LATEST_REPORT = RESULTS_DIR / "latest_report.md"  # always overwritten
 
 # ---------- name normalization ----------
 
+def ascii_lower(s: str) -> str:
+    s = s.replace("ł", "l").replace("Ł", "L").replace("đ", "d").replace("ø", "o")
+    s = unicodedata.normalize("NFKD", s)
+    return "".join(c for c in s if not unicodedata.combining(c)).lower()
+
+
+def collapse(s: str) -> str:
+    """Fold German-style digraphs so Moeller == Moller (loose matching only)."""
+    return re.sub(r"([aou])e", r"\1", s)
+
+
 class Player:
     """Common form of a player name.
 
-    initial - first letter of the first name
-    sq      - name squashed to letters only, no spaces/hyphens/diacritics
-              ("Learner Tien" and "LearnerTien" -> "learnertien")
-    last    - last token of the name (used for loose matching)
+    initial  - first letter of the first name
+    initials - first letters of all name tokens (loose matching: the other
+               side may have extra given names, "Maria Camila Osorio Serrano")
+    sq       - name squashed to letters only, no spaces/hyphens/diacritics
+               ("Learner Tien" and "LearnerTien" -> "learnertien")
+    last     - last token of the name (used for loose matching)
+    sq_c / last_c - sq / last with ae/oe/ue folded (loose matching only)
     """
 
     def __init__(self, raw: str):
@@ -56,12 +83,9 @@ class Player:
             body = tokens
         self.sq = "".join(body)
         self.last = body[-1]
-
-
-def ascii_lower(s: str) -> str:
-    s = s.replace("ł", "l").replace("Ł", "L").replace("đ", "d").replace("ø", "o")
-    s = unicodedata.normalize("NFKD", s)
-    return "".join(c for c in s if not unicodedata.combining(c)).lower()
+        self.initials = {t[0] for t in body} | {self.initial}
+        self.sq_c = collapse(self.sq)
+        self.last_c = collapse(self.last)
 
 
 class Team:
@@ -74,9 +98,14 @@ class Team:
 def player_eq(a: Player, b: Player, exact: bool) -> bool:
     if exact:
         return a.sq == b.sq
-    # loose: same first-name initial and one surname contained in the other name
-    # ("Thiago Seyboth Wild" ~ "ThiagoWild", "Joao Dinis Silva" ~ "Joao Silva")
-    return a.initial == b.initial and (a.last in b.sq or b.last in a.sq)
+    # loose: first-name initial matches any token of the other name and one
+    # surname is contained in the other name
+    # ("Thiago Seyboth Wild" ~ "ThiagoWild", "Camila Osorio" ~ "Maria Camila Osorio Serrano",
+    #  "Moller" ~ "Moeller")
+    return (
+        (a.initial in b.initials or b.initial in a.initials)
+        and (a.last_c in b.sq_c or b.last_c in a.sq_c)
+    )
 
 
 def team_eq(a: Team, b: Team, exact: bool) -> bool:
@@ -101,6 +130,31 @@ def match_order(p1, p2, b1, b2, exact):
     return None
 
 
+# ---------- tournament normalization ----------
+
+def tournament_tokens(raw) -> set[str]:
+    """Meaningful tokens of a tournament name: no generic words, no ITF grade
+    (M25/W50), no short filler (di/de), Polish city names mapped to English."""
+    if not raw:
+        return set()
+    out = set()
+    for t in re.findall(r"[a-z0-9]+", ascii_lower(raw)):
+        if t in TOURNAMENT_STOPWORDS or len(t) < 3 or re.fullmatch(r"[mw]?\d+", t):
+            continue
+        out.update(CITY_ALIASES.get(t, t).split())
+    return out
+
+
+def tournaments_agree(a, b) -> bool:
+    """True when both names have meaningful tokens and share at least one.
+    Unknown/empty tournament -> False (we cannot confirm)."""
+    return bool(tournament_tokens(a) & tournament_tokens(b))
+
+
+def is_verified(p, b, tier) -> bool:
+    return tier == "exact" or tournaments_agree(p["tournament"], b["tournament"])
+
+
 # ---------- io ----------
 
 def read_rows(path: Path) -> list[dict]:
@@ -116,7 +170,7 @@ def read_rows(path: Path) -> list[dict]:
 # ---------- matching ----------
 
 def match_books(pin_rows, bet_rows):
-    """Return (matches, unmatched_pinnacle, ambiguous)."""
+    """Return (matches, unmatched_pinnacle, ambiguous, unmatched_betclic)."""
     used = set()
     matches, unmatched, ambiguous = [], [], []
 
@@ -135,7 +189,14 @@ def match_books(pin_rows, bet_rows):
         if not found:
             unmatched.append(p)
         elif len(found) > 1:
-            ambiguous.append((p, found))
+            # several candidates: let the tournament break the tie
+            narrowed = [f for f in found if tournaments_agree(p["tournament"], f[1]["tournament"])]
+            if len(narrowed) == 1:
+                i, b, order, tier = narrowed[0]
+                used.add(i)
+                matches.append((p, b, order, tier))
+            else:
+                ambiguous.append((p, found))
         else:
             i, b, order, tier = found[0]
             used.add(i)
@@ -153,6 +214,7 @@ def ev_rows(matches, max_age):
         probs = remove_margin([p["odds1"], p["odds2"]])
         bet_odds = (b["odds1"], b["odds2"]) if order == "straight" else (b["odds2"], b["odds1"])
         age_min = abs((p["ts"] - b["ts"]).total_seconds()) / 60
+        tour_ok = tournaments_agree(p["tournament"], b["tournament"])
         for side in (0, 1):
             out.append({
                 "ev": calculate_ev(probs[side], bet_odds[side]),
@@ -164,6 +226,9 @@ def ev_rows(matches, max_age):
                 "tournament": p["tournament"],
                 "doubles": p["t1"].is_double,
                 "match_type": tier,
+                "tournament_match": tour_ok,
+                "verified": tier == "exact" or tour_ok,
+                "betclic_tournament": b["tournament"],
                 "betclic_name": (b["player1"], b["player2"])[side if order == "straight" else 1 - side],
                 "pinnacle_captured_at": p["captured_at"],
                 "betclic_captured_at": b["captured_at"],
@@ -183,39 +248,147 @@ def fmt_odds(x: float) -> str:
     return f"{whole}.{dec.ljust(2, '0')}"
 
 
-def terminal_table(rows, top):
-    lines = [
-        f"{'#':>3} {'EV':>8} {'Betclic':>8} {'Pinnacle':>9} {'P(ref)':>8}  {'Player':<30} {'Opponent':<30} {'Age':>4}",
-        "-" * 108,
+# ---------- colours ----------
+
+class Style:
+    enabled = False
+
+
+def setup_color(mode: str) -> None:
+    """mode: auto (tty only, honours NO_COLOR), always, never."""
+    if mode == "always":
+        Style.enabled = True
+    elif mode == "never":
+        Style.enabled = False
+    else:
+        Style.enabled = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+    if Style.enabled and os.name == "nt":
+        os.system("")  # enables ANSI escape codes in Windows 10+ consoles
+
+
+def paint(text: str, *codes: str) -> str:
+    """Wrap already-padded text in ANSI codes (pad first, colour second)."""
+    if not Style.enabled or not codes:
+        return text
+    return f"\033[{';'.join(codes)}m{text}\033[0m"
+
+
+def ev_style(r: dict, min_ev: float) -> tuple[str, ...]:
+    if r["ev"] < 0:
+        return ("31",)             # red: negative EV
+    if r["ev"] >= min_ev and not r["stale"]:
+        return ("1", "32")         # bold green: signal
+    return ("33",)                 # yellow: positive but below threshold / stale
+
+
+def ev_icon(r: dict, min_ev: float) -> str:
+    if r["ev"] < 0:
+        return "🔴"
+    if r["ev"] >= min_ev and not r["stale"]:
+        return "🟢"
+    return "🟡"
+
+
+# ---------- summary ----------
+
+def summary_items(rows, stats, args) -> list[tuple[str, str]]:
+    signals = [r for r in rows if r["ev"] >= args.min_ev and not r["stale"]]
+    ages = [r["age_min"] for r in rows]
+    return [
+        ("Pinnacle rows", str(stats["pin"])),
+        ("Betclic rows", str(stats["bet_all"])),
+        ("Matched matches", f"{stats['matched']} (exact {stats['exact']}, loose {stats['loose']})"),
+        ("Matches to verify (loose, tournament differs)", str(len(stats["to_check"]))),
+        ("Skipped (live on Betclic)", str(len(stats["live_skipped"]))),
+        ("Unmatched Pinnacle", str(stats["unmatched"])),
+        ("Ambiguous", str(stats["ambiguous"])),
+        ("Sides with EV > 0", f"{sum(r['ev'] > 0 for r in rows)} / {len(rows)}"),
+        (f"Signals (EV >= {args.min_ev * 100:.1f}%, age <= {args.max_age:g} min)", str(len(signals))),
+        ("Data age min / max", f"{min(ages, default=0):.1f} / {max(ages, default=0):.1f} min"),
+        (f"Stale sides (> {args.max_age:g} min)", str(sum(r["stale"] for r in rows))),
     ]
-    for i, r in enumerate(rows[:top], 1):
-        lines.append(
-            f"{i:>3} {r['ev'] * 100:>+7.2f}% {fmt_odds(r['betclic_odds']):>8} {fmt_odds(r['pinnacle_odds']):>9} "
-            f"{r['p_ref'] * 100:>7.2f}%  {r['player'][:30]:<30} {r['opponent'][:30]:<30} {r['age_min']:>3.0f}m"
-        )
-    if len(rows) > top:
-        lines.append(f"... {len(rows) - top} more rows in the CSV / report")
+
+
+def summary_terminal(items: list[tuple[str, str]]) -> str:
+    kw = max(len(k) for k, _ in items)
+    vw = max(len(v) for _, v in items)
+    sep = "+-" + "-" * kw + "-+-" + "-" * vw + "-+"
+    lines = [sep, f"| {paint('Metric'.ljust(kw), '1')} | {paint('Value'.ljust(vw), '1')} |", sep]
+    for k, v in items:
+        lines.append(f"| {k.ljust(kw)} | {v.ljust(vw)} |")
+    lines.append(sep)
     return "\n".join(lines)
 
 
-def md_table(rows):
+def summary_md(items: list[tuple[str, str]]) -> str:
+    out = ["| Metric | Value |", "|---|---|"]
+    out += [f"| {k} | {v} |" for k, v in items]
+    return "\n".join(out)
+
+
+# ---------- tables ----------
+
+PW = 26  # name column width
+
+
+def flag_list(r: dict, ascii_only: bool) -> list[str]:
+    flags = []
+    if not r["verified"]:
+        flags.append("CHECK" if ascii_only else "⚠ check")
+    if r["stale"]:
+        flags.append("STALE")
+    if r["doubles"]:
+        flags.append("doubles")
+    return flags
+
+
+def terminal_table(rows, top, min_ev):
+    """One row = one side of a match. The BET ON player is highlighted: the
+    odds, P(ref) and EV in that row all refer to him; the opponent is dimmed."""
+    header = (
+        f"{'#':>3}  {'BET ON':<{PW}} {'Betclic':>7} {'Pinnacle':>8} {'P(ref)':>7} {'EV':>8}  "
+        f"{'OPPONENT':<{PW + 3}} {'Age':>4}"
+    )
+    lines = [paint(header, "1"), "-" * len(header)]
+    for i, r in enumerate(rows[:top], 1):
+        player = paint(f"{r['player'][:PW]:<{PW}}", "1", "36")          # bold cyan
+        ev = paint(f"{r['ev'] * 100:>+7.2f}%", *ev_style(r, min_ev))
+        opp = paint(f"vs {r['opponent'][:PW]:<{PW}}", "2")              # dim
+        flag_style = {"CHECK": ("1", "33"), "STALE": ("31",), "doubles": ("2",)}
+        stale = "".join(" " + paint(f, *flag_style[f]) for f in flag_list(r, True))
+        lines.append(
+            f"{i:>3}  {player} {fmt_odds(r['betclic_odds']):>7} {fmt_odds(r['pinnacle_odds']):>8} "
+            f"{r['p_ref'] * 100:>6.2f}% {ev}  {opp} {r['age_min']:>3.0f}m{stale}"
+        )
+    if len(rows) > top:
+        lines.append(f"... {len(rows) - top} more rows in the CSV / report")
+    lines.append(
+        "Legend: "
+        + paint("BET ON", "1", "36") + " = player the odds/EV in the row refer to | "
+        + paint("green", "1", "32") + " = signal | "
+        + paint("yellow", "33") + " = EV >= 0, below threshold | "
+        + paint("red", "31") + " = negative EV | "
+        + paint("CHECK", "1", "33") + " = loose name match, tournament not confirmed, verify by hand"
+    )
+    return "\n".join(lines)
+
+
+def md_table(rows, min_ev):
     out = [
-        "| # | EV | Player | Opponent | Betclic | Pinnacle | P(ref) | Data age | Match | Tournament |",
-        "|--:|--:|---|---|--:|--:|--:|--:|---|---|",
+        "| # | EV | Bet on | Betclic | Pinnacle | P(ref) | Opponent | Data age | Tournament | Flags |",
+        "|--:|--:|---|--:|--:|--:|---|--:|---|---|",
     ]
     for i, r in enumerate(rows, 1):
-        flags = r["match_type"] + (", doubles" if r["doubles"] else "") + (", STALE" if r["stale"] else "")
         out.append(
-            f"| {i} | {r['ev'] * 100:+.2f}% | {r['player']} | {r['opponent']} | {fmt_odds(r['betclic_odds'])} | "
-            f"{fmt_odds(r['pinnacle_odds'])} | {r['p_ref'] * 100:.2f}% | {r['age_min']:.0f} min | {flags} | {r['tournament'] or ''} |"
+            f"| {i} | {ev_icon(r, min_ev)} {r['ev'] * 100:+.2f}% | **{r['player']}** | "
+            f"{fmt_odds(r['betclic_odds'])} | {fmt_odds(r['pinnacle_odds'])} | {r['p_ref'] * 100:.2f}% | "
+            f"{r['opponent']} | {r['age_min']:.0f} min | {r['tournament'] or ''} | {', '.join(flag_list(r, False))} |"
         )
     return "\n".join(out)
 
 
 def build_report(rows, stats, args, generated_at):
     signals = [r for r in rows if r["ev"] >= args.min_ev and not r["stale"]]
-    positive = [r for r in rows if r["ev"] > 0]
-    ages = [r["age_min"] for r in rows]
     parts = [
         "# Pinnacle -> Betclic EV report",
         "",
@@ -223,21 +396,37 @@ def build_report(rows, stats, args, generated_at):
         "",
         "## Summary",
         "",
-        f"- Pinnacle rows: {stats['pin']}, Betclic rows: {stats['bet_all']} (after live filter: {stats['bet']})",
-        f"- Matched matches: {stats['matched']} (exact: {stats['exact']}, loose: {stats['loose']})",
-        f"- Unmatched Pinnacle: {stats['unmatched']}, ambiguous: {stats['ambiguous']}",
-        f"- Sides with EV > 0: {len(positive)} / {len(rows)}",
-        f"- Signals (EV >= {args.min_ev * 100:.1f}% and data age <= {args.max_age:g} min): {len(signals)}",
-        f"- Data age between snapshots: min {min(ages, default=0):.1f}, max {max(ages, default=0):.1f} min "
-        f"(stale = older than {args.max_age:g} min: {sum(r['stale'] for r in rows)} sides)",
+        summary_md(summary_items(rows, stats, args)),
+        "",
+        "Legend: 🟢 signal, 🟡 EV >= 0 but below threshold or stale, 🔴 negative EV. "
+        "**Bold player** = the side the odds and EV in that row refer to.",
         "",
         "## Signals",
         "",
-        md_table(signals) if signals else "_No signals above the threshold._",
+        md_table(signals, args.min_ev) if signals else "_No signals above the threshold._",
         "",
         "## All matched sides (best to worst EV)",
         "",
-        md_table(rows) if rows else "_No matches._",
+        md_table(rows, args.min_ev) if rows else "_No matches._",
+        "",
+        "## Matches to verify manually (loose name match, tournament not confirmed)",
+        "",
+    ]
+    parts += [
+        f"- {p['player1']} vs {p['player2']} ({p['tournament']}) <-> "
+        f"{b['player1']} vs {b['player2']} ({b['tournament']})"
+        for p, b, _order, _tier in stats["to_check"]
+    ] or ["_None._"]
+    parts += [
+        "",
+        "_If the same tournament shows up here with different names, add its city to `src/betting/tournament_names.py`._",
+        "",
+        "## Pinnacle matches skipped (live on Betclic)",
+        "",
+    ]
+    parts += [f"- {p['player1']} vs {p['player2']} ({p['tournament']})"
+              for p, *_ in stats["live_skipped"]] or ["_None._"]
+    parts += [
         "",
         "## Pinnacle matches without a Betclic pair",
         "",
@@ -247,7 +436,7 @@ def build_report(rows, stats, args, generated_at):
         "",
         "## Caveats",
         "",
-        "- Loose matches (`match` column) were paired by initial + surname and should be verified by hand.",
+        "- Rows flagged `⚠ check` were paired by loose name matching and their tournaments could not be matched; verify them by hand (see the section above).",
         "- Only prematch match-winner markets are compared; Betclic live rows are dropped unless `--include-live`.",
         "- Positive EV against a devigged Pinnacle line is an estimate, not a guaranteed edge.",
         "",
@@ -284,44 +473,54 @@ def save_history(rows: list[dict], fields: list[str], stamp: str):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--include-live", action="store_true",
-                    help="keep Betclic rows marked live (default: drop them)")
+                    help="keep Betclic rows marked live (default: drop them after matching)")
     ap.add_argument("--min-ev", type=float, default=0.02, help="EV threshold, default 0.02")
     ap.add_argument("--max-age", type=float, default=15.0,
                     help="max minutes between the two snapshots for a signal, default 15")
+    ap.add_argument("--color", choices=["auto", "always", "never"], default="auto",
+                    help="ANSI colours in the terminal table, default auto (tty only, honours NO_COLOR)")
     ap.add_argument("--top", type=int, default=20, help="rows in the terminal table, default 20")
     args = ap.parse_args()
+    setup_color(args.color)
 
     pin = read_rows(PINNACLE_CSV)
     bet_all = read_rows(BETCLIC_CSV)
-    bet = bet_all if args.include_live else [b for b in bet_all if b["status"] != "live"]
 
-    matches, unmatched, ambiguous, _ = match_books(pin, bet)
+    # Match against ALL Betclic rows, drop live ones only afterwards, so a
+    # Pinnacle match that is live on Betclic is reported as "skipped (live)"
+    # instead of "without a Betclic pair".
+    matches, unmatched, ambiguous, _ = match_books(pin, bet_all)
+    live_skipped = []
+    if not args.include_live:
+        live_skipped = [m for m in matches if m[1]["status"] == "live"]
+        matches = [m for m in matches if m[1]["status"] != "live"]
     rows = ev_rows(matches, args.max_age)
+    to_check = [m for m in matches if not is_verified(m[0], m[1], m[3])]
 
     stats = {
-        "pin": len(pin), "bet_all": len(bet_all), "bet": len(bet),
+        "pin": len(pin), "bet_all": len(bet_all),
         "matched": len(matches),
         "exact": sum(m[3] == "exact" for m in matches),
         "loose": sum(m[3] == "loose" for m in matches),
         "unmatched": len(unmatched), "ambiguous": len(ambiguous),
         "unmatched_rows": unmatched,
+        "live_skipped": live_skipped,
+        "to_check": to_check,
     }
     now = datetime.now(timezone.utc)
     stamp = now.strftime("%Y%m%dT%H%M%SZ")
 
     fields = ["ev", "player", "opponent", "betclic_odds", "pinnacle_odds", "p_ref",
-              "tournament", "doubles", "match_type", "betclic_name",
+              "tournament", "betclic_tournament", "doubles", "match_type", "tournament_match",
+              "verified", "betclic_name",
               "pinnacle_captured_at", "betclic_captured_at", "age_min", "stale"]
     csv_path, saved = save_history(rows, fields, stamp)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     LATEST_REPORT.write_text(build_report(rows, stats, args, now), encoding="utf-8")
 
-    signals = [r for r in rows if r["ev"] >= args.min_ev and not r["stale"]]
-    print(f"Matched {stats['matched']} matches ({stats['exact']} exact, {stats['loose']} loose), "
-          f"unmatched Pinnacle: {stats['unmatched']}, ambiguous: {stats['ambiguous']}")
-    print(f"EV > 0: {sum(r['ev'] > 0 for r in rows)} / {len(rows)} sides | "
-          f"signals (EV >= {args.min_ev * 100:.1f}%, age <= {args.max_age:g} min): {len(signals)}\n")
-    print(terminal_table(rows, args.top))
+    print(summary_terminal(summary_items(rows, stats, args)))
+    print()
+    print(terminal_table(rows, args.top, args.min_ev))
     if saved:
         print(f"\nCSV (new history entry): {csv_path}")
     else:
