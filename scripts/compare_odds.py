@@ -16,8 +16,14 @@ Matching is done against ALL Betclic rows; matches that are live on Betclic are
 dropped only afterwards (unless --include-live) and listed separately in the
 report, so they do not show up as "without a Betclic pair".
 
+Data age is a property of the whole run, not of a single row: it is the time
+between NOW and the OLDER of the two snapshots. It is shown once (terminal
+and report header) together with the gap between the snapshots. When it
+exceeds --max-age the data is "stale": no row counts as a signal.
+
 The report tables are HTML (Markdown has no syntax for vertical grid lines),
-so they render with a full grid in a Markdown preview.
+so they render with a full grid in a Markdown preview. The Flags column is
+left out of a table when none of its cells has a flag.
 
 Usage:  python scripts/compare_odds.py [--include-live] [--min-ev 0.02]
                                         [--max-age 15] [--top 20]
@@ -210,14 +216,32 @@ def match_books(pin_rows, bet_rows):
     return matches, unmatched, ambiguous, unmatched_bet
 
 
+# ---------- data age ----------
+
+def snapshot_info(pin_rows, bet_rows, now, max_age) -> dict:
+    """Run-level freshness. Every row of a CSV shares one captured_at, so the
+    age is a property of the snapshot, not of a match.
+
+    age_min - now minus the OLDER snapshot (what matters for placing a bet)
+    gap_min - distance between the two snapshots (how well they line up)
+    """
+    pin_ts = min((r["ts"] for r in pin_rows), default=now)
+    bet_ts = min((r["ts"] for r in bet_rows), default=now)
+    age_min = (now - min(pin_ts, bet_ts)).total_seconds() / 60
+    return {
+        "age_min": age_min,
+        "gap_min": abs((pin_ts - bet_ts).total_seconds()) / 60,
+        "stale": age_min > max_age,
+    }
+
+
 # ---------- EV ----------
 
-def ev_rows(matches, max_age):
+def ev_rows(matches, stale):
     out = []
     for p, b, order, tier in matches:
         probs = remove_margin([p["odds1"], p["odds2"]])
         bet_odds = (b["odds1"], b["odds2"]) if order == "straight" else (b["odds2"], b["odds1"])
-        age_min = abs((p["ts"] - b["ts"]).total_seconds()) / 60
         tour_ok = tournaments_agree(p["tournament"], b["tournament"])
         # Margin (overround) = sum of raw implied probabilities - 1.
         pin_margin = 1 / p["odds1"] + 1 / p["odds2"] - 1
@@ -241,8 +265,7 @@ def ev_rows(matches, max_age):
                 "betclic_name": (b["player1"], b["player2"])[side if order == "straight" else 1 - side],
                 "pinnacle_captured_at": p["captured_at"],
                 "betclic_captured_at": b["captured_at"],
-                "age_min": age_min,
-                "stale": age_min > max_age,
+                "stale": stale,  # run-level: same for every row
             })
     out.sort(key=lambda r: r["ev"], reverse=True)  # full precision, rounding only on display
     return out
@@ -328,24 +351,55 @@ def ev_icon(r: dict, min_ev: float) -> str:
     return "🟡"
 
 
+# ---------- data age line ----------
+
+def age_line_terminal(snap: dict, args) -> str:
+    text = (
+        f"Data age: {fmt_age(snap['age_min'])}\n"
+        f"Snapshot time difference: {fmt_age(snap['gap_min'])} "
+        f"(Betclic -> Pinnacle)"
+    )
+
+    if snap["stale"]:
+        return paint(
+            f"{text}\nSTALE (> {args.max_age:g} min)",
+            "1",
+            "31",
+        )
+
+    return paint(text, "2")
+
+
+def age_line_md(snap: dict, args) -> str:
+    text = (
+        f"**Data age:** {fmt_age(snap['age_min'])}\n\n"
+        f"**Snapshot time difference:** {fmt_age(snap['gap_min'])} "
+        f"(Betclic → Pinnacle)"
+    )
+
+    if snap["stale"]:
+        text += f"\n\n🟡 **STALE** (older than {args.max_age:g} min)"
+
+    return text
+
+
+
+
 # ---------- summary ----------
 
 def summary_items(rows, stats, args) -> list[tuple[str, str]]:
     signals = [r for r in rows if r["ev"] >= args.min_ev and not r["stale"]]
-    ages = [r["age_min"] for r in rows]
     return [
         ("Pinnacle rows", str(stats["pin"])),
         ("Betclic rows", str(stats["bet_all"])),
         ("Matched matches", f"{stats['matched']} (exact {stats['exact']}, loose {stats['loose']})"),
-        ("Matches to verify (loose, tournament differs)", str(len(stats["to_check"]))),
+        ("Matches to verify (loose + tournament differs)", str(len(stats["to_check"]))),
         ("Skipped (live on Betclic)", str(len(stats["live_skipped"]))),
         ("Unmatched Pinnacle", str(stats["unmatched"])),
-        ("Ambiguous", str(stats["ambiguous"])),
         ("Sides with EV > 0", f"{sum(r['ev'] > 0 for r in rows)} / {len(rows)}"),
-        (f"Signals (EV >= {args.min_ev * 100:.1f}%, age <= {args.max_age:g} min)", str(len(signals))),
-        ("Data age min / max", f"{fmt_age(min(ages, default=0))} / {fmt_age(max(ages, default=0))}"),
-        (f"Stale sides (> {args.max_age:g} min)", str(sum(r["stale"] for r in rows))),
+        (f"Signals (EV >= {args.min_ev * 100:.1f}%, data age <= {args.max_age:g} min)", str(len(signals))),
     ]
+
 
 
 def summary_terminal(items: list[tuple[str, str]]) -> str:
@@ -370,15 +424,12 @@ def summary_md(items: list[tuple[str, str]]) -> str:
 # ---------- tables ----------
 
 PW = 26  # name column width
-AW = 11  # age column width in the terminal table ("59 min 59 s")
 
 
 def flag_list(r: dict, ascii_only: bool) -> list[str]:
     flags = []
     if not r["verified"]:
         flags.append("CHECK" if ascii_only else "⚠ check")
-    if r["stale"]:
-        flags.append("STALE")
     if r["doubles"]:
         flags.append("doubles")
     return flags
@@ -389,18 +440,18 @@ def terminal_table(rows, top, min_ev):
     odds, P(ref) and EV in that row all refer to him; the opponent is dimmed."""
     header = (
         f"{'#':>3}  {'BET ON':<{PW}} {'Betclic':>7} {'Pinnacle':>8} {'P(ref)':>7} {'EV':>8}  "
-        f"{'OPPONENT':<{PW + 3}} {'Age':>{AW}}"
+        f"{'OPPONENT':<{PW + 3}}"
     )
     lines = [paint(header, "1"), "-" * len(header)]
+    flag_style = {"CHECK": ("1", "33"), "doubles": ("2",)}
     for i, r in enumerate(rows[:top], 1):
         player = paint(f"{r['player'][:PW]:<{PW}}", "1", "36")          # bold cyan
         ev = paint(f"{r['ev'] * 100:>+7.2f}%", *ev_style(r, min_ev))
         opp = paint(f"vs {r['opponent'][:PW]:<{PW}}", "2")              # dim
-        flag_style = {"CHECK": ("1", "33"), "STALE": ("31",), "doubles": ("2",)}
-        stale = "".join(" " + paint(f, *flag_style[f]) for f in flag_list(r, True))
+        flags = "".join(" " + paint(f, *flag_style[f]) for f in flag_list(r, True))
         lines.append(
             f"{i:>3}  {player} {fmt_odds(r['betclic_odds']):>7} {fmt_odds(r['pinnacle_odds']):>8} "
-            f"{r['p_ref'] * 100:>6.2f}% {ev}  {opp} {fmt_age(r['age_min']):>{AW}}{stale}"
+            f"{r['p_ref'] * 100:>6.2f}% {ev}  {opp}{flags}"
         )
     if len(rows) > top:
         lines.append(f"... {len(rows) - top} more rows in the CSV / report")
@@ -408,7 +459,7 @@ def terminal_table(rows, top, min_ev):
         "Legend: "
         + paint("BET ON", "1", "36") + " = player the odds/EV in the row refer to | "
         + paint("green", "1", "32") + " = signal | "
-        + paint("yellow", "33") + " = EV >= 0, below threshold | "
+        + paint("yellow", "33") + " = EV >= 0, below threshold or data stale | "
         + paint("red", "31") + " = negative EV | "
         + paint("CHECK", "1", "33") + " = loose name match, tournament not confirmed, verify by hand"
     )
@@ -417,12 +468,19 @@ def terminal_table(rows, top, min_ev):
 
 def md_table(rows, min_ev):
     headers = ["#", "EV", "Bet on", "Betclic", "Pinnacle", "Margin Pinnacle",
-               "Margin Betclic", "P(ref)", "Opponent", "Data age", "Tournament", "Flags"]
+               "Margin Betclic", "P(ref)", "Opponent", "Tournament"]
     aligns = ["right", "right", "left", "right", "right", "right",
-              "right", "right", "left", "right", "left", "left"]
+              "right", "right", "left", "left"]
+
+    flags = [", ".join(flag_list(r, False)) for r in rows]
+    show_flags = any(flags)  # drop the Flags column when every cell is empty
+    if show_flags:
+        headers.append("Flags")
+        aligns.append("left")
+
     body = []
-    for i, r in enumerate(rows, 1):
-        body.append([
+    for i, (r, fl) in enumerate(zip(rows, flags), 1):
+        cells = [
             str(i),
             f"{ev_icon(r, min_ev)} {r['ev'] * 100:+.2f}%",
             f"<b>{html.escape(r['player'])}</b>",
@@ -432,10 +490,11 @@ def md_table(rows, min_ev):
             fmt_pct(r["betclic_margin"]),
             fmt_pct(r["p_ref"]),
             html.escape(r["opponent"]),
-            fmt_age(r["age_min"]),
             html.escape(r["tournament"] or ""),
-            html.escape(", ".join(flag_list(r, False))),
-        ])
+        ]
+        if show_flags:
+            cells.append(html.escape(fl))
+        body.append(cells)
     return html_table(headers, body, aligns)
 
 
@@ -449,8 +508,7 @@ def legend_md(args) -> list[str]:
         f"- 🟡 EV between 0% and {t}, or EV >= {t} but data older than {args.max_age:g} min",
         "- 🔴 EV < 0%",
         "",
-        "**Bold player** = the side the odds and EV in that row refer to. "
-        "Margin = overround of the two-way market (1/o1 + 1/o2 - 1).",
+        "**Bold player** = the side the odds and EV in that row refer to.",
         "",
     ]
 
@@ -461,6 +519,8 @@ def build_report(rows, stats, args, generated_at):
         "# Pinnacle -> Betclic EV report",
         "",
         f"Generated: {generated_at:%Y-%m-%d %H:%M:%S} UTC",
+        "",
+        age_line_md(stats["snap"], args),
         "",
         "## Summary",
         "",
@@ -522,7 +582,8 @@ def save_history(rows: list[dict], fields: list[str], stamp: str):
     """Save the EV table to history/ unless it is identical to the newest file there.
 
     Returns (path, saved). The rows carry both snapshot timestamps, so identical
-    content means identical input data.
+    content means identical input data. Run-dependent values (data age, stale)
+    are deliberately NOT in the CSV, otherwise no two runs would ever be equal.
     """
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
     text = rows_to_csv_text(rows, fields)
@@ -542,7 +603,7 @@ def main():
                     help="keep Betclic rows marked live (default: drop them after matching)")
     ap.add_argument("--min-ev", type=float, default=0.02, help="EV threshold, default 0.02")
     ap.add_argument("--max-age", type=float, default=15.0,
-                    help="max minutes between the two snapshots for a signal, default 15")
+                    help="max age in minutes (now minus the older snapshot) for a signal, default 15")
     ap.add_argument("--color", choices=["auto", "always", "never"], default="auto",
                     help="ANSI colours in the terminal table, default auto (tty only, honours NO_COLOR)")
     ap.add_argument("--top", type=int, default=20, help="rows in the terminal table, default 20")
@@ -552,6 +613,10 @@ def main():
     pin = read_rows(PINNACLE_CSV)
     bet_all = read_rows(BETCLIC_CSV)
 
+    now = datetime.now(timezone.utc)
+    stamp = now.strftime("%Y%m%dT%H%M%SZ")
+    snap = snapshot_info(pin, bet_all, now, args.max_age)
+
     # Match against ALL Betclic rows, drop live ones only afterwards, so a
     # Pinnacle match that is live on Betclic is reported as "skipped (live)"
     # instead of "without a Betclic pair".
@@ -560,7 +625,7 @@ def main():
     if not args.include_live:
         live_skipped = [m for m in matches if m[1]["status"] == "live"]
         matches = [m for m in matches if m[1]["status"] != "live"]
-    rows = ev_rows(matches, args.max_age)
+    rows = ev_rows(matches, snap["stale"])
     to_check = [m for m in matches if not is_verified(m[0], m[1], m[3])]
 
     stats = {
@@ -572,19 +637,20 @@ def main():
         "unmatched_rows": unmatched,
         "live_skipped": live_skipped,
         "to_check": to_check,
+        "snap": snap,
     }
-    now = datetime.now(timezone.utc)
-    stamp = now.strftime("%Y%m%dT%H%M%SZ")
 
     fields = ["ev", "player", "opponent", "betclic_odds", "pinnacle_odds",
               "pinnacle_margin", "betclic_margin", "p_ref",
               "tournament", "betclic_tournament", "doubles", "match_type", "tournament_match",
               "verified", "betclic_name",
-              "pinnacle_captured_at", "betclic_captured_at", "age_min", "stale"]
+              "pinnacle_captured_at", "betclic_captured_at"]
     csv_path, saved = save_history(rows, fields, stamp)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     LATEST_REPORT.write_text(build_report(rows, stats, args, now), encoding="utf-8")
 
+    print(age_line_terminal(snap, args))
+    print()
     print(summary_terminal(summary_items(rows, stats, args)))
     print()
     print(terminal_table(rows, args.top, args.min_ev))
