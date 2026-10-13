@@ -1,6 +1,6 @@
 import pytest
 
-from src.betting.value import calculate_ev
+from betting.value import calculate_ev
 
 
 def test_positive_ev():
