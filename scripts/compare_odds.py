@@ -19,17 +19,16 @@ report, so they do not show up as "without a Betclic pair".
 
 Signals: a side is a signal when EV > 0% for ANY devig method (reference,
 power, Shin, odds ratio) and the data is not stale. --min-ev no longer decides
-what a signal is; it only separates yellow (0% <= EV < min-ev) from green
-(EV >= min-ev) in the colours and in the ranking below.
+what a signal is; it only separates yellow (0% < EV < min-ev) from green
+(EV >= min-ev) in the colours and in the ranking below. Exactly zero EV is gray.
 
 Row order (terminal and report), three tiers:
-  1. reference EV > 0%                 - sorted by reference EV, best first
-  2. reference EV < 0% but another      - sorted by a colour score summed over
-     method has EV > 0%                  all four methods (green = 2,
-                                          yellow = 1, red = 0), highest first;
-                                          ties broken by the best alternative EV
-  3. every method EV < 0%               - sorted by reference EV, best first
-So when no reference EV is > 0%, tier 2 simply opens the table.
+  1. EV(ref) > 0% (proportional normalization) - sorted by EV(ref), best first
+  2. EV(ref) <= 0% but another method has EV > 0% - sorted by the total
+     colour score across all four EV columns (green = 3 points,
+     yellow = 2 points, gray = 1 point, red = 0 points), highest first;
+     ties broken by the highest alternative EV
+  3. The rest - sorted by EV(ref), best first
 
 Data age is a property of the whole run, not of a single row: it is the time
 between NOW and the OLDER of the two snapshots. It is shown once (terminal
@@ -300,13 +299,15 @@ def snapshot_info(pin_rows, bet_rows, now, max_age) -> dict:
 # ---------- EV classification and ordering ----------
 
 def ev_points(value: float, min_ev: float) -> int:
-    """Colour score of one EV: green = 2, yellow = 1, red = 0.
+    """Colour score: green = 3, yellow = 2, gray = 1, red = 0.
 
     Uses the same thresholds as the colours in the terminal and the report.
     """
     if value >= min_ev:
-        return 2
+        return 3
     if value > 0:
+        return 2
+    if value == 0:
         return 1
     return 0
 
@@ -326,9 +327,8 @@ def sort_key(row: dict, min_ev: float) -> tuple:
 
     Tier 0: reference EV > 0           -> by reference EV, descending.
     Tier 1: only an alternative is > 0 -> by colour score over all methods,
-            descending (two greens beat yellow + green), then by the best
-            alternative EV, descending.
-    Tier 2: everything negative         -> by reference EV, descending.
+            descending, then by the best alternative EV, descending.
+    Tier 2: no method has EV > 0       -> by reference EV, descending.
     """
     if row["ev"] > 0:
         return (0, -row["ev"], 0.0)
@@ -517,9 +517,11 @@ def paint(text: str, *codes: str) -> str:
 
 
 def ev_style(value: float, min_ev: float) -> tuple[str, ...]:
-    """Style any EV value by sign and threshold, independently of freshness."""
+    """Style EV by sign and threshold, independently of freshness."""
     if value < 0:
         return ("31",)
+    if value == 0:
+        return ("90",)
     if value < min_ev:
         return ("33",)
     return ("1", "32")
@@ -539,11 +541,13 @@ def ev_html(value: float, min_ev: float) -> str:
     text = f"{value * 100:+.2f}%"
 
     if value < 0:
-        color = "#d00000"
+        color = "#d00000"  # red
+    elif value == 0:
+        color = "#808080"  # gray
     elif value < min_ev:
-        color = "#b88600"
+        color = "#b88600"  # yellow
     else:
-        color = "#008000"
+        color = "#008000"  # green
 
     return f'<span style="color:{color}">{text}</span>'
 
@@ -733,8 +737,10 @@ def terminal_table(rows, top, min_ev, max_age):
         + " = player the odds/EV in the row refer to | "
         + paint("red", "31")
         + " = EV < 0% | "
+        + paint("gray", "90")
+        + " = EV = 0% | "
         + paint("yellow", "33")
-        + f" = 0% <= EV < {threshold} | "
+        + f" = 0% < EV < {threshold} | "
         + paint("green", "1", "32")
         + f" = EV >= {threshold} | "
         + "🟡 = EV > 0% for any method and data older than "
@@ -743,8 +749,12 @@ def terminal_table(rows, top, min_ev, max_age):
         + " = loose name match, tournament not confirmed; verify by hand"
     )
     lines.append(
-        "Order: EV(ref) > 0% first; then rows where only another method is "
-        "> 0% (more green/yellow first); then the rest."
+        "Order: EV(ref) (proportional normalization) > 0% first, "
+        "sorted by EV(ref) descending; then rows where EV(ref) <= 0% "
+        "but another method has EV > 0%, sorted by the total colour score "
+        "across all four EV columns (green = 3 points, yellow = 2 points, "
+        "gray = 1 point, red = 0 points; ties broken by the highest "
+        "alternative EV); then the rest, sorted by EV(ref) descending."
     )
 
     return "\n".join(lines)
@@ -818,7 +828,7 @@ def md_table(rows, min_ev, max_age):
 
 
 def legend_md(args) -> list[str]:
-    """Explain the common EV colour logic, the stale-data dot and row order."""
+    """Explain EV colours, the stale-data dot and row order."""
     threshold = f"{args.min_ev * 100:g}%"
 
     return [
@@ -826,8 +836,9 @@ def legend_md(args) -> list[str]:
         "",
         f"- <span style=\"color:#d00000\">**Red text**</span>: "
         "EV < 0%.",
+        "- <span style=\"color:#808080\">**Gray text**</span>: EV = 0%.",
         f"- <span style=\"color:#b88600\">**Yellow text**</span>: "
-        f"0% <= EV < {threshold}.",
+        f"0% < EV < {threshold}.",
         f"- <span style=\"color:#008000\">**Green text**</span>: "
         f"EV >= {threshold}.",
         f"- 🟡 **Yellow dot**: EV > 0% for any method and data age > "
@@ -835,10 +846,13 @@ def legend_md(args) -> list[str]:
         "- **Bold player**: the side the odds and EV in that row refer to.",
         "- **Signal**: EV > 0% for any method (reference, power, Shin, "
         f"odds ratio) and data age <= {args.max_age:g} min.",
-        "- **Row order**: EV(ref) > 0% first (best EV(ref) on top); then "
-        "rows where EV(ref) <= 0% but another method is > 0% (more "
-        "green/yellow cells across the four EV columns first, green "
-        "counts more than yellow); then the rest.",
+        "- **Row order**: rows with EV(ref) (proportional normalization) "
+        "> 0% first, sorted by EV(ref) descending. Then rows where "
+        "EV(ref) <= 0% but another method has EV > 0%, sorted by the "
+        "total colour score across all four EV columns (green = 3 points, "
+        "yellow = 2 points, gray = 1 point, red = 0 points; ties broken "
+        "by the highest alternative EV). Finally, the rest, sorted by "
+        "EV(ref) descending.",
         "",
     ]
 
@@ -860,7 +874,7 @@ def build_report(rows, stats, args, generated_at):
         summary_md(summary_items(rows, stats, args)),
         "",
         *legend_md(args),
-        "## Signals (EV > 0% for any method)",
+        "## Signals",
         "",
         (
             md_table(signals, args.min_ev, args.max_age)
@@ -870,8 +884,8 @@ def build_report(rows, stats, args, generated_at):
         "",
         (
             "## All matched sides "
-            "(EV(ref) > 0% first, then rows positive only for another "
-            "method, then the rest)"
+            "(EV(ref) > 0% first, then rows where EV(ref) <= 0% but "
+            "another method has EV > 0%, then the rest)"
         ),
         "",
         (
