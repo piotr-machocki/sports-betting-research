@@ -2,9 +2,10 @@
 
 Reads data/pinnacle/odds.csv and data/betclic/odds.csv, matches the same
 matches across bookmakers by normalized player names, computes EV for both
-sides of every matched match, prints a table sorted from best to worst EV and
-appends a full-precision CSV to data/results/history/ (skipped when identical
-to the newest entry) and overwrites data/results/latest_report.md.
+sides of every matched match (proportional = reference, plus power / Shin /
+odds ratio), prints a table and appends a full-precision CSV to
+data/results/history/ (skipped when identical to the newest entry) and
+overwrites data/results/latest_report.md.
 
 Names decide the match (exact, then loose). Tournaments are only an extra
 confidence signal: a match is "verified" when the names match exactly, or loosely
@@ -15,6 +16,20 @@ the Polish->English city dictionary in src/betting/tournament_names.py.
 Matching is done against ALL Betclic rows; matches that are live on Betclic are
 dropped only afterwards (unless --include-live) and listed separately in the
 report, so they do not show up as "without a Betclic pair".
+
+Signals: a side is a signal when EV > 0% for ANY devig method (reference,
+power, Shin, odds ratio) and the data is not stale. --min-ev no longer decides
+what a signal is; it only separates yellow (0% <= EV < min-ev) from green
+(EV >= min-ev) in the colours and in the ranking below.
+
+Row order (terminal and report), three tiers:
+  1. reference EV > 0%                 - sorted by reference EV, best first
+  2. reference EV < 0% but another      - sorted by a colour score summed over
+     method has EV > 0%                  all four methods (green = 2,
+                                          yellow = 1, red = 0), highest first;
+                                          ties broken by the best alternative EV
+  3. every method EV < 0%               - sorted by reference EV, best first
+So when no reference EV is > 0%, tier 2 simply opens the table.
 
 Data age is a property of the whole run, not of a single row: it is the time
 between NOW and the OLDER of the two snapshots. It is shown once (terminal
@@ -61,6 +76,9 @@ ALT_METHODS = {
     "shin": "shin",
     "odds_ratio": "or",
 }
+
+# Row keys holding EV for every method: reference first, then the alternatives.
+EV_KEYS = ("ev", "ev_power", "ev_shin", "ev_or")
 
 
 # ---------- name normalization ----------
@@ -279,14 +297,60 @@ def snapshot_info(pin_rows, bet_rows, now, max_age) -> dict:
     }
 
 
+# ---------- EV classification and ordering ----------
+
+def ev_points(value: float, min_ev: float) -> int:
+    """Colour score of one EV: green = 2, yellow = 1, red = 0.
+
+    Uses the same thresholds as the colours in the terminal and the report.
+    """
+    if value >= min_ev:
+        return 2
+    if value > 0:
+        return 1
+    return 0
+
+
+def any_pos(row: dict) -> bool:
+    """True when EV > 0 for at least one method (reference or alternative)."""
+    return any(row[key] > 0 for key in EV_KEYS)
+
+
+def is_signal(row: dict) -> bool:
+    """Signal = EV > 0 for any method, and the data is not stale."""
+    return any_pos(row) and not row["stale"]
+
+
+def sort_key(row: dict, min_ev: float) -> tuple:
+    """Three tiers, see the module docstring.
+
+    Tier 0: reference EV > 0           -> by reference EV, descending.
+    Tier 1: only an alternative is > 0 -> by colour score over all methods,
+            descending (two greens beat yellow + green), then by the best
+            alternative EV, descending.
+    Tier 2: everything negative         -> by reference EV, descending.
+    """
+    if row["ev"] > 0:
+        return (0, -row["ev"], 0.0)
+
+    alt_best = max(row[key] for key in EV_KEYS[1:])
+    if alt_best > 0:
+        score = sum(ev_points(row[key], min_ev) for key in EV_KEYS)
+        return (1, -score, -alt_best)
+
+    return (2, -row["ev"], 0.0)
+
+
 # ---------- EV ----------
 
-def ev_rows(matches, stale):
+def ev_rows(matches, stale, min_ev):
     """Calculate EV using proportional devig plus alternative methods.
 
     'ev' and 'p_ref' use proportional normalization.
     Alternative values are stored as p_power / ev_power, p_shin / ev_shin,
     and p_or / ev_or.
+
+    Rows are returned in the tiered order described by sort_key().
     """
     out = []
 
@@ -352,8 +416,7 @@ def ev_rows(matches, stale):
 
             out.append(row)
 
-    # Preserve sorting by proportional EV.
-    out.sort(key=lambda row: row["ev"], reverse=True)
+    out.sort(key=lambda row: sort_key(row, min_ev))
     return out
 
 
@@ -453,18 +516,18 @@ def paint(text: str, *codes: str) -> str:
     return f"\033[{';'.join(codes)}m{text}\033[0m"
 
 
-def ev_style(r: dict, min_ev: float) -> tuple[str, ...]:
-    """Style reference EV by sign and threshold, independently of freshness."""
-    if r["ev"] < 0:
+def ev_style(value: float, min_ev: float) -> tuple[str, ...]:
+    """Style any EV value by sign and threshold, independently of freshness."""
+    if value < 0:
         return ("31",)
-    if r["ev"] < min_ev:
+    if value < min_ev:
         return ("33",)
     return ("1", "32")
 
 
 def ev_icon(r: dict) -> str:
-    """Show a yellow dot for non-negative reference EV when data is stale."""
-    if r["ev"] >= 0 and r["stale"]:
+    """Show a yellow dot when any method has EV > 0 but the data is stale."""
+    if r["stale"] and any_pos(r):
         return "🟡"
     return ""
 
@@ -486,20 +549,13 @@ def ev_html(value: float, min_ev: float) -> str:
 
 
 def ev_ref_html(row: dict, min_ev: float, max_age: float) -> str:
-    """Format reference EV with threshold colours and a stale-data marker."""
-    value = row["ev"]
+    """Format reference EV with threshold colours and a stale-data marker.
 
-    if value < 0:
-        color = "#d00000"
-    elif value < min_ev:
-        color = "#b88600"
-    else:
-        color = "#008000"
-
-    text = f"{value * 100:+.2f}%"
-    icon = "🟡 " if value >= 0 and row["stale"] else ""
-
-    return f'{icon}<span style="color:{color}">{text}</span>'
+    The marker is shown when ANY method has EV > 0 on stale data, so a row
+    that is only positive for an alternative method is flagged as well.
+    """
+    icon = "🟡 " if row["stale"] and any_pos(row) else ""
+    return icon + ev_html(row["ev"], min_ev)
 
 
 # ---------- data age line ----------
@@ -537,10 +593,7 @@ def age_line_md(snap: dict, args) -> str:
 # ---------- summary ----------
 
 def summary_items(rows, stats, args) -> list[tuple[str, str]]:
-    signals = [
-        row for row in rows
-        if row["ev"] >= args.min_ev and not row["stale"]
-    ]
+    signals = [row for row in rows if is_signal(row)]
 
     return [
         ("Pinnacle rows", str(stats["pin"])),
@@ -557,11 +610,15 @@ def summary_items(rows, stats, args) -> list[tuple[str, str]]:
         ("Skipped (live on Betclic)", str(len(stats["live_skipped"]))),
         ("Unmatched Pinnacle", str(stats["unmatched"])),
         (
-            "Sides with EV > 0",
+            "Sides with EV(ref) > 0",
             f"{sum(row['ev'] > 0 for row in rows)} / {len(rows)}",
         ),
         (
-            f"Signals (EV >= {args.min_ev * 100:.1f}%, "
+            "Sides with EV > 0 for any method",
+            f"{sum(any_pos(row) for row in rows)} / {len(rows)}",
+        ),
+        (
+            f"Signals (EV > 0% for any method, "
             f"data age <= {args.max_age:g} min)",
             str(len(signals)),
         ),
@@ -625,7 +682,8 @@ def terminal_table(rows, top, min_ev, max_age):
     """Print one row per side of a match."""
     header = (
         f"{'#':>3}  {'BET ON':<{PW}} {'Betclic':>7} {'Pinnacle':>8} "
-        f"{'P(ref)':>7} {'EV(ref)':>8}  {'OPPONENT':<{PW + 3}}"
+        f"{'P(ref)':>7} {'EV(ref)':>8} {'EV(pow)':>8} {'EV(shin)':>8} "
+        f"{'EV(OR)':>8}     {'OPPONENT':<{PW + 3}}"
     )
 
     lines = [paint(header, "1"), "-" * len(header)]
@@ -636,12 +694,14 @@ def terminal_table(rows, top, min_ev, max_age):
             f"{row['player'][:PW]:<{PW}}", "1", "36"
         )
 
-        ev_text = f"{row['ev'] * 100:>+7.2f}%"
-        ev = paint(ev_text, *ev_style(row, min_ev))
+        ev_cells = " ".join(
+            paint(f"{row[key] * 100:>+7.2f}%", *ev_style(row[key], min_ev))
+            for key in EV_KEYS
+        )
 
+        # The dot always takes 3 characters so the opponent column stays aligned.
         icon = ev_icon(row)
-        if icon:
-            ev += " " + icon
+        ev_cells += (" " + icon) if icon else "   "
 
         opponent = paint(
             f"vs {row['opponent'][:PW]:<{PW}}", "2"
@@ -657,7 +717,7 @@ def terminal_table(rows, top, min_ev, max_age):
             f"{fmt_odds(row['betclic_odds']):>7} "
             f"{fmt_odds(row['pinnacle_odds']):>8} "
             f"{row['p_ref'] * 100:>6.2f}% "
-            f"{ev}  {opponent}{flags}"
+            f"{ev_cells}  {opponent}{flags}"
         )
 
     if len(rows) > top:
@@ -672,15 +732,19 @@ def terminal_table(rows, top, min_ev, max_age):
         + paint("BET ON", "1", "36")
         + " = player the odds/EV in the row refer to | "
         + paint("red", "31")
-        + " = EV(ref) < 0% | "
+        + " = EV < 0% | "
         + paint("yellow", "33")
-        + f" = 0% <= EV(ref) < {threshold} | "
+        + f" = 0% <= EV < {threshold} | "
         + paint("green", "1", "32")
-        + f" = EV(ref) >= {threshold} | "
-        + "🟡 = EV(ref) >= 0% and data older than "
+        + f" = EV >= {threshold} | "
+        + "🟡 = EV > 0% for any method and data older than "
         + f"{max_age:g} min | "
         + paint("CHECK", "1", "33")
         + " = loose name match, tournament not confirmed; verify by hand"
+    )
+    lines.append(
+        "Order: EV(ref) > 0% first; then rows where only another method is "
+        "> 0% (more green/yellow first); then the rest."
     )
 
     return "\n".join(lines)
@@ -754,7 +818,7 @@ def md_table(rows, min_ev, max_age):
 
 
 def legend_md(args) -> list[str]:
-    """Explain the common EV colour logic and the reference EV stale-data dot."""
+    """Explain the common EV colour logic, the stale-data dot and row order."""
     threshold = f"{args.min_ev * 100:g}%"
 
     return [
@@ -766,9 +830,15 @@ def legend_md(args) -> list[str]:
         f"0% <= EV < {threshold}.",
         f"- <span style=\"color:#008000\">**Green text**</span>: "
         f"EV >= {threshold}.",
-        f"- 🟡 **Yellow dot**: EV(ref) >= 0% and data age > "
+        f"- 🟡 **Yellow dot**: EV > 0% for any method and data age > "
         f"{args.max_age:g} min.",
         "- **Bold player**: the side the odds and EV in that row refer to.",
+        "- **Signal**: EV > 0% for any method (reference, power, Shin, "
+        f"odds ratio) and data age <= {args.max_age:g} min.",
+        "- **Row order**: EV(ref) > 0% first (best EV(ref) on top); then "
+        "rows where EV(ref) <= 0% but another method is > 0% (more "
+        "green/yellow cells across the four EV columns first, green "
+        "counts more than yellow); then the rest.",
         "",
     ]
 
@@ -776,10 +846,7 @@ def legend_md(args) -> list[str]:
 # ---------- Markdown report ----------
 
 def build_report(rows, stats, args, generated_at):
-    signals = [
-        row for row in rows
-        if row["ev"] >= args.min_ev and not row["stale"]
-    ]
+    signals = [row for row in rows if is_signal(row)]
 
     parts = [
         "# Pinnacle -> Betclic EV report",
@@ -793,17 +860,18 @@ def build_report(rows, stats, args, generated_at):
         summary_md(summary_items(rows, stats, args)),
         "",
         *legend_md(args),
-        "## Signals",
+        "## Signals (EV > 0% for any method)",
         "",
         (
             md_table(signals, args.min_ev, args.max_age)
             if signals
-            else "_No signals above the threshold._"
+            else "_No signals._"
         ),
         "",
         (
             "## All matched sides "
-            "(best to worst EV — sorted by proportional normalization)"
+            "(EV(ref) > 0% first, then rows positive only for another "
+            "method, then the rest)"
         ),
         "",
         (
@@ -867,6 +935,11 @@ def build_report(rows, stats, args, generated_at):
             "- Positive EV against a devigged Pinnacle line is an estimate, "
             "not a guaranteed edge."
         ),
+        (
+            "- A signal fires when ANY of four correlated devig methods gives "
+            "EV > 0%, so it is more permissive than the reference EV alone; "
+            "look at how many methods agree before betting."
+        ),
         "",
     ]
 
@@ -921,7 +994,10 @@ def main():
         "--min-ev",
         type=float,
         default=0.02,
-        help="EV threshold, default 0.02",
+        help=(
+            "green/yellow colour threshold and ranking weight, default 0.02 "
+            "(does not decide what a signal is: any method EV > 0 does)"
+        ),
     )
     ap.add_argument(
         "--max-age",
@@ -965,7 +1041,7 @@ def main():
             match for match in matches if match[1]["status"] != "live"
         ]
 
-    rows = ev_rows(matches, snap["stale"])
+    rows = ev_rows(matches, snap["stale"], args.min_ev)
 
     to_check = [
         match for match in matches
