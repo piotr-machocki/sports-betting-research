@@ -883,9 +883,7 @@ def build_report(rows, stats, args, generated_at):
         ),
         "",
         (
-            "## All matched sides "
-            "(EV(ref) > 0% first, then rows where EV(ref) <= 0% but "
-            "another method has EV > 0%, then the rest)"
+            "## All matched sides"
         ),
         "",
         (
@@ -895,7 +893,7 @@ def build_report(rows, stats, args, generated_at):
         ),
         "",
         "## Matches to verify manually "
-        "(loose name match, tournament not confirmed)",
+        "(loose name match and tournament not confirmed)",
         "",
     ]
 
@@ -934,13 +932,8 @@ def build_report(rows, stats, args, generated_at):
 
     parts += [
         "",
-        "## Caveats",
+        "## About",
         "",
-        (
-            "- Rows flagged `⚠ check` were paired by loose name matching "
-            "and their tournaments could not be matched; verify them by hand "
-            "(see the section above)."
-        ),
         (
             "- Only prematch match-winner markets are compared; Betclic live "
             "rows are dropped unless `--include-live`."
