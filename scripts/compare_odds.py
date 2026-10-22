@@ -97,11 +97,13 @@ class Player:
     """Common form of a player name.
 
     initial  - first letter of the first name
-    initials - first letters of all name tokens (loose matching: the other
-               side may have extra given names, "Maria Camila Osorio Serrano")
-    sq       - name squashed to letters only, no spaces/hyphens/diacritics
-               ("Learner Tien" and "LearnerTien" -> "learnertien")
-    last     - last token of the name (used for loose matching)
+
+    initials - first letters of all name tokens (loose matching: the other side may have extra given names, "Maria Camila Osorio Serrano")
+
+    sq - name squashed to letters only, no spaces/hyphens/diacritics("Learner Tien" and "LearnerTien" -> "learnertien")
+
+    last - last token of the name (used for loose matching)
+
     sq_c / last_c - sq / last with ae/oe/ue folded (loose matching only)
     """
 
@@ -189,7 +191,7 @@ def tournament_tokens(raw) -> set[str]:
 
 
 def tournaments_agree(a, b) -> bool:
-    """True when both names have meaningful tokens and share at least one."""
+    """True when both names share at least one token."""
     return bool(tournament_tokens(a) & tournament_tokens(b))
 
 
