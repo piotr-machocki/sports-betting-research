@@ -31,12 +31,12 @@ data/**
 !data/**/
 !data/**/.gitkeep
 
-# Private bookmaker integrations
-src/betting/books/
-test_betclic.py
+# Bookmaker integrations
+src/betting/books/betclic.py
+tests/test_betclic.py
 
-# Private research
+# Research
 research/
 
-# Private Todo list
+# Todo list
 TODO
