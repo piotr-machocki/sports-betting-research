@@ -26,8 +26,10 @@ dist/
 *.sqlite
 *.sqlite3
 
-# Scraped betting data
-data/
+# Betting data 
+data/**
+!data/**/
+!data/**/.gitkeep
 
 # Private bookmaker integrations
 src/betting/books/
