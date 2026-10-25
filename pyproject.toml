@@ -19,6 +19,9 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+historical = [
+    "openpyxl>=3.1",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
