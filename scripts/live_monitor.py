@@ -4,9 +4,33 @@ Live terminal monitor for the Betclic/Pinnacle research pipeline.
 Reads only the current session's processed CSV from:
     data/results/sessions/<session_id>.csv
 
-Redraws a colour table in place (same colour conventions as compare_odds.py),
-one row per match (latest observation), sorted by best EV, and saves a
-plain-text session report with every observation.
+One row per match (latest observation), sorted by best EV, in the same colour
+conventions as compare_odds.py. A plain-text session report with every
+observation is written to --output.
+
+Display
+-------
+ALL matches are shown; there is no row limit.
+
+* Interactive terminal (default): the monitor runs in the terminal's
+  alternate screen. Header, statistics and the column header stay pinned;
+  the match table below them is a scrollable viewport:
+
+      Up / Down (or k / j)   one row
+      PgUp / PgDn (or b/f)   one page
+      Home / End (or g / G)  first / last row
+
+  Mouse-wheel scrolling works in terminals that translate the wheel into
+  arrow keys on the alternate screen (most do). New observations keep
+  updating the data and the ranking while you scroll.
+
+  When the session finishes (or on Ctrl+C) the monitor leaves the alternate
+  screen and prints the COMPLETE table into the normal terminal, so the whole
+  list can be scrolled with the terminal's own scrollbar / mouse wheel.
+
+* Non-interactive output (piped, or --plain): no live redraw; a progress line
+  is printed when new observations arrive and the complete table is printed
+  once at the end.
 
 The CSV is re-read only when it changes; the screen is redrawn every second
 so the clocks (elapsed time, data age) keep ticking.
@@ -18,13 +42,22 @@ import argparse
 import csv
 import json
 import os
+import re
 import shutil
 import sys
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import select
+    import termios
+    import tty
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,10 +65,15 @@ ROOT = Path(__file__).resolve().parents[1]
 SESSIONS_DIR = ROOT / "data" / "results" / "sessions"
 
 POLL_SECONDS = 1.0
+KEY_POLL_SECONDS = 0.25
 FINISHED_STATES = {"finished", "failed", "interrupted"}
 
 # Warn when a running session has produced nothing for this long.
 STUCK_AFTER_SECONDS = 90
+
+# The live view tries to leave at least this many table rows visible and
+# drops the statistics box / legend (in that order) when the window is short.
+COMFORT_ROWS = 10
 
 PW = 22  # player-name column width
 
@@ -101,8 +139,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--top",
         type=int,
-        default=20,
-        help="Maximum matches displayed in the terminal.",
+        default=None,
+        help=(
+            "Deprecated and ignored: every match is always displayed. "
+            "Accepted so existing launchers keep working."
+        ),
     )
 
     parser.add_argument(
@@ -134,6 +175,15 @@ def parse_args() -> argparse.Namespace:
         choices=["auto", "always", "never"],
         default="auto",
         help="ANSI colours in the terminal table.",
+    )
+
+    parser.add_argument(
+        "--plain",
+        action="store_true",
+        help=(
+            "No interactive/alternate-screen view: print progress lines "
+            "while running and the complete table at the end."
+        ),
     )
 
     return parser.parse_args()
@@ -195,6 +245,47 @@ STATUS_STYLE = {
     "failed": ("1", "31"),
     "interrupted": ("1", "33"),
 }
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def clip(line: str, width: int) -> str:
+    """Cut a line to `width` visible characters, ignoring ANSI sequences.
+
+    Keeps every table row on exactly one terminal line, which the scrolling
+    viewport relies on; a wrapped row would shift everything below it.
+    """
+    if width <= 0:
+        return line
+
+    out: list[str] = []
+    visible = 0
+    i = 0
+    cut = False
+
+    while i < len(line):
+        match = _ANSI.match(line, i)
+
+        if match:
+            out.append(match.group())
+            i = match.end()
+            continue
+
+        if visible >= width:
+            cut = True
+            break
+
+        out.append(line[i])
+        visible += 1
+        i += 1
+
+    text = "".join(out)
+
+    if cut and Style.enabled:
+        text += "\033[0m"
+
+    return text
 
 
 # ---------------------------------------------------------------- parsing ---
@@ -411,18 +502,22 @@ def flags_for(row: dict, args: argparse.Namespace) -> str:
 # ---------------------------------------------------------------- table -----
 
 
-def table_lines(rows: list[dict], args: argparse.Namespace) -> list[str]:
+def table_header_lines() -> list[str]:
     header = (
         f"{'#':>3}  {'BET ON':<{PW}} {'Betclic':>7} {'Pinnacle':>8} "
         f"{'P(ref)':>7} {'EV(ref)':>8} {'GAP':>11}  {'CONF':<8} "
         f"{'OPPONENT':<{PW + 3}}"
     )
 
-    lines = [paint(header, "1"), "-" * len(header)]
+    return [paint(header, "1"), "-" * len(header)]
 
+
+def table_row_lines(rows: list[dict], args: argparse.Namespace) -> list[str]:
+    """One terminal line per match. Numbering is the absolute rank."""
     if not rows:
-        lines.append(paint("  waiting for Betclic observations...", "2"))
-        return lines
+        return [paint("  waiting for Betclic observations...", "2")]
+
+    lines = []
 
     for index, row in enumerate(rows, start=1):
         side = best_side(row)
@@ -477,14 +572,20 @@ def table_lines(rows: list[dict], args: argparse.Namespace) -> list[str]:
     return lines
 
 
+def table_lines(rows: list[dict], args: argparse.Namespace) -> list[str]:
+    return table_header_lines() + table_row_lines(rows, args)
+
+
 # ------------------------------------------------------------ statistics ----
 
 
-def stats_box(
+def stats_items(
     all_rows: list[dict],
     latest: list[dict],
     args: argparse.Namespace,
-) -> list[str]:
+) -> list[tuple[str, str, str]]:
+    """(long label, short label, value) for every statistic."""
+
     def count(predicate) -> int:
         return sum(1 for row in latest if predicate(row))
 
@@ -496,14 +597,27 @@ def stats_box(
         else str(len(all_rows))
     )
 
-    items = [
-        ("Observations processed", processed),
-        ("Unique matches", str(len(latest))),
-        ("Found", str(count(lambda r: r.get("status") == "FOUND"))),
-        ("Not found", str(count(lambda r: r.get("status") == "NOT FOUND"))),
-        ("Errors", str(count(lambda r: r.get("status") == "ERROR"))),
+    return [
+        ("Observations processed", "Obs", processed),
+        ("Unique matches", "Matches", str(len(latest))),
+        (
+            "Found",
+            "Found",
+            str(count(lambda r: r.get("status") == "FOUND")),
+        ),
+        (
+            "Not found",
+            "NotFound",
+            str(count(lambda r: r.get("status") == "NOT FOUND")),
+        ),
+        (
+            "Errors",
+            "Err",
+            str(count(lambda r: r.get("status") == "ERROR")),
+        ),
         (
             "FOUND but no EV (live etc.)",
+            "NoEV",
             str(
                 count(
                     lambda r: r.get("status") == "FOUND"
@@ -511,16 +625,37 @@ def stats_box(
                 )
             ),
         ),
-        ("EV calculated", str(sum(ev is not None for ev in evs))),
-        ("EV(ref) > 0%", str(sum(ev is not None and ev > 0 for ev in evs))),
+        (
+            "EV calculated",
+            "EVcalc",
+            str(sum(ev is not None for ev in evs)),
+        ),
+        (
+            "EV(ref) > 0%",
+            "EV>0",
+            str(sum(ev is not None and ev > 0 for ev in evs)),
+        ),
         (
             f"EV(ref) >= {args.min_ev:.2%}",
+            f"EV>={args.min_ev:.0%}",
             str(sum(ev is not None and ev >= args.min_ev for ev in evs)),
         ),
         (
             f"Stale (gap > {args.max_age:g} min)",
+            "Stale",
             str(count(lambda r: is_stale(r, args.max_age))),
         ),
+    ]
+
+
+def stats_box(
+    all_rows: list[dict],
+    latest: list[dict],
+    args: argparse.Namespace,
+) -> list[str]:
+    items = [
+        (label, value)
+        for label, _, value in stats_items(all_rows, latest, args)
     ]
 
     left, right = items[0::2], items[1::2]
@@ -552,6 +687,18 @@ def stats_box(
 
     lines.append(separator)
     return lines
+
+
+def stats_compact(
+    all_rows: list[dict],
+    latest: list[dict],
+    args: argparse.Namespace,
+) -> str:
+    """One-line statistics, used when the window is too short for the box."""
+    return "  ".join(
+        f"{short}: {value}"
+        for _, short, value in stats_items(all_rows, latest, args)
+    )
 
 
 def header_lines(
@@ -664,52 +811,260 @@ def legend_lines(args: argparse.Namespace) -> list[str]:
     ]
 
 
-def screen_lines(
+# ------------------------------------------------------- complete screens ---
+
+
+def static_lines(
     all_rows: list[dict],
     args: argparse.Namespace,
     session_start: datetime,
     info: dict,
     now: datetime,
-    term_lines: int | None,
 ) -> list[str]:
+    """The complete dashboard with EVERY match (report, final dump, --plain)."""
     latest = sorted(latest_per_match(all_rows), key=sort_key)
 
-    pre = (
+    return (
         header_lines(all_rows, args, session_start, info, now)
         + [""]
         + stats_box(all_rows, latest, args)
         + [""]
+        + table_lines(latest, args)
+        + [""]
+        + legend_lines(args)
     )
+
+
+# ----------------------------------------------------------- live viewport --
+
+
+@dataclass
+class ViewState:
+    """Scroll position of the live table (rows above the viewport)."""
+
+    offset: int = 0
+    body_h: int = COMFORT_ROWS
+    max_offset: int = 0
+
+
+def live_frame(
+    all_rows: list[dict],
+    args: argparse.Namespace,
+    session_start: datetime,
+    info: dict,
+    now: datetime,
+    term_lines: int,
+    term_cols: int,
+    offset: int,
+) -> tuple[list[str], int, int, int]:
+    """Build one screen: pinned header + scrollable table + pinned footer.
+
+    Returns (lines, clamped_offset, viewport_height, max_offset). Every match
+    is part of the scrollable table; nothing is cut off.
+    """
+    latest = sorted(latest_per_match(all_rows), key=sort_key)
+
+    head = header_lines(all_rows, args, session_start, info, now)
     legend = legend_lines(args)
-    post = [""] + legend
+    thead = table_header_lines()
+    full_stats = [""] + stats_box(all_rows, latest, args) + [""]
+    compact_stats = [stats_compact(all_rows, latest, args)]
 
-    top = args.top
+    layouts = [
+        (head + full_stats + thead, legend),
+        (head + full_stats + thead, legend[:1]),
+        (head + compact_stats + thead, legend[:1]),
+        (head + compact_stats + thead, []),
+    ]
 
-    if term_lines:
-        # Never draw more lines than the window holds, or the in-place
-        # redraw would scroll. 2 = table header, 1 = "more rows" line.
-        available = term_lines - 1 - len(pre) - 2 - 1 - len(post)
+    usable = max(1, term_lines - 1)
 
-        if available < 5:
-            # Short window: keep only the first legend line.
-            post = legend[:1]
-            available = term_lines - 1 - len(pre) - 2 - 1 - len(post)
+    for top, bottom_legend in layouts:
+        # 1 line = the scroll status line under the table.
+        body_h = usable - len(top) - len(bottom_legend) - 1
 
-        top = max(3, min(top, available))
+        if body_h >= COMFORT_ROWS:
+            break
 
-    shown = latest[:top]
-    lines = pre + table_lines(shown, args)
+    body_h = max(3, body_h)
 
-    if len(latest) > len(shown):
-        lines.append(
-            paint(
-                f"... {len(latest) - len(shown)} more matches "
-                "(full list in the TXT report)",
-                "2",
-            )
+    row_lines = table_row_lines(latest, args)
+    total = len(row_lines) if latest else 0
+
+    max_offset = max(0, total - body_h)
+    offset = min(max(0, offset), max_offset)
+
+    body = row_lines[offset: offset + body_h]
+    body += [""] * (body_h - len(body))
+
+    if total > body_h:
+        first = offset + 1
+        last = min(total, offset + body_h)
+        hints = []
+
+        if offset > 0:
+            hints.append("more above")
+
+        if offset < max_offset:
+            hints.append("more below")
+
+        status_line = paint(
+            f"Rows {first}-{last} of {total}"
+            + (f" ({', '.join(hints)})" if hints else "")
+            + "   Up/Down scroll | PgUp/PgDn page | Home/End jump "
+            "| Ctrl+C stop",
+            "1",
+            "35",
         )
+    else:
+        status_line = paint(f"All {total} matches shown.", "2")
 
-    return lines + post
+    lines = top + body + [status_line] + bottom_legend
+
+    return lines, offset, body_h, max_offset
+
+
+# ------------------------------------------------------------------ keys ----
+
+CHAR_KEYS = {
+    "j": "down",
+    "k": "up",
+    " ": "pgdn",
+    "f": "pgdn",
+    "b": "pgup",
+    "g": "home",
+    "G": "end",
+}
+
+ARROW_LETTERS = {"A": "up", "B": "down", "H": "home", "F": "end"}
+TILDE_KEYS = {"1": "home", "4": "end", "5": "pgup", "6": "pgdn"}
+WINDOWS_KEYS = {
+    "H": "up",
+    "P": "down",
+    "I": "pgup",
+    "Q": "pgdn",
+    "G": "home",
+    "O": "end",
+}
+
+_KEY_RE = re.compile(
+    r"\x1b\[(?:1;\d)?([ABHF])"  # CSI A/B/H/F (also with modifiers)
+    r"|\x1bO([ABHF])"           # SS3 A/B/H/F (application cursor mode)
+    r"|\x1b\[([1456])~"         # CSI n ~
+    r"|(.)",
+    re.DOTALL,
+)
+
+
+def parse_keys(data: str) -> list[str]:
+    """Translate raw terminal input into key names (one call may hold many,
+    e.g. a mouse-wheel burst arrives as several arrow sequences)."""
+    keys = []
+
+    for match in _KEY_RE.finditer(data):
+        letter = match.group(1) or match.group(2)
+
+        if letter:
+            key = ARROW_LETTERS.get(letter)
+        elif match.group(3):
+            key = TILDE_KEYS.get(match.group(3))
+        else:
+            key = CHAR_KEYS.get(match.group(4))
+
+        if key:
+            keys.append(key)
+
+    return keys
+
+
+class KeyReader:
+    """Non-blocking keyboard input for the scroll keys."""
+
+    def __init__(self) -> None:
+        self.fd: int | None = None
+        self.saved = None
+
+    def start(self) -> bool:
+        if os.name == "nt":
+            return True
+
+        try:
+            self.fd = sys.stdin.fileno()
+            self.saved = termios.tcgetattr(self.fd)
+            # cbreak keeps Ctrl+C working (ISIG stays on).
+            tty.setcbreak(self.fd)
+            return True
+
+        except (termios.error, OSError, ValueError):
+            self.fd = None
+            self.saved = None
+            return False
+
+    def stop(self) -> None:
+        if os.name != "nt" and self.fd is not None and self.saved is not None:
+            try:
+                termios.tcsetattr(self.fd, termios.TCSADRAIN, self.saved)
+            except (termios.error, OSError):
+                pass
+
+    def poll(self, timeout: float) -> list[str]:
+        if os.name == "nt":
+            deadline = time.monotonic() + timeout
+            keys: list[str] = []
+
+            while True:
+                while msvcrt.kbhit():
+                    char = msvcrt.getwch()
+
+                    if char in ("\x00", "\xe0"):
+                        key = WINDOWS_KEYS.get(msvcrt.getwch())
+                    else:
+                        key = CHAR_KEYS.get(char)
+
+                    if key:
+                        keys.append(key)
+
+                if keys or time.monotonic() >= deadline:
+                    return keys
+
+                time.sleep(0.02)
+
+        try:
+            ready, _, _ = select.select([self.fd], [], [], timeout)
+
+            if not ready:
+                return []
+
+            data = os.read(self.fd, 256).decode("utf-8", "ignore")
+
+        except (OSError, ValueError):
+            time.sleep(timeout)
+            return []
+
+        return parse_keys(data)
+
+
+def apply_keys(view: ViewState, keys: list[str]) -> bool:
+    """Update the scroll position; True when it may have changed."""
+    page = max(1, view.body_h - 1)
+
+    for key in keys:
+        if key == "up":
+            view.offset -= 1
+        elif key == "down":
+            view.offset += 1
+        elif key == "pgup":
+            view.offset -= page
+        elif key == "pgdn":
+            view.offset += page
+        elif key == "home":
+            view.offset = 0
+        elif key == "end":
+            view.offset = 10**9  # clamped to the last page by live_frame
+
+    view.offset = max(0, view.offset)
+
+    return bool(keys)
 
 
 # ----------------------------------------------------------------- report ---
@@ -723,7 +1078,7 @@ def render_report(
     now: datetime,
 ) -> str:
     with plain():
-        lines = screen_lines(all_rows, args, session_start, info, now, None)
+        lines = static_lines(all_rows, args, session_start, info, now)
 
     lines.extend([
         "",
@@ -731,7 +1086,7 @@ def render_report(
         f"Report generated: {now.isoformat(timespec='seconds')}",
         "P1/P2 follow Pinnacle player order. Betclic odds are mapped to",
         "that same player order. The table above shows the latest",
-        f"observation per match (top {args.top}); details below cover",
+        "observation per match (all matches); details below cover",
         "every observation.",
     ])
 
@@ -802,28 +1157,22 @@ def write_report(path: Path, text: str) -> None:
 
 # ------------------------------------------------------------------ screen --
 
+ALT_SCREEN_ON = "\033[?1049h\033[?25l\033[?1007h"
+ALT_SCREEN_OFF = "\033[?1007l\033[?25h\033[?1049l"
 
-def draw(lines: list[str], first: bool) -> None:
-    if Style.enabled:
-        # Cursor home + clear-to-end-of-line: redraws in place, no flicker.
-        frame = (
-            ("\033[2J" if first else "")
-            + "\033[H"
-            + "".join(line + "\033[K\n" for line in lines)
-            + "\033[J"
-        )
-        sys.stdout.write(frame)
-        sys.stdout.flush()
-    else:
-        os.system("cls" if os.name == "nt" else "clear")
-        print("\n".join(lines), flush=True)
+
+def draw(lines: list[str], cols: int, clear: bool) -> None:
+    """Redraw the alternate screen in place (it has no scrollback to lose)."""
+    body = "\033[K\n".join(clip(line, cols - 1) for line in lines)
+
+    sys.stdout.write(
+        ("\033[2J" if clear else "") + "\033[H" + body + "\033[K\033[J"
+    )
+    sys.stdout.flush()
 
 
 def main() -> None:
     args = parse_args()
-
-    if args.top < 1:
-        raise SystemExit("--top must be at least 1")
 
     if not 0 <= args.min_ev:
         raise SystemExit("--min-ev must be non-negative")
@@ -841,6 +1190,24 @@ def main() -> None:
 
     setup_color(args.color)
 
+    interactive = (
+        not args.plain
+        and sys.stdout.isatty()
+        and sys.stdin.isatty()
+    )
+
+    keys: KeyReader | None = None
+
+    if interactive:
+        if os.name == "nt":
+            os.system("")  # enable ANSI cursor control in the console
+
+        keys = KeyReader()
+
+        if not keys.start():
+            interactive = False
+            keys = None
+
     session_csv = SESSIONS_DIR / f"{args.session_id}.csv"
 
     args.output = args.output.resolve()
@@ -849,76 +1216,148 @@ def main() -> None:
     rows: list[dict] = []
     csv_signature = None
     report_signature = None
-    first_frame = True
     info: dict = {}
+    status = "running"
+    finished = False
 
-    if Style.enabled:
-        sys.stdout.write("\033[?25l")  # hide cursor while redrawing
+    view = ViewState()
+    last_size: tuple[int, int] | None = None
+    last_plain_count = -1
+
+    if interactive:
+        sys.stdout.write(ALT_SCREEN_ON)
+        sys.stdout.flush()
+
+    next_refresh = 0.0
+    dirty = True
 
     try:
         while True:
-            # Read the runner status BEFORE the CSV. The runner only marks the
-            # session finished after the worker has drained its queue, so any
-            # row written before that moment is visible to the read below.
-            # Reading in the opposite order could render a "finished" screen
-            # that misses the last rows.
-            info = read_runner_info(args.status_file)
-            status = str(info.get("status", "running")).lower()
-            finished = status in FINISHED_STATES
+            if time.monotonic() >= next_refresh:
+                next_refresh = time.monotonic() + POLL_SECONDS
+                dirty = True
 
-            try:
-                stat = session_csv.stat()
-                signature = (stat.st_mtime_ns, stat.st_size)
-            except OSError:
-                signature = None
+                # Read the runner status BEFORE the CSV. The runner only
+                # marks the session finished after the worker has drained
+                # its queue, so any row written before that moment is
+                # visible to the read below. Reading in the opposite order
+                # could render a "finished" screen that misses the last
+                # rows.
+                info = read_runner_info(args.status_file)
+                status = str(info.get("status", "running")).lower()
+                finished = status in FINISHED_STATES
 
-            read_ok = True
-
-            if signature != csv_signature:
-                fresh = read_session_rows(session_csv)
-
-                if fresh is None:
-                    read_ok = False  # keep old rows, retry on the next poll
-                else:
-                    rows, csv_signature = fresh, signature
-
-            now = datetime.now(timezone.utc)
-
-            terminal_rows = shutil.get_terminal_size(fallback=(120, 30)).lines
-
-            draw(
-                screen_lines(
-                    rows, args, session_start, info, now, terminal_rows
-                ),
-                first_frame,
-            )
-            first_frame = False
-
-            # Rewrite the TXT report only when something actually changed.
-            current = (csv_signature, status)
-
-            if read_ok and current != report_signature:
                 try:
-                    write_report(
-                        args.output,
-                        render_report(rows, args, session_start, info, now),
-                    )
-                    report_signature = current
+                    stat = session_csv.stat()
+                    signature = (stat.st_mtime_ns, stat.st_size)
                 except OSError:
-                    pass  # e.g. file open in an editor; retry next poll
+                    signature = None
 
-            if finished and read_ok:
-                break
+                read_ok = True
 
-            time.sleep(POLL_SECONDS)
+                if signature != csv_signature:
+                    fresh = read_session_rows(session_csv)
+
+                    if fresh is None:
+                        read_ok = False  # keep old rows, retry next poll
+                    else:
+                        rows, csv_signature = fresh, signature
+
+                # Rewrite the TXT report only when something changed.
+                current = (csv_signature, status)
+
+                if read_ok and current != report_signature:
+                    try:
+                        write_report(
+                            args.output,
+                            render_report(
+                                rows,
+                                args,
+                                session_start,
+                                info,
+                                datetime.now(timezone.utc),
+                            ),
+                        )
+                        report_signature = current
+                    except OSError:
+                        pass  # e.g. file open in an editor; retry later
+
+                if finished and read_ok:
+                    break
+
+                if not interactive and len(rows) != last_plain_count:
+                    last_plain_count = len(rows)
+                    print(
+                        f"[{datetime.now():%H:%M:%S}] "
+                        f"{len(rows)} observations processed "
+                        f"(session {status})",
+                        flush=True,
+                    )
+
+            if interactive:
+                size = shutil.get_terminal_size(fallback=(120, 30))
+
+                if (size.columns, size.lines) != last_size:
+                    dirty = True
+
+                if dirty:
+                    lines, view.offset, view.body_h, view.max_offset = (
+                        live_frame(
+                            rows,
+                            args,
+                            session_start,
+                            info,
+                            datetime.now(timezone.utc),
+                            size.lines,
+                            size.columns,
+                            view.offset,
+                        )
+                    )
+
+                    draw(
+                        lines,
+                        size.columns,
+                        clear=(size.columns, size.lines) != last_size,
+                    )
+
+                    last_size = (size.columns, size.lines)
+                    dirty = False
+
+            wait = max(0.0, next_refresh - time.monotonic())
+
+            if keys is not None:
+                pressed = keys.poll(min(wait, KEY_POLL_SECONDS))
+
+                if pressed and apply_keys(view, pressed):
+                    dirty = True
+            else:
+                time.sleep(min(wait, KEY_POLL_SECONDS))
 
     except KeyboardInterrupt:
         print("\nMonitor interrupted.", flush=True)
 
     finally:
-        if Style.enabled:
-            sys.stdout.write("\033[?25h")  # restore cursor
+        if keys is not None:
+            keys.stop()
+
+        if interactive:
+            sys.stdout.write(ALT_SCREEN_OFF)
             sys.stdout.flush()
+
+    # Leave the COMPLETE table in the normal terminal buffer so that it can
+    # be scrolled with the terminal's own scrollbar / mouse wheel.
+    print(
+        "\n".join(
+            static_lines(
+                rows,
+                args,
+                session_start,
+                info,
+                datetime.now(timezone.utc),
+            )
+        ),
+        flush=True,
+    )
 
     if str(info.get("status", "")).lower() in FINISHED_STATES:
         print("\nSession finished.", flush=True)
