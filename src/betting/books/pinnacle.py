@@ -110,7 +110,7 @@ def parse_pinnacle_matches(data: dict[str, Any], captured_at: str) -> list[dict[
 
 # ---------- pipeline ----------
 
-def main():
+def main() -> dict[str, Any]:
     api_key = os.environ.get("PINNAPI_KEY")
     if not api_key:
         sys.exit("Set the PINNAPI_KEY environment variable.")
@@ -119,7 +119,9 @@ def main():
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     JSON_DIR.mkdir(parents=True, exist_ok=True)
 
+    fetch_started = time.perf_counter()
     data = fetch_events(api_key)
+    fetch_seconds = time.perf_counter() - fetch_started
 
     now = datetime.now(timezone.utc)
     captured_at = now.isoformat()
@@ -150,6 +152,12 @@ def main():
     print(f"Parsed {len(matches)} matches")
     print(f"Latest CSV: {LATEST_CSV}")
     print(f"Historical snapshot: {csv_path}")
+
+    return {
+        "events": len(data.get("events", [])),
+        "matches": len(matches),
+        "api_seconds": fetch_seconds,
+    }
 
 
 if __name__ == "__main__":

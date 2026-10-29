@@ -63,8 +63,10 @@ STOP_FILE = BETCLIC_DIR / "STOP_PROCESSOR"
 
 
 sys.path.insert(0, str(SRC_DIR))
+sys.path.insert(0, str(SCRIPTS_DIR))
 
 from betting.books import pinnacle  # noqa: E402
+from perf_summary import performance_lines  # noqa: E402
 
 
 # --------------------------------------------------------------- timestamps -
@@ -306,6 +308,9 @@ def wait_for_worker(
 
 
 def main() -> None:
+    run_clock = time.perf_counter()
+    run_started_at = timestamp_string(utc_now())
+
     args = parse_args()
 
     if args.limit < 1:
@@ -348,19 +353,22 @@ def main() -> None:
 
     print("\n=== Pinnacle: collecting odds ===", flush=True)
 
-    started = time.perf_counter()
+    pinnacle_clock = time.perf_counter()
 
     try:
-        pinnacle.main()
+        pinnacle_stats = pinnacle.main() or {}
     except Exception as exc:
         sys.exit(
             f"ERROR: Pinnacle collection failed: "
             f"{type(exc).__name__}: {exc}"
         )
 
+    pinnacle_done_clock = time.perf_counter()
+    pinnacle_finished_at = timestamp_string(utc_now())
+    pinnacle_seconds = pinnacle_done_clock - pinnacle_clock
+
     print(
-        f"--- Pinnacle finished in "
-        f"{time.perf_counter() - started:.1f}s ---",
+        f"--- Pinnacle finished in {pinnacle_seconds:.1f}s ---",
         flush=True,
     )
 
@@ -403,6 +411,12 @@ def main() -> None:
     monitor = None
     session_status = "finished"
     session_error = ""
+
+    betclic_started_at = None
+    betclic_finished_at = None
+    betclic_clock = None
+    betclic_done_clock = None
+    betclic_outcome = "not started"
 
     try:
         # Start the worker before Betclic publishes observations.
@@ -450,11 +464,20 @@ def main() -> None:
 
         print(f"Running: {' '.join(command)}", flush=True)
 
-        subprocess.run(
-            command,
-            cwd=ROOT,
-            check=True,
-        )
+        betclic_started_at = timestamp_string(utc_now())
+        betclic_clock = time.perf_counter()
+        betclic_outcome = "failed or interrupted"
+
+        try:
+            subprocess.run(
+                command,
+                cwd=ROOT,
+                check=True,
+            )
+            betclic_outcome = "completed"
+        finally:
+            betclic_done_clock = time.perf_counter()
+            betclic_finished_at = timestamp_string(utc_now())
 
     except KeyboardInterrupt:
         session_status = "interrupted"
@@ -489,6 +512,35 @@ def main() -> None:
 
         finished_at = timestamp_string(utc_now())
 
+        performance = {
+            "run_started_at": run_started_at,
+            "run_finished_at": finished_at,
+            "total_seconds": time.perf_counter() - run_clock,
+            "pinnacle": {
+                "total_seconds": pinnacle_seconds,
+                "api_seconds": pinnacle_stats.get("api_seconds"),
+                "events": pinnacle_stats.get("events"),
+                "matches": pinnacle_stats.get("matches"),
+                "completed_at": pinnacle_finished_at,
+            },
+            "betclic": {
+                "seconds": (
+                    betclic_done_clock - betclic_clock
+                    if betclic_clock is not None
+                    and betclic_done_clock is not None
+                    else None
+                ),
+                "started_at": betclic_started_at,
+                "completed_at": betclic_finished_at,
+                "outcome": betclic_outcome,
+            },
+            "completion_gap_seconds": (
+                betclic_done_clock - pinnacle_done_clock
+                if betclic_done_clock is not None
+                else None
+            ),
+        }
+
         write_json_atomic(
             status_path,
             {
@@ -500,6 +552,7 @@ def main() -> None:
                 "results": str(results_path),
                 "report": str(report_path),
                 "error": session_error,
+                "performance": performance,
             },
         )
 
@@ -509,6 +562,11 @@ def main() -> None:
         print(f"Pinnacle snapshot: {pinnacle_snapshot}", flush=True)
         print(f"Session CSV:       {results_path}", flush=True)
         print(f"Session report:    {report_path}", flush=True)
+
+        print("", flush=True)
+
+        for line in performance_lines(performance):
+            print(line, flush=True)
 
         if monitor is not None:
             print(

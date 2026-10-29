@@ -34,6 +34,9 @@ ALL matches are shown; there is no row limit.
 
 The CSV is re-read only when it changes; the screen is redrawn every second
 so the clocks (elapsed time, data age) keep ticking.
+
+When run_once.py finishes it stores a "performance" block in the status JSON;
+the monitor appends it to the TXT report and prints it after the final table.
 """
 
 from __future__ import annotations
@@ -51,6 +54,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from perf_summary import performance_lines
 
 if os.name == "nt":
     import msvcrt
@@ -751,27 +756,8 @@ def header_lines(
             + "   "
             + paint(status.upper(), *STATUS_STYLE.get(status, ("1",)))
         ),
-        (
-            f"Session: {args.session_id}   "
-            f"Started: {session_start:%H:%M:%S} UTC   "
-            f"Elapsed: {fmt_age(elapsed)}"
-        ),
-        (
-            f"Pinnacle data age: {fmt_age(pinnacle_age)}   "
-            f"Last observation: {last_text}   "
-            f"Max gap: {fmt_age(max(gaps)) if gaps else '--'}"
-        ),
+        f"Session: {args.session_id}",
     ]
-
-    waiting_for_more = not args.expected or processed < args.expected
-
-    if not finished and waiting_for_more and idle > STUCK_AFTER_SECONDS:
-        lines[2] += "   " + paint(
-            f"NO NEW OBSERVATION FOR {fmt_age(idle).upper()} - "
-            "scraper may be stuck",
-            "1",
-            "31",
-        )
 
     if args.expected:
         fraction = min(1.0, processed / args.expected)
@@ -786,8 +772,6 @@ def header_lines(
             f"Progress: [{'#' * filled}{'-' * (20 - filled)}] "
             f"{processed}/{args.expected} ({fraction:.0%}){eta}"
         )
-    else:
-        lines.append(f"Observations: {processed}")
 
     return lines
 
@@ -827,12 +811,38 @@ def static_lines(
     return (
         header_lines(all_rows, args, session_start, info, now)
         + [""]
+                + performance_lines(
+            info.get("performance"),
+            started_at=session_start,
+            pinnacle_data_age_seconds=(
+                (
+                    (parse_timestamp(info.get("session_finished_at")) or now)
+                    if str(info.get("status", "")).lower() in FINISHED_STATES
+                    else now
+                )
+                - (
+                    min(
+                        (
+                            t
+                            for t in (
+                                parse_timestamp(row.get("pinnacle_captured_at"))
+                                for row in all_rows
+                            )
+                            if t is not None
+                        ),
+                        default=session_start,
+                    )
+                )
+            ).total_seconds(),
+        )
+        + [""]
         + stats_box(all_rows, latest, args)
         + [""]
         + table_lines(latest, args)
         + [""]
         + legend_lines(args)
     )
+
 
 
 # ----------------------------------------------------------- live viewport --
