@@ -775,24 +775,30 @@ def header_lines(
 
     return lines
 
-
 def legend_lines(args: argparse.Namespace) -> list[str]:
     threshold = f"{args.min_ev * 100:g}%"
 
     return [
-        "Legend: "
+        "Legend:",
+        "  "
         + paint("BET ON", "1", "36")
-        + " = side with the best EV | "
-        + paint("red", "31") + " EV<0% | "
-        + paint("gray", "90") + " EV=0% | "
-        + paint("yellow", "33") + f" 0%<EV<{threshold} | "
-        + paint("green", "1", "32") + f" EV>={threshold}",
-        f"GAP = Betclic capture minus Pinnacle capture; "
-        f"{paint('STALE', '1', '33')} = GAP > {args.max_age:g} min. "
-        "CONF = scraper match confidence.",
-        "EV(ref) = proportional devig of Pinnacle odds. One row per match "
-        "(latest observation), best EV first.",
+        + " = side with the best EV",
+        "  "
+        + paint("red", "31") + " EV < 0% | "
+        + paint("gray", "90") + " EV = 0% | "
+        + paint("yellow", "33") + f" 0% < EV < {threshold} | "
+        + paint("green", "1", "32") + f" EV >= {threshold}",
+        "  "
+        + "GAP = Betclic capture minus Pinnacle capture",
+        "  "
+        + paint("STALE", "1", "33")
+        + f" = GAP > {args.max_age:g} min | "
+        + "CONF = scraper match confidence",
+        "  "
+        + "EV(ref) = proportional devig of Pinnacle odds | "
+        + "One row per match (latest observation), best EV first",
     ]
+
 
 
 # ------------------------------------------------------- complete screens ---

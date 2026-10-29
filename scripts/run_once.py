@@ -521,6 +521,8 @@ def main() -> None:
                 "api_seconds": pinnacle_stats.get("api_seconds"),
                 "events": pinnacle_stats.get("events"),
                 "matches": pinnacle_stats.get("matches"),
+                "excluded": pinnacle_stats.get("excluded"),
+                "invalid": pinnacle_stats.get("invalid"),
                 "completed_at": pinnacle_finished_at,
             },
             "betclic": {

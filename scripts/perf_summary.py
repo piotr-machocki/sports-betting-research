@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+REASON_LABELS = {
+    "child_event": "child event (games market)",
+    "no_odds": "no odds available",
+    "no_full_match_market": "no full-match market",
+    "no_money_line": "no match-winner odds",
+    "missing_players": "missing player name",
+    "invalid_odds": "unparseable or <= 1.0 odds",
+}
+
 
 def format_duration(seconds) -> str:
     if seconds is None:
@@ -30,12 +39,61 @@ def format_timestamp(value) -> str:
     return str(value).replace("T", " ").replace("Z", " UTC")
 
 
+def quality_lines(pin: dict) -> list[str]:
+    """Pinnacle data-quality block; empty when the breakdown is unavailable.
+
+    Excluded = not a full-match winner market (expected).
+    Invalid  = looked like a match but its data was unusable.
+    """
+    events = pin.get("events")
+    valid = pin.get("matches")
+    excluded = pin.get("excluded")
+    invalid = pin.get("invalid")
+
+    if events is None or valid is None:
+        return []
+
+    if excluded is None and invalid is None:
+        return []
+
+    excluded = excluded or {}
+    invalid = invalid or {}
+    n_excluded = sum(excluded.values())
+    n_invalid = sum(invalid.values())
+
+    def row(label: str, count: int, indent: int = 2) -> str:
+        return f"{' ' * indent}{label:<{34 - indent}}{count:>6}"
+
+    lines = [
+        "Pinnacle data quality",
+        row("Events received", events),
+        row("Valid matches", valid),
+        row("Excluded (not a match market)", n_excluded),
+    ]
+    lines += [
+        row(REASON_LABELS.get(reason, reason), count, 4)
+        for reason, count in excluded.items()
+    ]
+    lines.append(row("Invalid (bad data)", n_invalid))
+    lines += [
+        row(REASON_LABELS.get(reason, reason), count, 4)
+        for reason, count in invalid.items()
+    ]
+
+    if valid + n_excluded + n_invalid != events:
+        lines.append(
+            f"  WARNING: totals do not reconcile "
+            f"({valid} + {n_excluded} + {n_invalid} != {events})"
+        )
+
+    return lines
+
 def performance_lines(
     perf: dict | None,
     started_at=None,
     pinnacle_data_age_seconds=None,
 ) -> list[str]:
-    """Plain-text summary (no ANSI), safe for terminal and TXT report."""
+    """Format performance and Pinnacle data-quality sections."""
     if not perf:
         return []
 
@@ -78,5 +136,9 @@ def performance_lines(
             f"{format_duration(abs(gap))} {direction} Pinnacle"
         )
 
-    lines.append("=" * 60)
+    quality = quality_lines(pin)
+    if quality:
+        lines.extend(["", "=" * 60, "PINNACLE DATA QUALITY", "=" * 60])
+        lines.extend(quality[1:])
+
     return lines

@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,12 @@ CSV_FIELDS = [
     "player1", "odds1", "player2", "odds2",
     "tournament", "round", "status", "captured_at",
 ]
+
+# Why an event did not become a match. Every event gets exactly one outcome.
+# EXCLUDED: not a full-match winner market (expected, not a data problem).
+# INVALID:  looks like a match but its data is unusable.
+EXCLUDED_REASONS = ("child_event", "no_odds", "no_full_match_market", "no_money_line")
+INVALID_REASONS = ("missing_players", "invalid_odds")
 
 
 # ---------- fetching ----------
@@ -61,51 +68,72 @@ def fetch_events(api_key: str, retries: int = 3) -> dict[str, Any]:
 
 # ---------- parsing ----------
 
-def parse_pinnacle_matches(data: dict[str, Any], captured_at: str) -> list[dict[str, Any]]:
-    """Extract tennis match-winner (moneyline) odds from pinnapi response."""
+def parse_event(
+    ev: dict[str, Any], captured_at: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Return (match, None) for a valid event, else (None, rejection_reason)."""
+    # "(Games)" events have parent_id - they are games markets, not the match.
+    if ev.get("parent_id") is not None:
+        return None, "child_event"
+    if not ev.get("is_have_odds", True):
+        return None, "no_odds"
+
+    # Period 0 = whole match.
+    full_match = None
+    for key, per in (ev.get("periods") or {}).items():
+        if per.get("number", key) in (0, "0", "num_0"):
+            full_match = per
+            break
+    if not full_match:
+        return None, "no_full_match_market"
+
+    ml = full_match.get("money_line") or {}
+    home_odds, away_odds = ml.get("home"), ml.get("away")
+    home, away = ev.get("home"), ev.get("away")
+
+    if not home or not away:
+        return None, "missing_players"
+    if home_odds is None and away_odds is None:
+        return None, "no_money_line"
+    try:
+        home_odds, away_odds = float(home_odds), float(away_odds)
+    except (TypeError, ValueError):
+        return None, "invalid_odds"
+    if home_odds <= 1 or away_odds <= 1:
+        return None, "invalid_odds"
+
+    return {
+        "player1": home,
+        "odds1": home_odds,
+        "player2": away,
+        "odds2": away_odds,
+        "tournament": ev.get("league_name"),
+        "round": None,  # Pinnacle does not provide the round
+        "status": ev.get("event_type") or "prematch",
+        "captured_at": captured_at,
+    }, None
+
+
+def parse_pinnacle_matches_detailed(
+    data: dict[str, Any], captured_at: str
+) -> tuple[list[dict[str, Any]], Counter]:
+    """Extract tennis match-winner (moneyline) odds plus rejection counts."""
     matches = []
+    rejected: Counter = Counter()
 
     for ev in data.get("events", []):
-        # "(Games)" events have parent_id - they are games markets, not the match.
-        if ev.get("parent_id") is not None:
-            continue
-        if not ev.get("is_have_odds", True):
-            continue
+        match, reason = parse_event(ev, captured_at)
+        if match is None:
+            rejected[reason] += 1
+        else:
+            matches.append(match)
 
-        # Period 0 = whole match.
-        full_match = None
-        for key, per in (ev.get("periods") or {}).items():
-            if per.get("number", key) in (0, "0", "num_0"):
-                full_match = per
-                break
-        if not full_match:
-            continue
+    return matches, rejected
 
-        ml = full_match.get("money_line") or {}
-        home_odds, away_odds = ml.get("home"), ml.get("away")
-        home, away = ev.get("home"), ev.get("away")
 
-        if not home or not away:
-            continue
-        try:
-            home_odds, away_odds = float(home_odds), float(away_odds)
-        except (TypeError, ValueError):
-            continue
-        if home_odds <= 1 or away_odds <= 1:
-            continue
-
-        matches.append({
-            "player1": home,
-            "odds1": home_odds,
-            "player2": away,
-            "odds2": away_odds,
-            "tournament": ev.get("league_name"),
-            "round": None,  # Pinnacle does not provide the round
-            "status": ev.get("event_type") or "prematch",
-            "captured_at": captured_at,
-        })
-
-    return matches
+def parse_pinnacle_matches(data: dict[str, Any], captured_at: str) -> list[dict[str, Any]]:
+    """Extract tennis match-winner (moneyline) odds from pinnapi response."""
+    return parse_pinnacle_matches_detailed(data, captured_at)[0]
 
 
 # ---------- pipeline ----------
@@ -130,7 +158,7 @@ def main() -> dict[str, Any]:
     # Save raw response before parsing, for debugging.
     LATEST_JSON.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
 
-    matches = parse_pinnacle_matches(data, captured_at)
+    matches, rejected = parse_pinnacle_matches_detailed(data, captured_at)
     if not matches:
         raise RuntimeError(f"No matches parsed. CSV not saved, inspect {LATEST_JSON}")
 
@@ -157,6 +185,8 @@ def main() -> dict[str, Any]:
         "events": len(data.get("events", [])),
         "matches": len(matches),
         "api_seconds": fetch_seconds,
+        "excluded": {r: rejected[r] for r in EXCLUDED_REASONS if rejected[r]},
+        "invalid": {r: rejected[r] for r in INVALID_REASONS if rejected[r]},
     }
 
 
