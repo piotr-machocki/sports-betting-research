@@ -13,7 +13,9 @@ Display
 ALL matches are shown; there is no row limit.
 
 * Interactive terminal (default): the monitor runs in the terminal's
-  alternate screen. Header, statistics and the column header stay pinned;
+  alternate screen. Header, PINNACLE DATA QUALITY and the column header stay
+  pinned (the statistics box only makes sense once Betclic odds are in, so
+  it is shown in the final report, not during collection);
   the match table below them is a scrollable viewport:
 
       Up / Down (or k / j)   one row
@@ -55,7 +57,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from perf_summary import performance_lines
+from perf_summary import performance_lines, quality_section
 
 if os.name == "nt":
     import msvcrt
@@ -77,13 +79,18 @@ FINISHED_STATES = {"finished", "failed", "interrupted"}
 STUCK_AFTER_SECONDS = 90
 
 # The live view tries to leave at least this many table rows visible and
-# drops the statistics box / legend (in that order) when the window is short.
+# drops the legend when the window is short.
 COMFORT_ROWS = 10
+
+# While PINNACLE DATA QUALITY is shown it takes priority over the legend; the
+# table only needs this many visible rows (it scrolls).
+QUALITY_MIN_ROWS = 5
 
 PW = 22  # player-name column width
 
 FIELDS = [
     "observation_id",
+    "match_no",
     "pinnacle_captured_at",
     "betclic_captured_at",
     "observation_gap_seconds",
@@ -367,6 +374,29 @@ def read_runner_info(path: Path) -> dict:
 
 
 # ------------------------------------------------------------- formatting ---
+
+
+def pinnacle_info(info: dict) -> dict:
+    """Pinnacle collection stats from the runner status file.
+
+    The final "performance" block wins; before it exists the runner's early
+    "pinnacle" block (written before Betclic scraping starts) is used.
+    """
+    performance = info.get("performance") or {}
+
+    return performance.get("pinnacle") or info.get("pinnacle") or {}
+
+
+def early_quality_lines(info: dict) -> list[str]:
+    """PINNACLE DATA QUALITY for a report written before the final summary.
+
+    Once the final performance block exists, performance_lines prints the
+    section itself, so it is never listed twice.
+    """
+    if info.get("performance"):
+        return []
+
+    return quality_section(pinnacle_info(info))
 
 
 def sort_key(row: dict) -> tuple:
@@ -694,18 +724,6 @@ def stats_box(
     return lines
 
 
-def stats_compact(
-    all_rows: list[dict],
-    latest: list[dict],
-    args: argparse.Namespace,
-) -> str:
-    """One-line statistics, used when the window is too short for the box."""
-    return "  ".join(
-        f"{short}: {value}"
-        for _, short, value in stats_items(all_rows, latest, args)
-    )
-
-
 def header_lines(
     all_rows: list[dict],
     args: argparse.Namespace,
@@ -841,6 +859,7 @@ def static_lines(
                 )
             ).total_seconds(),
         )
+        + early_quality_lines(info)
         + [""]
         + stats_box(all_rows, latest, args)
         + [""]
@@ -883,23 +902,37 @@ def live_frame(
     head = header_lines(all_rows, args, session_start, info, now)
     legend = legend_lines(args)
     thead = table_header_lines()
-    full_stats = [""] + stats_box(all_rows, latest, args) + [""]
-    compact_stats = [stats_compact(all_rows, latest, args)]
 
+    # The statistics box (found / not found / EV counts) is not part of the
+    # live screen: it only means something once the Betclic odds are in, so it
+    # appears in the final report (static_lines) after collection.
     layouts = [
-        (head + full_stats + thead, legend),
-        (head + full_stats + thead, legend[:1]),
-        (head + compact_stats + thead, legend[:1]),
-        (head + compact_stats + thead, []),
+        (head + [""] + thead, legend, COMFORT_ROWS),
+        (head + [""] + thead, legend[:1], COMFORT_ROWS),
+        (head + [""] + thead, [], COMFORT_ROWS),
     ]
+
+    # PINNACLE DATA QUALITY is known before Betclic scraping starts, so it is
+    # pinned under the header from the first frame and stays there, ahead of
+    # the legend.
+    quality = quality_section(pinnacle_info(info))
+
+    if quality:
+        with_quality = head + [""] + quality + [""]
+
+        layouts = [
+            (with_quality + thead, legend, COMFORT_ROWS),
+            (with_quality + thead, legend[:1], COMFORT_ROWS),
+            (with_quality + thead, [], QUALITY_MIN_ROWS),
+        ] + layouts
 
     usable = max(1, term_lines - 1)
 
-    for top, bottom_legend in layouts:
+    for top, bottom_legend, needed in layouts:
         # 1 line = the scroll status line under the table.
         body_h = usable - len(top) - len(bottom_legend) - 1
 
-        if body_h >= COMFORT_ROWS:
+        if body_h >= needed:
             break
 
     body_h = max(3, body_h)
@@ -1120,6 +1153,7 @@ def render_report(
             lines.extend([
                 "",
                 f"Observation ID: {row.get('observation_id', '')}",
+                f"Match #: {row.get('match_no', '')}",
                 f"Match: {match_name(row)}",
                 f"Tournament: {row.get('pinnacle_tournament', '')}",
                 f"Status: {row.get('status', '')}",
@@ -1239,6 +1273,7 @@ def main() -> None:
     view = ViewState()
     last_size: tuple[int, int] | None = None
     last_plain_count = -1
+    quality_printed = False
 
     if interactive:
         sys.stdout.write(ALT_SCREEN_ON)
@@ -1300,6 +1335,22 @@ def main() -> None:
 
                 if finished and read_ok:
                     break
+
+                # Plain output has no live screen: print the Pinnacle data
+                # quality once, as soon as the runner has published it. (The
+                # final report below is the complete, unchanged summary.)
+                if not interactive and not quality_printed:
+                    early = quality_section(
+                        pinnacle_info(info),
+                        title=(
+                            "PINNACLE DATA QUALITY "
+                            "(collected before Betclic scraping)"
+                        ),
+                    )
+
+                    if early:
+                        print("\n".join(early), flush=True)
+                        quality_printed = True
 
                 if not interactive and len(rows) != last_plain_count:
                     last_plain_count = len(rows)

@@ -88,6 +88,23 @@ def quality_lines(pin: dict) -> list[str]:
 
     return lines
 
+def quality_section(
+    pin: dict | None,
+    title: str = "PINNACLE DATA QUALITY",
+) -> list[str]:
+    """The framed PINNACLE DATA QUALITY block; empty when unavailable.
+
+    Used by the final report (via performance_lines) and by the live monitor,
+    which shows it as soon as Pinnacle collection has finished.
+    """
+    quality = quality_lines(pin or {})
+
+    if not quality:
+        return []
+
+    return ["=" * 60, title, "=" * 60] + quality[1:]
+
+
 def performance_lines(
     perf: dict | None,
     started_at=None,
@@ -136,9 +153,8 @@ def performance_lines(
             f"{format_duration(abs(gap))} {direction} Pinnacle"
         )
 
-    quality = quality_lines(pin)
-    if quality:
-        lines.extend(["", "=" * 60, "PINNACLE DATA QUALITY", "=" * 60])
-        lines.extend(quality[1:])
+    section = quality_section(pin)
+    if section:
+        lines.extend([""] + section)
 
     return lines

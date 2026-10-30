@@ -41,29 +41,31 @@ INVALID_REASONS = ("missing_players", "invalid_odds")
 
 # ---------- fetching ----------
 
-def fetch_events(api_key: str, retries: int = 3) -> dict[str, Any]:
-    for _ in range(retries):
-        r = requests.get(
-            BASE_URL + PATH_PREMATCH,
-            params={"sport_id": TENNIS_SPORT_ID},
-            headers={"x-portal-apikey": api_key},
-            timeout=30,
+def fetch_events(api_key: str) -> dict[str, Any]:
+    """One request per run. A rate limit is reported, never retried."""
+    r = requests.get(
+        BASE_URL + PATH_PREMATCH,
+        params={"sport_id": TENNIS_SPORT_ID},
+        headers={"x-portal-apikey": api_key},
+        timeout=30,
+    )
+    if r.status_code == 429:
+        retry_after = r.headers.get("Retry-After")
+        when = f" PinnAPI asks to wait {retry_after}s." if retry_after else ""
+        sys.exit(
+            "429: PinnAPI rate limit reached. No retry was made, so no more "
+            f"of the quota is used.{when} Nothing was collected and no session "
+            "was started; run again once the limit has reset."
         )
-        if r.status_code == 429:
-            wait = int(r.headers.get("Retry-After", "30"))
-            print(f"429 rate limit, waiting {wait}s...", file=sys.stderr)
-            time.sleep(wait)
-            continue
-        if r.status_code == 401:
-            sys.exit("401: invalid or missing API key.")
-        if r.status_code == 503:
-            sys.exit("503: prematch feed disabled on pinnapi side.")
-        r.raise_for_status()
-        try:
-            return r.json()
-        except requests.exceptions.JSONDecodeError as exc:
-            raise RuntimeError("PinnAPI returned an invalid JSON response.") from exc
-    sys.exit("Failed to fetch data (rate limit).")
+    if r.status_code == 401:
+        sys.exit("401: invalid or missing API key.")
+    if r.status_code == 503:
+        sys.exit("503: prematch feed disabled on pinnapi side.")
+    r.raise_for_status()
+    try:
+        return r.json()
+    except requests.exceptions.JSONDecodeError as exc:
+        raise RuntimeError("PinnAPI returned an invalid JSON response.") from exc
 
 
 # ---------- parsing ----------

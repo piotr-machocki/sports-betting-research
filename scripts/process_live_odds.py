@@ -44,6 +44,7 @@ FAILED_ATTEMPTS: dict[str, int] = {}
 
 OUTPUT_FIELDS = [
     "observation_id",
+    "match_no",
     "pinnacle_captured_at",
     "betclic_captured_at",
     "observation_gap_seconds",
@@ -196,6 +197,7 @@ def calculate_observation(message: dict) -> dict:
 
     result.update({
         "observation_id": message.get("observation_id", ""),
+        "match_no": message.get("match_no", ""),
         "pinnacle_captured_at": message.get(
             "pinnacle_captured_at", ""
         ),
@@ -325,6 +327,31 @@ def read_processed_ids(path: Path) -> set[str]:
         }
 
 
+def csv_fieldnames(path: Path) -> list[str]:
+    """Columns to append with: the header of an existing CSV, else ours.
+
+    An older CSV (e.g. the historical file written before "match_no"
+    existed) keeps its own columns, so appended rows are never ragged.
+    """
+
+    try:
+        if path.exists() and path.stat().st_size > 0:
+            with path.open(
+                "r",
+                encoding="utf-8-sig",
+                newline="",
+            ) as file:
+                header = next(csv.reader(file), None)
+
+            if header:
+                return header
+
+    except (OSError, csv.Error):
+        pass
+
+    return OUTPUT_FIELDS
+
+
 def append_csv_row(path: Path, row: dict) -> None:
     """Append one row, creating the CSV and header when necessary."""
 
@@ -335,6 +362,8 @@ def append_csv_row(path: Path, row: dict) -> None:
         or path.stat().st_size == 0
     )
 
+    fieldnames = csv_fieldnames(path)
+
     with path.open(
         "a",
         encoding="utf-8-sig",
@@ -342,7 +371,7 @@ def append_csv_row(path: Path, row: dict) -> None:
     ) as file:
         writer = csv.DictWriter(
             file,
-            fieldnames=OUTPUT_FIELDS,
+            fieldnames=fieldnames,
             extrasaction="ignore",
         )
 

@@ -92,6 +92,23 @@ def make_session_id() -> str:
     return f"session_{timestamp}_{suffix}"
 
 
+def build_pinnacle_info(
+    stats: dict,
+    total_seconds: float,
+    completed_at: str,
+) -> dict:
+    """Pinnacle collection summary (timings and data-quality breakdown)."""
+    return {
+        "total_seconds": total_seconds,
+        "api_seconds": stats.get("api_seconds"),
+        "events": stats.get("events"),
+        "matches": stats.get("matches"),
+        "excluded": stats.get("excluded"),
+        "invalid": stats.get("invalid"),
+        "completed_at": completed_at,
+    }
+
+
 def write_json_atomic(path: Path, data: dict) -> None:
     """Write JSON atomically to avoid partially written status files."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -484,6 +501,15 @@ def main() -> None:
         flush=True,
     )
 
+    # Everything about the Pinnacle collection is known now. It goes into the
+    # status file the monitor reads, so PINNACLE DATA QUALITY can be shown
+    # before Betclic scraping starts. No further Pinnacle request is made.
+    pinnacle_info = build_pinnacle_info(
+        pinnacle_stats,
+        pinnacle_seconds,
+        pinnacle_finished_at,
+    )
+
     # Create a unique session ID after Pinnacle collection.
     session_started_at = utc_now()
     session_start = timestamp_string(session_started_at)
@@ -513,6 +539,7 @@ def main() -> None:
             "session_id": session_id,
             "status": "running",
             "session_start": session_start,
+            "pinnacle": pinnacle_info,
             "pinnacle_snapshot": str(pinnacle_snapshot),
             "results": str(results_path),
             "report": str(report_path),
@@ -631,15 +658,7 @@ def main() -> None:
             "run_started_at": run_started_at,
             "run_finished_at": finished_at,
             "total_seconds": time.perf_counter() - run_clock,
-            "pinnacle": {
-                "total_seconds": pinnacle_seconds,
-                "api_seconds": pinnacle_stats.get("api_seconds"),
-                "events": pinnacle_stats.get("events"),
-                "matches": pinnacle_stats.get("matches"),
-                "excluded": pinnacle_stats.get("excluded"),
-                "invalid": pinnacle_stats.get("invalid"),
-                "completed_at": pinnacle_finished_at,
-            },
+            "pinnacle": pinnacle_info,
             "betclic": {
                 "seconds": (
                     betclic_done_clock - betclic_clock
