@@ -37,6 +37,11 @@ SESSIONS_DIR = RESULTS_DIR / "sessions"
 
 POLL_SECONDS = 0.5
 
+# A message that keeps failing is moved to <archive>/failed after this many
+# attempts, so it can never block the queue drain.
+MAX_ATTEMPTS = 3
+FAILED_ATTEMPTS: dict[str, int] = {}
+
 OUTPUT_FIELDS = [
     "observation_id",
     "pinnacle_captured_at",
@@ -374,6 +379,36 @@ def append_result(
         historical_ids.add(observation_id)
 
 
+def quarantine(path: Path, archive_dir: Path) -> None:
+    """Move a message that keeps failing out of the incoming queue."""
+
+    failed_dir = archive_dir / "failed"
+    FAILED_ATTEMPTS.pop(path.name, None)
+
+    try:
+        failed_dir.mkdir(parents=True, exist_ok=True)
+
+        target = failed_dir / path.name
+
+        if target.exists():
+            target = failed_dir / (
+                f"{path.stem}_{time.time_ns()}{path.suffix}"
+            )
+
+        path.replace(target)
+
+        print(
+            f"[QUARANTINED] {path.name} -> {target}",
+            flush=True,
+        )
+
+    except OSError as exc:
+        print(
+            f"[ERROR] could not quarantine {path.name}: {exc}",
+            flush=True,
+        )
+
+
 def process_file(
     path: Path,
     session_id: str,
@@ -387,7 +422,8 @@ def process_file(
     Process a single queue message.
 
     Returns True if the message was successfully processed and archived.
-    Messages belonging to another session are left untouched.
+    Messages belonging to another session are left untouched. A message
+    that fails MAX_ATTEMPTS times is quarantined so the queue can drain.
     """
 
     try:
@@ -444,20 +480,22 @@ def process_file(
             )
 
         path.replace(archive_path)
+        FAILED_ATTEMPTS.pop(path.name, None)
 
         return True
 
-    except (
-        OSError,
-        json.JSONDecodeError,
-        ValueError,
-        TypeError,
-    ) as exc:
+    except Exception as exc:
+        attempts = FAILED_ATTEMPTS.get(path.name, 0) + 1
+        FAILED_ATTEMPTS[path.name] = attempts
+
         print(
-            f"[ERROR] {path.name}: "
+            f"[ERROR] {path.name} (attempt {attempts}/{MAX_ATTEMPTS}): "
             f"{type(exc).__name__}: {exc}",
             flush=True,
         )
+
+        if attempts >= MAX_ATTEMPTS:
+            quarantine(path, archive_dir)
 
         return False
 
@@ -531,7 +569,8 @@ def main() -> None:
                             break
 
                     except (OSError, json.JSONDecodeError):
-                        # Don't stop while a message may still be written.
+                        # Unreadable files are retried and, after
+                        # MAX_ATTEMPTS, quarantined by process_file.
                         remaining = True
                         break
 

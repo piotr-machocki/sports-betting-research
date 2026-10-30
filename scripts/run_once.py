@@ -15,6 +15,8 @@ Usage:
     python scripts/run_once.py --limit 20
     python scripts/run_once.py --limit 20 --min-ev 0.02 --top 20
     python scripts/run_once.py --limit 20 --include-live
+
+Without --limit every available Pinnacle match is processed.
 """
 
 from __future__ import annotations
@@ -121,8 +123,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--limit",
         type=int,
-        default=5,
-        help="Number of Pinnacle matches to test. Default: 5.",
+        default=None,
+        help="Number of Pinnacle matches to test. Default: all.",
     )
 
     parser.add_argument(
@@ -261,11 +263,23 @@ def start_monitor(
     )
 
 
+def pending_messages() -> int:
+    """Number of queue messages still waiting in the incoming directory."""
+    try:
+        return sum(1 for _ in INCOMING_DIR.glob("*.json"))
+    except OSError:
+        return 0
+
+
 def wait_for_worker(
     worker: subprocess.Popen,
     timeout: float = 30.0,
 ) -> None:
-    """Ask the worker to drain its queue and stop gracefully."""
+    """Ask the worker to drain its queue and stop gracefully.
+
+    `timeout` is an IDLE timeout: it restarts whenever the queue shrinks, so
+    a long queue is never cut off while the worker is still making progress.
+    """
     STOP_FILE.parent.mkdir(parents=True, exist_ok=True)
     STOP_FILE.touch()
 
@@ -275,19 +289,37 @@ def wait_for_worker(
     )
 
     try:
-        code = worker.wait(timeout=timeout)
+        last_pending = pending_messages()
+        last_progress = time.monotonic()
 
-        if code == 0:
-            print("EV worker stopped cleanly.", flush=True)
-        else:
-            print(
-                f"WARNING: EV worker exited with code {code}.",
-                flush=True,
-            )
+        while True:
+            code = worker.poll()
 
-    except subprocess.TimeoutExpired:
+            if code is not None:
+                if code == 0:
+                    print("EV worker stopped cleanly.", flush=True)
+                else:
+                    print(
+                        f"WARNING: EV worker exited with code {code}.",
+                        flush=True,
+                    )
+
+                return
+
+            pending = pending_messages()
+
+            if pending != last_pending:
+                last_pending = pending
+                last_progress = time.monotonic()
+
+            elif time.monotonic() - last_progress > timeout:
+                break
+
+            time.sleep(0.25)
+
         print(
-            "WARNING: Worker did not stop in time. "
+            f"WARNING: Worker made no progress for {timeout:g}s "
+            f"({last_pending} message(s) pending). "
             "Terminating it to avoid leaving a process running.",
             flush=True,
         )
@@ -304,6 +336,86 @@ def wait_for_worker(
         STOP_FILE.unlink(missing_ok=True)
 
 
+def ensure_report(
+    session_id: str,
+    session_start: str,
+    status_path: Path,
+    report_path: Path,
+    results_path: Path,
+    args: argparse.Namespace,
+    wait: float = 10.0,
+) -> None:
+    """Make sure the session report reflects the final session status.
+
+    The monitor normally writes it. If the monitor was closed or crashed,
+    write the report here from the same session CSV and status file.
+    """
+    try:
+        status = str(
+            json.loads(status_path.read_text(encoding="utf-8"))["status"]
+        ).upper()
+    except (OSError, ValueError, KeyError):
+        status = ""
+
+    def report_is_final() -> bool:
+        try:
+            text = report_path.read_text(encoding="utf-8")
+        except OSError:
+            return False
+
+        return (
+            "END OF SESSION REPORT" in text
+            and f"LIVE SESSION   {status}" in text
+        )
+
+    deadline = time.monotonic() + wait
+
+    while time.monotonic() < deadline:
+        if report_is_final():
+            return
+
+        time.sleep(0.25)
+
+    if report_is_final():
+        return
+
+    print(
+        "Monitor did not write the final report; writing it here.",
+        flush=True,
+    )
+
+    try:
+        import live_monitor
+
+        info = live_monitor.read_runner_info(status_path)
+        rows = live_monitor.read_session_rows(results_path) or []
+
+        report_args = argparse.Namespace(
+            session_id=session_id,
+            expected=None,
+            min_ev=args.min_ev,
+            max_age=15.0,
+            top=args.top,
+        )
+
+        text = live_monitor.render_report(
+            rows,
+            report_args,
+            live_monitor.parse_timestamp(session_start),
+            info,
+            utc_now(),
+        )
+
+        live_monitor.write_report(report_path, text)
+
+    except Exception as exc:
+        print(
+            f"WARNING: could not write the session report: "
+            f"{type(exc).__name__}: {exc}",
+            flush=True,
+        )
+
+
 # ------------------------------------------------------------------- main ---
 
 
@@ -313,7 +425,7 @@ def main() -> None:
 
     args = parse_args()
 
-    if args.limit < 1:
+    if args.limit is not None and args.limit < 1:
         sys.exit("ERROR: --limit must be at least 1.")
 
     if args.offset < 0:
@@ -442,13 +554,14 @@ def main() -> None:
         )
 
         betclic_args = [
-            "--limit",
-            str(args.limit),
             "--offset",
             str(args.offset),
             "--session-id",
             session_id,
         ]
+
+        if args.limit is not None:
+            betclic_args += ["--limit", str(args.limit)]
 
         if args.include_live:
             betclic_args.append("--include-live")
@@ -506,7 +619,9 @@ def main() -> None:
         )
 
     finally:
-        # Request a graceful worker shutdown only if it was started.
+        # Whatever the scraper's exit status, everything it already
+        # published is processed: request a graceful worker shutdown
+        # (queue drain) only if the worker was started.
         if worker is not None:
             wait_for_worker(worker)
 
@@ -556,6 +671,16 @@ def main() -> None:
                 "error": session_error,
                 "performance": performance,
             },
+        )
+
+        # The monitor writes the report; fall back to writing it here.
+        ensure_report(
+            session_id=session_id,
+            session_start=session_start,
+            status_path=status_path,
+            report_path=report_path,
+            results_path=results_path,
+            args=args,
         )
 
         print("\n========== SESSION FINISHED ==========", flush=True)
