@@ -43,3 +43,8 @@ experiments/
 
 # Todo list
 TODO
+
+# AI Context integration
+
+claude_debug_bundle.tar.gz
+create_claude_bundle.sh
