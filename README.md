@@ -63,8 +63,12 @@ src/betting/books/betclic.py
 ## 7. Run the pipeline
 
 ```bash
-python scripts/run_once.py
+python scripts/run_once.py          # headless Betclic browser 
+python scripts/run_once.py --head   # show the browser, for debugging
 ```
+
+Debug screenshots and HTML are saved in both modes. Closing the browser
+window in `--head` mode stops the run; it is not reopened.
 
 The pipeline runs three steps in sequence:
 

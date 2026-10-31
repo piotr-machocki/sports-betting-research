@@ -17,8 +17,11 @@ Usage:
     python scripts/run_once.py --limit 20
     python scripts/run_once.py --limit 20 --min-ev 0.02 --top 20
     python scripts/run_once.py --limit 20 --include-live
+    python scripts/run_once.py --head
 
-Without --limit every available Pinnacle match is processed.
+Without --limit every available Pinnacle match is processed. The Betclic
+browser runs headless unless --head is given (debug screenshots are saved
+either way). Closing the --head browser window stops the run.
 """
 
 from __future__ import annotations
@@ -161,11 +164,23 @@ def parse_args() -> argparse.Namespace:
         help="Number of rows displayed in the live monitor. Default: 20.",
     )
 
+    # The Betclic browser runs headless by default; --head shows it (for
+    # debugging). --headless is still accepted (it is the default).
+    parser.add_argument(
+        "--head",
+        dest="headless",
+        action="store_false",
+        help="Show the Betclic browser window. Default: headless.",
+    )
+
     parser.add_argument(
         "--headless",
+        dest="headless",
         action="store_true",
-        help="Run the Betclic browser without displaying it.",
+        help=argparse.SUPPRESS,
     )
+
+    parser.set_defaults(headless=True)
 
     parser.add_argument(
         "--offset",
@@ -606,8 +621,8 @@ def main() -> None:
         if args.include_live:
             betclic_args.append("--include-live")
 
-        if args.headless:
-            betclic_args.append("--headless")
+        if not args.headless:
+            betclic_args.append("--head")
 
         command = [
             sys.executable,
