@@ -39,6 +39,12 @@ so the clocks (elapsed time, data age) keep ticking.
 
 When run_once.py finishes it stores a "performance" block in the status JSON;
 the monitor appends it to the TXT report and prints it after the final table.
+
+EV is shown for all four devig methods of the Pinnacle odds (ref =
+proportional, power, Shin, odds ratio), always for the BET ON side; ranking
+and statistics use EV(ref). After the run, run_once.py saves this table to
+data/results/reports/ and the raw values to data/results/raw/ (see
+results_store.py).
 """
 
 from __future__ import annotations
@@ -58,6 +64,7 @@ from pathlib import Path
 from typing import Any
 
 from perf_summary import performance_lines, quality_section
+from results_store import METHODS, complete_methods, ev_column
 
 if os.name == "nt":
     import msvcrt
@@ -87,6 +94,14 @@ COMFORT_ROWS = 10
 QUALITY_MIN_ROWS = 5
 
 PW = 22  # player-name column width
+
+# EV column header per devig method (betting.margin.METHODS order).
+EV_LABELS = {
+    "proportional": "EV(ref)",
+    "power": "EV(pow)",
+    "shin": "EV(shin)",
+    "odds_ratio": "EV(OR)",
+}
 
 FIELDS = [
     "observation_id",
@@ -355,8 +370,10 @@ def read_session_rows(path: Path) -> list[dict[str, str]] | None:
     except (OSError, csv.Error):
         return None
 
+    # complete_methods: sessions processed before the per-method columns
+    # existed get them recalculated from the stored odds.
     return [
-        row
+        complete_methods(row)
         for row in rows
         if row.get("observation_id")
         and None not in row
@@ -374,6 +391,14 @@ def read_runner_info(path: Path) -> dict:
 
 
 # ------------------------------------------------------------- formatting ---
+
+
+def session_clock(info: dict, now: datetime) -> datetime:
+    """A finished session is measured up to its end, not up to "now"."""
+    if str(info.get("status", "")).lower() in FINISHED_STATES:
+        return parse_timestamp(info.get("session_finished_at")) or now
+
+    return now
 
 
 def pinnacle_info(info: dict) -> dict:
@@ -538,17 +563,45 @@ def flags_for(row: dict, args: argparse.Namespace) -> str:
 
 
 def table_header_lines() -> list[str]:
+    ev_headers = " ".join(f"{EV_LABELS[method]:>8}" for method in METHODS)
+
     header = (
         f"{'#':>3}  {'BET ON':<{PW}} {'Betclic':>7} {'Pinnacle':>8} "
-        f"{'P(ref)':>7} {'EV(ref)':>8} {'GAP':>11}  {'CONF':<8} "
-        f"{'OPPONENT':<{PW + 3}}"
+        f"{'P(ref)':>7} {ev_headers} {'GAP':>11} {'AGE':>11}  "
+        f"{'CONF':<8} {'OPPONENT':<{PW + 3}}"
     )
 
     return [paint(header, "1"), "-" * len(header)]
 
 
-def table_row_lines(rows: list[dict], args: argparse.Namespace) -> list[str]:
-    """One terminal line per match. Numbering is the absolute rank."""
+def ev_cell(value: float | None, min_ev: float) -> str:
+    if value is None:
+        return paint(f"{'--':>8}", "2")
+
+    return paint(f"{value * 100:>+7.2f}%", *ev_style(value, min_ev))
+
+
+def odds_age_seconds(row: dict, clock: datetime) -> float | None:
+    """Age of the row's Betclic odds (the Pinnacle odds are GAP older)."""
+    captured = parse_timestamp(row.get("betclic_captured_at"))
+
+    if captured is None:
+        return None
+
+    return (clock - captured).total_seconds()
+
+
+def table_row_lines(
+    rows: list[dict],
+    args: argparse.Namespace,
+    clock: datetime,
+) -> list[str]:
+    """One terminal line per match. Numbering is the absolute rank.
+
+    BET ON is the side with the best reference EV; every EV column shows
+    that same side under a different devig method. AGE is measured up to
+    `clock`.
+    """
     if not rows:
         return [paint("  waiting for Betclic observations...", "2")]
 
@@ -564,14 +617,13 @@ def table_row_lines(rows: list[dict], args: argparse.Namespace) -> list[str]:
             player_cell = paint(f"{name[:PW]:<{PW}}", "2")
             betclic = probability = f"{'--':>7}"
             pinnacle = f"{'--':>8}"
-            ev_cell = paint(f"{'--':>8}", "2")
+            ev_cells = " ".join(ev_cell(None, args.min_ev) for _ in METHODS)
 
         else:
             other = 2 if side == 1 else 1
 
             name = row.get(f"pinnacle_player{side}") or "?"
             opponent = row.get(f"pinnacle_player{other}") or "?"
-            ev = number(row.get(f"ev{side}"))
 
             player_cell = paint(f"{name[:PW]:<{PW}}", "1", "36")
             betclic = format_odds(
@@ -583,9 +635,9 @@ def table_row_lines(rows: list[dict], args: argparse.Namespace) -> list[str]:
             probability = format_probability(
                 row.get(f"probability{side}")
             ).rjust(7)
-            ev_cell = paint(
-                f"{ev * 100:>+7.2f}%",
-                *ev_style(ev, args.min_ev),
+            ev_cells = " ".join(
+                ev_cell(number(row.get(ev_column(method, side))), args.min_ev)
+                for method in METHODS
             )
 
         gap = number(row.get("observation_gap_seconds"))
@@ -595,11 +647,15 @@ def table_row_lines(rows: list[dict], args: argparse.Namespace) -> list[str]:
             *(("33",) if is_stale(row, args.max_age) else ("2",)),
         )
 
+        age = odds_age_seconds(row, clock)
+        age_text = fmt_age(age) if age is not None else "--"
+        age_cell = paint(f"{age_text:>11}", "2")
+
         confidence = f"{shorten(row.get('confidence'), 8):<8}"
 
         lines.append(
             f"{index:>3}  {player_cell} {betclic} {pinnacle} "
-            f"{probability} {ev_cell} {gap_cell}  {confidence} "
+            f"{probability} {ev_cells} {gap_cell} {age_cell}  {confidence} "
             f"{paint(f'vs {opponent[:PW]:<{PW}}', '2')}"
             f"{flags_for(row, args)}"
         )
@@ -607,8 +663,12 @@ def table_row_lines(rows: list[dict], args: argparse.Namespace) -> list[str]:
     return lines
 
 
-def table_lines(rows: list[dict], args: argparse.Namespace) -> list[str]:
-    return table_header_lines() + table_row_lines(rows, args)
+def table_lines(
+    rows: list[dict],
+    args: argparse.Namespace,
+    clock: datetime,
+) -> list[str]:
+    return table_header_lines() + table_row_lines(rows, args, clock)
 
 
 # ------------------------------------------------------------ statistics ----
@@ -734,9 +794,7 @@ def header_lines(
     status = str(info.get("status", "running")).lower()
     finished = status in FINISHED_STATES
 
-    # A finished session is measured up to its end, not up to "now".
-    end = parse_timestamp(info.get("session_finished_at")) if finished else None
-    clock = end or now
+    clock = session_clock(info, now)
 
     elapsed = (clock - session_start).total_seconds()
     processed = len(all_rows)
@@ -800,21 +858,25 @@ def legend_lines(args: argparse.Namespace) -> list[str]:
         "Legend:",
         "  "
         + paint("BET ON", "1", "36")
-        + " = side with the best EV",
+        + " = side with the best EV(ref)",
         "  "
         + paint("red", "31") + " EV < 0% | "
         + paint("gray", "90") + " EV = 0% | "
         + paint("yellow", "33") + f" 0% < EV < {threshold} | "
         + paint("green", "1", "32") + f" EV >= {threshold}",
         "  "
-        + "GAP = Betclic capture minus Pinnacle capture",
+        + "GAP = Betclic capture minus Pinnacle capture | "
+        + "AGE = time since the Betclic odds were captured",
         "  "
         + paint("STALE", "1", "33")
         + f" = GAP > {args.max_age:g} min | "
         + "CONF = scraper match confidence",
         "  "
-        + "EV(ref) = proportional devig of Pinnacle odds | "
-        + "One row per match (latest observation), best EV first",
+        + "Devig of Pinnacle odds: P(ref) / EV(ref) = proportional | "
+        + "pow = power | shin = Shin | OR = odds ratio",
+        "  "
+        + "One row per match (latest observation), best EV(ref) first; "
+        + "every EV column is for the BET ON side",
     ]
 
 
@@ -831,19 +893,16 @@ def static_lines(
 ) -> list[str]:
     """The complete dashboard with EVERY match (report, final dump, --plain)."""
     latest = sorted(latest_per_match(all_rows), key=sort_key)
+    clock = session_clock(info, now)
 
     return (
         header_lines(all_rows, args, session_start, info, now)
         + [""]
-                + performance_lines(
+        + performance_lines(
             info.get("performance"),
             started_at=session_start,
             pinnacle_data_age_seconds=(
-                (
-                    (parse_timestamp(info.get("session_finished_at")) or now)
-                    if str(info.get("status", "")).lower() in FINISHED_STATES
-                    else now
-                )
+                clock
                 - (
                     min(
                         (
@@ -863,7 +922,7 @@ def static_lines(
         + [""]
         + stats_box(all_rows, latest, args)
         + [""]
-        + table_lines(latest, args)
+        + table_lines(latest, args, clock)
         + [""]
         + legend_lines(args)
     )
@@ -937,7 +996,7 @@ def live_frame(
 
     body_h = max(3, body_h)
 
-    row_lines = table_row_lines(latest, args)
+    row_lines = table_row_lines(latest, args, session_clock(info, now))
     total = len(row_lines) if latest else 0
 
     max_offset = max(0, total - body_h)
@@ -1176,9 +1235,11 @@ def render_report(
                     f"{format_odds(row.get('betclic_odds_for_pin_p1'))} / "
                     f"{format_odds(row.get('betclic_odds_for_pin_p2'))}"
                 ),
-                (
-                    f"EVs: {format_ev(row.get('ev1'))} / "
-                    f"{format_ev(row.get('ev2'))}"
+                *(
+                    f"{EV_LABELS[method]}: "
+                    f"{format_ev(row.get(ev_column(method, 1)))} / "
+                    f"{format_ev(row.get(ev_column(method, 2)))}"
+                    for method in METHODS
                 ),
                 f"Best EV: {format_ev(row.get('best_ev'))}",
                 f"Best player: {row.get('best_player', '')}",
@@ -1192,6 +1253,29 @@ def render_report(
         "=" * 100,
         "END OF SESSION REPORT",
         "=" * 100,
+    ])
+
+    return "\n".join(lines) + "\n"
+
+
+def render_display_report(
+    all_rows: list[dict],
+    args: argparse.Namespace,
+    session_start: datetime,
+    info: dict,
+    now: datetime,
+) -> str:
+    """The final terminal screen as plain text: every match, every EV column.
+
+    Saved by results_store.py under data/results/reports/. Unlike
+    render_report it has no per-observation details (the raw data has them).
+    """
+    with plain():
+        lines = static_lines(all_rows, args, session_start, info, now)
+
+    lines.extend([
+        "",
+        f"Report generated: {now.isoformat(timespec='seconds')}",
     ])
 
     return "\n".join(lines) + "\n"

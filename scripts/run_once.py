@@ -9,6 +9,8 @@ Workflow:
     5. Collect Betclic observations into a unique raw CSV.
     6. Process observations for this session.
     7. Finish the session and save its status.
+    8. Save the raw data (data/results/raw/) and the display report
+       (data/results/reports/) of the session.
 
 Usage:
     python scripts/run_once.py
@@ -69,6 +71,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 from betting.books import pinnacle  # noqa: E402
 from perf_summary import performance_lines  # noqa: E402
+import results_store  # noqa: E402
 
 
 # --------------------------------------------------------------- timestamps -
@@ -407,17 +410,9 @@ def ensure_report(
         info = live_monitor.read_runner_info(status_path)
         rows = live_monitor.read_session_rows(results_path) or []
 
-        report_args = argparse.Namespace(
-            session_id=session_id,
-            expected=None,
-            min_ev=args.min_ev,
-            max_age=15.0,
-            top=args.top,
-        )
-
         text = live_monitor.render_report(
             rows,
-            report_args,
+            results_store.report_namespace(session_id, args.min_ev),
             live_monitor.parse_timestamp(session_start),
             info,
             utc_now(),
@@ -431,6 +426,24 @@ def ensure_report(
             f"{type(exc).__name__}: {exc}",
             flush=True,
         )
+
+
+def save_results(session_id: str, args: argparse.Namespace) -> dict:
+    """Write the session's raw data and display report; never raises."""
+    try:
+        return results_store.export_session(
+            session_id,
+            results_store.report_namespace(session_id, args.min_ev),
+        )
+
+    except Exception as exc:
+        print(
+            f"WARNING: could not save the session results: "
+            f"{type(exc).__name__}: {exc}",
+            flush=True,
+        )
+
+        return {}
 
 
 # ------------------------------------------------------------------- main ---
@@ -702,12 +715,23 @@ def main() -> None:
             args=args,
         )
 
+        saved = save_results(session_id, args)
+
         print("\n========== SESSION FINISHED ==========", flush=True)
         print(f"Session ID:        {session_id}", flush=True)
         print(f"Session status:    {session_status}", flush=True)
         print(f"Pinnacle snapshot: {pinnacle_snapshot}", flush=True)
         print(f"Session CSV:       {results_path}", flush=True)
         print(f"Session report:    {report_path}", flush=True)
+
+        for label, key in (
+            ("Raw data (CSV):", "raw_csv"),
+            ("Raw data (JSON):", "raw_json"),
+            ("Display report:", "report"),
+            ("Latest report:", "latest_report"),
+        ):
+            if key in saved:
+                print(f"{label:<19}{saved[key]}", flush=True)
 
         print("", flush=True)
 

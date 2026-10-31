@@ -74,4 +74,18 @@ The pipeline runs three steps in sequence:
 
 When collecting Betclic odds, a Chromium browser window may open. Keep it open until the collection finishes.
 
+## 8. Results
+
+Every run saves its results under `data/results/`:
+
+* `raw/<session_id>.csv` and `.json`: every observation with both bookmakers' odds, margins, fair probabilities and EV for all four devig methods (proportional, power, Shin, odds ratio), matching status, confidence and timestamps. Use these files for analysis.
+* `reports/<session_id>.txt`: the final terminal table as plain text (all matches, all EV columns). `reports/latest.txt` is always the newest one.
+* `sessions/`: the pipeline's working files for each session (session CSV, status JSON, full report with observation details).
+
+To regenerate the raw data and reports for past sessions:
+
+```bash
+python scripts/results_store.py --all
+```
+
 

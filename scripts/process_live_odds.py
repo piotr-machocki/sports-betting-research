@@ -3,9 +3,13 @@ Continuously process Betclic observations for one research session.
 
 Session results:
     data/results/sessions/<session_id>.csv
+    (probability1/ev1/best_ev = proportional devig; the other devig methods
+    are stored as probability1_<method>, ev1_<method>, ...)
 
 Historical results:
     data/results/processed_odds.csv
+    (keeps its existing header, so it only has the proportional columns;
+    run_once.py writes every method to data/results/raw/)
 
 Processed JSON messages:
     data/betclic/processed_queue/<session_id>/
@@ -23,6 +27,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from results_store import METHOD_FIELDS, REFERENCE_METHOD, method_columns
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,6 +69,7 @@ OUTPUT_FIELDS = [
     "ev2",
     "best_ev",
     "best_player",
+    *METHOD_FIELDS,
     "status",
     "confidence",
     "betclic_status",
@@ -140,8 +147,7 @@ def load_function(filename: str, function_name: str):
     return function
 
 
-remove_margin = load_function("margin.py", "remove_margin")
-calculate_ev = load_function("value.py", "calculate_ev")
+ev_by_method = load_function("value.py", "ev_by_method")
 
 
 def session_paths(session_id: str) -> dict[str, Path]:
@@ -275,15 +281,11 @@ def calculate_observation(message: dict) -> dict:
         return result
 
     try:
-        probabilities = remove_margin(
-            [pin1, pin2],
-            method="proportional",
-        )
+        # Every devig method; the reference one drives best EV and ranking.
+        results = ev_by_method([pin1, pin2], [bet1, bet2])
 
-        probability1, probability2 = probabilities
-
-        ev1 = calculate_ev(probability1, bet1)
-        ev2 = calculate_ev(probability2, bet2)
+        probability1, probability2 = results[REFERENCE_METHOD][0]
+        ev1, ev2 = results[REFERENCE_METHOD][1]
 
     except (ValueError, ArithmeticError) as exc:
         result["note"] = f"Calculation error: {exc}"
@@ -297,11 +299,8 @@ def calculate_observation(message: dict) -> dict:
         else message.get("pinnacle_player2", "")
     )
 
+    result.update(method_columns(results))
     result.update({
-        "probability1": round(probability1, 6),
-        "probability2": round(probability2, 6),
-        "ev1": round(ev1, 6),
-        "ev2": round(ev2, 6),
         "best_ev": round(best_ev, 6),
         "best_player": best_player,
     })
