@@ -60,3 +60,5 @@ The key research question is:
 > **Does the choice of devigging method materially change the EV opportunities identified by the Pinnacle → Betclic comparison?**
 
 Rather than assuming that one method is universally superior, the project will evaluate their differences empirically.
+
+The historical evaluation (Pinnacle closing odds, ATP/WTA 2019–2025) is in `docs/methodology.md`, section *Empirical evaluation of the devig methods*.
