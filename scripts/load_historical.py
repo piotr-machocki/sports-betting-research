@@ -133,8 +133,15 @@ def load_all() -> pd.DataFrame:
     return matches
 
 
-def clean_matches(matches: pd.DataFrame) -> pd.DataFrame:
-    """Clean match data for historical probability evaluation."""
+def clean_matches(
+    matches: pd.DataFrame,
+    valid_comments: set[str] = VALID_COMMENTS,
+) -> pd.DataFrame:
+    """Clean match data for historical probability evaluation.
+
+    `valid_comments` selects which match outcomes are kept (default: completed
+    matches only); the devig evaluation uses it for a retirement sensitivity run.
+    """
     before = len(matches)
 
     matches = matches.copy()
@@ -144,8 +151,8 @@ def clean_matches(matches: pd.DataFrame) -> pd.DataFrame:
     for column in ODDS_COLUMNS:
         matches[column] = pd.to_numeric(matches[column], errors="coerce")
 
-    # Keep completed matches only.
-    matches = matches[matches["Comment"].isin(VALID_COMMENTS)].copy()
+    # Keep completed matches only (by default).
+    matches = matches[matches["Comment"].isin(valid_comments)].copy()
 
     after_completed = len(matches)
 
