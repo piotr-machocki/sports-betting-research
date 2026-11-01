@@ -105,6 +105,29 @@ def quality_section(
     return ["=" * 60, title, "=" * 60] + quality[1:]
 
 
+def phase_lines(phases) -> list[str]:
+    """One line per collector phase (hybrid mode), indented under Scraping
+    time; empty for runs without a phase breakdown."""
+    lines = []
+
+    for phase in phases or []:
+        if not isinstance(phase, dict):
+            continue
+
+        label = f"{phase.get('name', '?')}:"
+        found, matches = phase.get("found"), phase.get("matches")
+        count = (
+            f"  ({found} of {matches} matches found)"
+            if found is not None and matches is not None
+            else ""
+        )
+        lines.append(
+            f"    {label:<23}{format_duration(phase.get('seconds'))}{count}"
+        )
+
+    return lines
+
+
 def performance_lines(
     perf: dict | None,
     started_at=None,
@@ -139,6 +162,7 @@ def performance_lines(
         # Sessions from before --scroll existed were all search runs.
         f"  Mode:                    {bet.get('mode', 'search')}",
         f"  Scraping time:           {format_duration(bet.get('seconds'))}",
+        *phase_lines(bet.get("phases")),
         f"  Completed at:            {format_timestamp(bet.get('completed_at'))}",
         f"  Outcome:                 {bet.get('outcome', 'n/a')}",
         "",

@@ -65,10 +65,16 @@ src/betting/books/betclic.py
 ```bash
 python scripts/run_once.py          # headless Betclic browser 
 python scripts/run_once.py --head   # show the browser, for debugging
+python scripts/run_once.py --debug  # save HTML + screenshot of failed Betclic matches
 ```
 
-Debug screenshots and HTML are saved in both modes. Closing the browser
-window in `--head` mode stops the run; it is not reopened.
+The Betclic collector runs in hybrid mode (`betclic_scroll.py --hybrid`) when
+`src/betting/books/betclic_scroll.py` is present, and otherwise uses `betclic.py`.
+`--search` forces `betclic.py`.
+
+Debug dumps (in `data/betclic/debug/`) are off by default because they slow
+down every failed match; use `--debug` when the scraper stops finding matches.
+Closing the browser window in `--head` mode stops the run; it is not reopened.
 
 The pipeline runs three steps in sequence:
 

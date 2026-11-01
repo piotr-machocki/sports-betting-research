@@ -18,15 +18,17 @@ Usage:
     python scripts/run_once.py --limit 20 --min-ev 0.02 --top 20
     python scripts/run_once.py --limit 20 --include-live
     python scripts/run_once.py --head
+    python scripts/run_once.py --search
     python scripts/run_once.py --scroll
 
 Without --limit every available Pinnacle match is processed. The Betclic
-browser runs headless unless --head is given (debug screenshots are saved
-either way). Closing the --head browser window stops the run, and so does
+browser runs headless unless --head is given. Debug dumps of failed matches
+(HTML + screenshot) are saved only with --debug, in either case. Closing the --head browser window stops the run, and so does
 closing the live monitor's terminal (Windows) while Betclic is collecting.
 
-Betclic is collected by betclic.py unless --scroll selects the experimental
-collector betclic_scroll.py. Both publish the same queue messages.
+Betclic is collected in hybrid mode (betclic_scroll.py --hybrid) unless
+--search selects betclic.py or --scroll selects betclic_scroll.py alone
+(experimental). All modes publish the same queue messages.
 """
 
 from __future__ import annotations
@@ -65,6 +67,7 @@ BETCLIC_DIR = DATA_DIR / "betclic"
 PINNACLE_RAW_DIR = PINNACLE_DIR / "raw"
 BETCLIC_RAW_DIR = BETCLIC_DIR / "raw"
 INCOMING_DIR = BETCLIC_DIR / "incoming"
+BETCLIC_TIMING_DIR = BETCLIC_DIR / "timing"
 
 RESULTS_DIR = DATA_DIR / "results"
 SESSIONS_DIR = RESULTS_DIR / "sessions"
@@ -138,6 +141,21 @@ def write_json_atomic(path: Path, data: dict) -> None:
 # ---------------------------------------------------------------- arguments -
 
 
+def read_betclic_phases(session_id: str) -> list[dict] | None:
+    """Phase breakdown a collector may leave in
+    data/betclic/timing/phases_<session_id>.json (the hybrid mode does):
+    a list of {name, seconds, matches, found}. None when absent or unreadable.
+    """
+    path = BETCLIC_TIMING_DIR / f"phases_{session_id}.json"
+
+    try:
+        phases = json.loads(path.read_text(encoding="utf-8")).get("phases")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+    return phases if isinstance(phases, list) else None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Collect odds and launch the live EV monitor."
@@ -189,10 +207,43 @@ def parse_args() -> argparse.Namespace:
     parser.set_defaults(headless=True)
 
     parser.add_argument(
-        "--scroll",
+        "--debug",
         action="store_true",
-        help="Use the experimental Betclic collector.",
+        help=(
+            "Save HTML + screenshot dumps of failed Betclic matches to "
+            "data/betclic/debug/ (slower; off by default)."
+        ),
     )
+
+    # Betclic collector mode; hybrid is the default.
+    mode = parser.add_mutually_exclusive_group()
+
+    mode.add_argument(
+        "--hybrid",
+        dest="mode",
+        action="store_const",
+        const="hybrid",
+        help="Betclic: betclic_scroll.py --hybrid (default).",
+    )
+
+    mode.add_argument(
+        "--search",
+        dest="mode",
+        action="store_const",
+        const="search",
+        help="Betclic: betclic.py.",
+    )
+
+    mode.add_argument(
+        "--scroll",
+        dest="mode",
+        action="store_const",
+        const="scroll",
+        help="Betclic: betclic_scroll.py (experimental).",
+    )
+
+    # None = not chosen: hybrid, or search when betclic_scroll.py is missing.
+    parser.set_defaults(mode=None)
 
     parser.add_argument(
         "--offset",
@@ -568,10 +619,24 @@ def main() -> None:
             "Check your .env loading or environment variables."
         )
 
-    betclic_mode = "scroll" if args.scroll else "search"
-    collector_script = BETCLIC_SCROLL_SCRIPT if args.scroll else BETCLIC_SCRIPT
+    betclic_mode = args.mode
 
-    # The scroll mode also needs BETCLIC_SCRIPT: it reuses its helpers.
+    if betclic_mode is None:
+        betclic_mode = "hybrid" if BETCLIC_SCROLL_SCRIPT.exists() else "search"
+
+        if betclic_mode == "search":
+            print(
+                f"Note: {BETCLIC_SCROLL_SCRIPT.name} not found; "
+                "using search mode (betclic.py).",
+                flush=True,
+            )
+
+    collector_script = (
+        BETCLIC_SCRIPT if betclic_mode == "search" else BETCLIC_SCROLL_SCRIPT
+    )
+
+    # The scroll and hybrid modes also need BETCLIC_SCRIPT: they reuse its
+    # helpers.
     for script in (
         PINNACLE_SCRIPT,
         BETCLIC_SCRIPT,
@@ -710,6 +775,12 @@ def main() -> None:
         if not args.headless:
             betclic_args.append("--head")
 
+        if betclic_mode == "hybrid":
+            betclic_args.append("--hybrid")
+
+        if args.debug:
+            betclic_args.append("--debug")
+
         command = [
             sys.executable,
             str(collector_script),
@@ -788,6 +859,7 @@ def main() -> None:
                 "started_at": betclic_started_at,
                 "completed_at": betclic_finished_at,
                 "outcome": betclic_outcome,
+                "phases": read_betclic_phases(session_id),
             },
             "completion_gap_seconds": (
                 betclic_done_clock - pinnacle_done_clock
