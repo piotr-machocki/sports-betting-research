@@ -22,7 +22,8 @@ Usage:
 
 Without --limit every available Pinnacle match is processed. The Betclic
 browser runs headless unless --head is given (debug screenshots are saved
-either way). Closing the --head browser window stops the run.
+either way). Closing the --head browser window stops the run, and so does
+closing the live monitor's terminal (Windows) while Betclic is collecting.
 
 Betclic is collected by betclic.py unless --scroll selects the experimental
 collector betclic_scroll.py. Both publish the same queue messages.
@@ -307,6 +308,74 @@ def start_monitor(
         ],
         cwd=ROOT,
     )
+
+
+class MonitorClosed(Exception):
+    """The live monitor's terminal was closed while Betclic was collecting."""
+
+
+def kill_process_tree(process: subprocess.Popen) -> None:
+    """Kill a process and its children (the collector's browser too)."""
+    if process.poll() is not None:
+        return
+
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    else:
+        process.kill()
+
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def run_collector(
+    command: list[str],
+    monitor: subprocess.Popen | None,
+) -> None:
+    """Run the Betclic collector, stopping it if the monitor window closes.
+
+    `monitor` is watched only when it runs in its own terminal: closing that
+    terminal stops the collection and raises MonitorClosed. Rows written so
+    far are kept (the collector flushes every row). Raises
+    CalledProcessError on a non-zero exit, like subprocess.run(check=True).
+    """
+    collector = subprocess.Popen(command, cwd=ROOT)
+
+    try:
+        while True:
+            try:
+                code = collector.wait(timeout=0.5)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+
+            if monitor is not None and monitor.poll() is not None:
+                print(
+                    "\nLive monitor terminal closed - stopping the "
+                    "Betclic collection.",
+                    flush=True,
+                )
+                kill_process_tree(collector)
+                raise MonitorClosed
+
+    except KeyboardInterrupt:
+        # Ctrl+C reached the collector too: let it save and close the
+        # browser, then make sure nothing is left running.
+        try:
+            collector.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            kill_process_tree(collector)
+        raise
+
+    if code != 0:
+        raise subprocess.CalledProcessError(code, command)
 
 
 def pending_messages() -> int:
@@ -594,6 +663,7 @@ def main() -> None:
     monitor = None
     session_status = "finished"
     session_error = ""
+    monitor_closed = False
 
     betclic_started_at = None
     betclic_finished_at = None
@@ -653,15 +723,19 @@ def main() -> None:
         betclic_outcome = "failed or interrupted"
 
         try:
-            subprocess.run(
-                command,
-                cwd=ROOT,
-                check=True,
-            )
+            # Only a monitor in its own terminal (Windows) can be closed
+            # separately from this run.
+            run_collector(command, monitor if os.name == "nt" else None)
             betclic_outcome = "completed"
         finally:
             betclic_done_clock = time.perf_counter()
             betclic_finished_at = timestamp_string(utc_now())
+
+    except MonitorClosed:
+        monitor_closed = True
+        betclic_outcome = "stopped (monitor closed)"
+        session_status = "interrupted"
+        session_error = "Live monitor closed; Betclic collection stopped."
 
     except KeyboardInterrupt:
         session_status = "interrupted"
@@ -745,6 +819,7 @@ def main() -> None:
             report_path=report_path,
             results_path=results_path,
             args=args,
+            wait=0.0 if monitor_closed else 10.0,
         )
 
         saved = save_results(session_id, args)
@@ -770,7 +845,7 @@ def main() -> None:
         for line in performance_lines(performance):
             print(line, flush=True)
 
-        if monitor is not None:
+        if monitor is not None and not monitor_closed:
             print(
                 "The monitor terminal was opened separately. "
                 "It may still be displaying the final report.",
