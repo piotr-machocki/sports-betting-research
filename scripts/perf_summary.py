@@ -138,7 +138,7 @@ def performance_lines(
         "Betclic",
         # Sessions from before --scroll existed were all search runs.
         f"  Mode:                    {bet.get('mode', 'search')}",
-        f"  Scraping time:         {format_duration(bet.get('seconds'))}",
+        f"  Scraping time:           {format_duration(bet.get('seconds'))}",
         f"  Completed at:            {format_timestamp(bet.get('completed_at'))}",
         f"  Outcome:                 {bet.get('outcome', 'n/a')}",
         "",
