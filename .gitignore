@@ -33,7 +33,9 @@ data/**
 
 # Bookmaker integrations
 src/betting/books/betclic.py
+src/betting/books/betclic_scroll.py
 tests/test_betclic.py
+tests/test_betclic_scroll.py
 
 # Research
 research/
@@ -45,6 +47,4 @@ experiments/
 TODO
 
 # AI Context integration
-
-claude_debug_bundle.tar.gz
-create_claude_bundle.sh
+CLAUDE.md

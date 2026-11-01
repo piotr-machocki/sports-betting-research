@@ -18,10 +18,14 @@ Usage:
     python scripts/run_once.py --limit 20 --min-ev 0.02 --top 20
     python scripts/run_once.py --limit 20 --include-live
     python scripts/run_once.py --head
+    python scripts/run_once.py --scroll
 
 Without --limit every available Pinnacle match is processed. The Betclic
 browser runs headless unless --head is given (debug screenshots are saved
 either way). Closing the --head browser window stops the run.
+
+Betclic is collected by betclic.py unless --scroll selects the experimental
+collector betclic_scroll.py. Both publish the same queue messages.
 """
 
 from __future__ import annotations
@@ -47,6 +51,7 @@ SCRIPTS_DIR = ROOT / "scripts"
 
 PINNACLE_SCRIPT = SRC_DIR / "betting" / "books" / "pinnacle.py"
 BETCLIC_SCRIPT = SRC_DIR / "betting" / "books" / "betclic.py"
+BETCLIC_SCROLL_SCRIPT = SRC_DIR / "betting" / "books" / "betclic_scroll.py"
 
 WORKER_SCRIPT = SCRIPTS_DIR / "process_live_odds.py"
 MONITOR_SCRIPT = SCRIPTS_DIR / "live_monitor.py"
@@ -181,6 +186,12 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.set_defaults(headless=True)
+
+    parser.add_argument(
+        "--scroll",
+        action="store_true",
+        help="Use the experimental Betclic collector.",
+    )
 
     parser.add_argument(
         "--offset",
@@ -488,9 +499,14 @@ def main() -> None:
             "Check your .env loading or environment variables."
         )
 
+    betclic_mode = "scroll" if args.scroll else "search"
+    collector_script = BETCLIC_SCROLL_SCRIPT if args.scroll else BETCLIC_SCRIPT
+
+    # The scroll mode also needs BETCLIC_SCRIPT: it reuses its helpers.
     for script in (
         PINNACLE_SCRIPT,
         BETCLIC_SCRIPT,
+        collector_script,
         WORKER_SCRIPT,
         MONITOR_SCRIPT,
     ):
@@ -604,7 +620,7 @@ def main() -> None:
         # ------------------------------------------------ Betclic collection
 
         print(
-            "\n=== Betclic: collecting observations ===",
+            f"\n=== Betclic: collecting observations ({betclic_mode}) ===",
             flush=True,
         )
 
@@ -626,7 +642,7 @@ def main() -> None:
 
         command = [
             sys.executable,
-            str(BETCLIC_SCRIPT),
+            str(collector_script),
             *betclic_args,
         ]
 
@@ -688,6 +704,7 @@ def main() -> None:
             "total_seconds": time.perf_counter() - run_clock,
             "pinnacle": pinnacle_info,
             "betclic": {
+                "mode": betclic_mode,
                 "seconds": (
                     betclic_done_clock - betclic_clock
                     if betclic_clock is not None
