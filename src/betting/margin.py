@@ -64,11 +64,12 @@ def _shin(q: list[float]) -> list[float]:
     return [x / total for x in p]
 
 
+# Ordered by historical accuracy (docs/methodology.md), best first.
 METHODS: dict[str, Callable[[list[float]], list[float]]] = {
-    "proportional": _proportional,
     "power": _power,
-    "shin": _shin,
     "odds_ratio": _odds_ratio,
+    "shin": _shin,
+    "proportional": _proportional,
 }
 
 

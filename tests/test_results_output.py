@@ -114,10 +114,12 @@ def test_worker_stores_every_method_and_keeps_reference_columns():
                 pytest.approx(evs[side - 1], abs=1e-6)
             )
 
-    # Unchanged meaning: the unsuffixed columns are the proportional method.
+    # The unsuffixed columns are the power (reference) method.
+    assert results_store.REFERENCE_METHOD == "power"
     assert result["probability1"] == pytest.approx(
-        expected["proportional"][0][0], abs=1e-6
+        expected["power"][0][0], abs=1e-6
     )
+    assert result["ev1"] == pytest.approx(expected["power"][1][0], abs=1e-6)
     assert result["best_ev"] == max(result["ev1"], result["ev2"])
     assert set(results_store.METHOD_FIELDS) <= set(
         process_live_odds.OUTPUT_FIELDS
@@ -150,6 +152,71 @@ def test_complete_methods_backfills_old_session_rows_like_the_worker():
     assert results_store.complete_methods(not_found) is not_found
 
 
+def test_complete_methods_converts_rows_with_the_legacy_reference():
+    # Before the switch the unsuffixed columns held proportional values and
+    # the other methods were suffixed (no *_proportional columns).
+    new_row = as_csv_row(process_live_odds.calculate_observation(message()))
+    legacy = ev_by_method([1.50, 2.70], [1.55, 2.60])
+    old_row = {
+        key: value
+        for key, value in new_row.items()
+        if not key.endswith("_proportional")
+    }
+    old_row.update({
+        "probability1": str(round(legacy["proportional"][0][0], 6)),
+        "probability2": str(round(legacy["proportional"][0][1], 6)),
+        "ev1": str(round(legacy["proportional"][1][0], 6)),
+        "ev2": str(round(legacy["proportional"][1][1], 6)),
+        "best_ev": str(round(max(legacy["proportional"][1]), 6)),
+        "probability1_power": str(round(legacy["power"][0][0], 6)),
+        "ev1_power": str(round(legacy["power"][1][0], 6)),
+    })
+
+    filled = results_store.complete_methods(old_row)
+
+    for column in (*results_store.METHOD_FIELDS, "probability1", "ev1",
+                   "ev2", "best_ev"):
+        assert float(filled[column]) == pytest.approx(float(new_row[column]))
+    assert filled["best_player"] == new_row["best_player"]
+
+
+def test_old_historical_csv_is_upgraded_and_recalculated(tmp_path):
+    path = tmp_path / "processed_odds.csv"
+    new_row = as_csv_row(process_live_odds.calculate_observation(message()))
+    legacy = ev_by_method([1.50, 2.70], [1.55, 2.60])["proportional"]
+    old_header = [
+        column for column in process_live_odds.OUTPUT_FIELDS
+        if column not in results_store.METHOD_FIELDS and column != "match_no"
+    ] + ["old_extra"]
+    old_row = dict(new_row, ev1=str(legacy[1][0]), ev2=str(legacy[1][1]),
+                   best_ev=str(max(legacy[1])), old_extra="x")
+    not_found = {"observation_id": "obs9", "status": "NOT FOUND", "ev1": ""}
+
+    with path.open("w", encoding="utf-8-sig", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=old_header,
+                                extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows([old_row, not_found])
+
+    assert process_live_odds.upgrade_historical_csv(path) is True
+    assert process_live_odds.upgrade_historical_csv(path) is False
+    assert (tmp_path / "processed_odds.legacy_backup.csv").exists()
+
+    with path.open(encoding="utf-8-sig", newline="") as file:
+        reader = csv.DictReader(file)
+        assert reader.fieldnames == process_live_odds.OUTPUT_FIELDS + ["old_extra"]
+        upgraded, missing = list(reader)
+
+    for column in (*results_store.METHOD_FIELDS, "ev1", "ev2", "best_ev"):
+        assert float(upgraded[column]) == pytest.approx(float(new_row[column]))
+    assert upgraded["old_extra"] == "x"
+    assert missing["status"] == "NOT FOUND" and missing["ev1"] == ""
+
+    # Appends now use the full header.
+    assert process_live_odds.csv_fieldnames(path)[:len(
+        process_live_odds.OUTPUT_FIELDS)] == process_live_odds.OUTPUT_FIELDS
+
+
 # ------------------------------------------------------------ live table ---
 
 
@@ -159,7 +226,7 @@ def test_table_shows_all_four_ev_columns_for_the_bet_on_side():
     with live_monitor.plain():
         header, _, *lines = live_monitor.table_lines(rows, args())
 
-    for label in ("EV(ref)", "EV(pow)", "EV(shin)", "EV(OR)", "GAP",
+    for label in ("EV(ref)", "EV(OR)", "EV(shin)", "EV(prop)", "GAP",
                   "P(ref)", "Betclic", "Pinnacle", "CONF", "OPPONENT"):
         assert label in header
 
@@ -256,7 +323,7 @@ def test_export_writes_raw_csv_and_json(tmp_path):
 
     assert document["session_id"] == SESSION
     assert document["session_status"] == "finished"
-    assert document["reference_method"] == "proportional"
+    assert document["reference_method"] == "power"
     assert document["methods"] == list(METHODS)
     assert document["fields"] == results_store.RAW_FIELDS
 
@@ -350,5 +417,5 @@ def test_session_report_still_final_and_lists_every_method(tmp_path):
     assert "END OF SESSION REPORT" in text
     assert "LIVE SESSION   FINISHED" in text
 
-    for label in ("EV(ref):", "EV(pow):", "EV(shin):", "EV(OR):"):
+    for label in ("EV(ref):", "EV(OR):", "EV(shin):", "EV(prop):"):
         assert label in text

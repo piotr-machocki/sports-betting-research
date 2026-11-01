@@ -1,6 +1,6 @@
 ## Proportional normalization (Multiplicative method)
 
-Proportional normalization is the baseline devigging method used in this project. It assumes that the bookmaker's overround is distributed proportionally across the implied probabilities.
+Proportional normalization is the baseline devigging method that the other methods are compared against (the live pipeline's reference method is now Power, see `docs/methodology.md`). It assumes that the bookmaker's overround is distributed proportionally across the implied probabilities.
 
 For decimal odds $o_i$, the raw implied probability is:
 
@@ -39,7 +39,7 @@ Rather than assuming in advance which method is most accurate, this project will
 | Method                                          | Role                                      | Status          |
 | ----------------------------------------------- | ----------------------------------------- | --------------- |
 | **Multiplicative / proportional normalization** | Baseline                                  | Implemented     |
-| **Power method**                                | Alternative                               | Implemented     |
+| **Power method**                                | Reference (live pipeline)                 | Implemented     |
 | **Shin method**                                 | Alternative                               | Implemented     |
 | **Odds Ratio**                                  | Potentially important for Pinnacle tennis | Implemented     |
 | **MPTO**                                        | Potentially important for Pinnacle tennis | Not implemented |
@@ -51,9 +51,9 @@ The implemented methods live in `src/betting/margin.py`; formulas are described 
 
 ## Testing
 
-Proportional normalization is used to calculate the reference probabilities from Pinnacle. The Power, Shin and Odds Ratio methods are implemented and computed alongside it in `scripts/compare_odds.py`, so every matched bet shows the EV under all four methods.
+All four implemented methods are computed for every matched bet, so each one shows the EV under all of them. After the historical evaluation, the live pipeline uses **Power** as the reference method (ranking and signals), followed by Odds Ratio, Shin and Proportional.
 
-The next step is to compare them empirically and determine whether the choice of devigging model materially changes the resulting probabilities and EV signals when comparing Pinnacle with Betclic.
+The evaluation compared them empirically to determine whether the choice of devigging model materially changes the resulting probabilities and EV signals when comparing Pinnacle with Betclic.
 
 The key research question is:
 

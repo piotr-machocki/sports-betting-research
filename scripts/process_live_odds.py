@@ -3,13 +3,14 @@ Continuously process Betclic observations for one research session.
 
 Session results:
     data/results/sessions/<session_id>.csv
-    (probability1/ev1/best_ev = proportional devig; the other devig methods
-    are stored as probability1_<method>, ev1_<method>, ...)
+    (probability1/ev1/best_ev = reference devig, results_store.REFERENCE_METHOD;
+    the other devig methods are stored as probability1_<method>, ev1_<method>, ...)
 
 Historical results:
     data/results/processed_odds.csv
-    (keeps its existing header, so it only has the proportional columns;
-    run_once.py writes every method to data/results/raw/)
+    (same columns as the session CSV; an older file is upgraded once at
+    startup and every row recalculated from its odds, see
+    upgrade_historical_csv)
 
 Processed JSON messages:
     data/betclic/processed_queue/<session_id>/
@@ -22,13 +23,19 @@ import csv
 import importlib.util
 import json
 import math
+import shutil
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from results_store import METHOD_FIELDS, REFERENCE_METHOD, method_columns
+from results_store import (
+    METHOD_FIELDS,
+    REFERENCE_METHOD,
+    complete_methods,
+    method_columns,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -351,6 +358,46 @@ def csv_fieldnames(path: Path) -> list[str]:
     return OUTPUT_FIELDS
 
 
+def upgrade_historical_csv(path: Path) -> bool:
+    """Rewrite an older historical CSV in the current column layout.
+
+    Files written before the per-method columns (and before the switch of
+    the reference method to power) lack them, so their unsuffixed EV columns
+    would mean different methods in old and new rows. Every row with an EV
+    is recalculated from its stored odds (results_store.complete_methods);
+    columns the file has but OUTPUT_FIELDS doesn't are kept at the end. The
+    original is copied once to <name>.legacy_backup.csv. Returns True when
+    the file was rewritten.
+    """
+
+    header = csv_fieldnames(path) if path.exists() else OUTPUT_FIELDS
+
+    if all(column in header for column in METHOD_FIELDS):
+        return False
+
+    with path.open("r", encoding="utf-8-sig", newline="") as file:
+        rows = list(csv.DictReader(file))
+
+    fieldnames = OUTPUT_FIELDS + [
+        column for column in header if column not in OUTPUT_FIELDS
+    ]
+
+    backup = path.with_name(f"{path.stem}.legacy_backup.csv")
+    if not backup.exists():
+        shutil.copy2(path, backup)
+
+    temp_path = path.with_name(f".{path.name}.tmp")
+    with temp_path.open("w", encoding="utf-8-sig", newline="") as file:
+        writer = csv.DictWriter(
+            file, fieldnames=fieldnames, extrasaction="ignore", restval=""
+        )
+        writer.writeheader()
+        writer.writerows(complete_methods(row) for row in rows)
+
+    temp_path.replace(path)
+    return True
+
+
 def append_csv_row(path: Path, row: dict) -> None:
     """Append one row, creating the CSV and header when necessary."""
 
@@ -553,6 +600,12 @@ def main() -> None:
     archive_dir.mkdir(parents=True, exist_ok=True)
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    try:
+        if upgrade_historical_csv(historical_csv):
+            print(f"Upgraded to the current columns: {historical_csv}", flush=True)
+    except (OSError, csv.Error) as exc:
+        print(f"[WARNING] Could not upgrade {historical_csv}: {exc}", flush=True)
 
     session_ids = read_processed_ids(session_csv)
     historical_ids = read_processed_ids(historical_csv)

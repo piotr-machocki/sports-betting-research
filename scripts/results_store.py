@@ -44,7 +44,11 @@ REPORTS_DIR = RESULTS_DIR / "reports"
 
 # Ranking, best side and statistics use the reference method. Its values are
 # stored in the session CSV without a suffix (probability1, ev1, best_ev).
-REFERENCE_METHOD = "proportional"
+# Power had the best out-of-sample log loss and Brier score in the historical
+# evaluation (docs/methodology.md). Sessions written before the switch used
+# LEGACY_REFERENCE_METHOD; complete_methods converts their rows.
+REFERENCE_METHOD = "power"
+LEGACY_REFERENCE_METHOD = "proportional"
 ALT_METHODS = [method for method in METHODS if method != REFERENCE_METHOD]
 
 SIDES = (1, 2)
@@ -106,11 +110,12 @@ def _number(value: Any) -> float | None:
 
 
 def complete_methods(row: dict) -> dict:
-    """Fill missing per-method columns of a row that has a reference EV.
+    """Bring a row with a reference EV up to the current column layout.
 
-    Sessions processed before the per-method columns existed only stored the
-    proportional values; the other methods are recalculated from the stored
-    odds with the same function the worker uses. Rows without a reference EV
+    Older sessions stored LEGACY_REFERENCE_METHOD in the unsuffixed columns
+    (and some had no per-method columns at all). Every method, the unsuffixed
+    reference columns, best_ev and best_player are recalculated from the
+    stored odds with the same function the worker uses. Rows without an EV
     (not found, live, invalid odds) are returned unchanged.
     """
     if _number(row.get("ev1")) is None or all(
@@ -136,8 +141,11 @@ def complete_methods(row: dict) -> dict:
     except (ValueError, ArithmeticError):
         return row
 
-    cells = method_columns(
-        {method: results[method] for method in ALT_METHODS}
+    cells = method_columns(results)
+    ev1, ev2 = results[REFERENCE_METHOD][1]
+    cells["best_ev"] = round(max(ev1, ev2), 6)
+    cells["best_player"] = row.get(
+        "pinnacle_player1" if ev1 >= ev2 else "pinnacle_player2", ""
     )
 
     return {**row, **{key: str(value) for key, value in cells.items()}}

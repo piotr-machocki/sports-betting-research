@@ -1,6 +1,6 @@
 ## Margin removal / devigging
 
-The reference (baseline) method is **proportional normalization**, applied to two-way tennis match-winner markets.
+The live pipeline's reference method is **Power** (see [Recommendation](#recommendation)), applied to two-way tennis match-winner markets. **Proportional normalization** is the simplest method and the baseline that the historical evaluation compares every other method against.
 
 For decimal odds $o_i$, the raw implied probability is:
 
@@ -50,7 +50,7 @@ If the market has no overround ($\sum_i q_i \le 1$), all methods fall back to pr
 
 ### Use in the live pipeline
 
-`scripts/process_live_odds.py` computes the Pinnacle -> Betclic EV with all four methods (via `betting.value.ev_by_method`). Proportional drives the main `probability`/`ev`/`best_ev` columns; the other methods are reported alongside it. The evaluation below has **not** changed the live pipeline. The logarithmic method and MPTO, mentioned in `docs/notes/devigging.md`, are not implemented yet.
+`scripts/process_live_odds.py` computes the Pinnacle -> Betclic EV with all four methods (via `betting.value.ev_by_method`). Following the evaluation below, **Power** drives the main `probability`/`ev`/`best_ev` columns, the ranking and the signal statistics; Odds Ratio, Shin and Proportional are reported alongside it, in that order. Sessions recorded while Proportional was the reference are recalculated from their stored odds when they are displayed or exported (`results_store.complete_methods`). The cumulative `data/results/processed_odds.csv` is upgraded the same way: if it lacks the per-method columns, the worker rewrites it once at startup with every row recalculated from its odds (the original is kept as `processed_odds.legacy_backup.csv`). The logarithmic method and MPTO, mentioned in `docs/notes/devigging.md`, are not implemented yet.
 
 ## Empirical evaluation of the devig methods
 
@@ -190,7 +190,7 @@ The signals that only Proportional produces are the important ones. The 1,079 si
 * Power has the lowest Log Loss and Brier Score and the best calibration in the main analysis, and it is no more complex to use than Shin or Odds Ratio (one parameter, solved numerically).
 * Its advantage over Odds Ratio and Shin is not robust (it disappears when retirements are included). A conservative option is to require that a live signal holds under both Power and Odds Ratio; the historical overlap (Jaccard 0.80) suggests this costs few signals.
 
-Switching the live pipeline's main EV column from Proportional to Power is a separate decision and has not been made here; all four methods are already reported side by side.
+The live pipeline follows this recommendation: Power is its reference method, and Odds Ratio, Shin and Proportional are reported next to it, in that order.
 
 ### Reproducing the analysis
 

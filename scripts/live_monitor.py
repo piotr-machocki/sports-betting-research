@@ -40,8 +40,8 @@ so the clocks (elapsed time, data age) keep ticking.
 When run_once.py finishes it stores a "performance" block in the status JSON;
 the monitor appends it to the TXT report and prints it after the final table.
 
-EV is shown for all four devig methods of the Pinnacle odds (ref =
-proportional, power, Shin, odds ratio), always for the BET ON side; ranking
+EV is shown for all four devig methods of the Pinnacle odds (ref = power,
+odds ratio, Shin, proportional), always for the BET ON side; ranking
 and statistics use EV(ref). After the run, run_once.py saves this table to
 data/results/reports/ and the raw values to data/results/raw/ (see
 results_store.py).
@@ -97,10 +97,10 @@ PW = 22  # player-name column width
 
 # EV column header per devig method (betting.margin.METHODS order).
 EV_LABELS = {
-    "proportional": "EV(ref)",
-    "power": "EV(pow)",
-    "shin": "EV(shin)",
+    "power": "EV(ref)",
     "odds_ratio": "EV(OR)",
+    "shin": "EV(shin)",
+    "proportional": "EV(prop)",
 }
 
 FIELDS = [
@@ -855,8 +855,8 @@ def legend_lines(args: argparse.Namespace) -> list[str]:
         + f" = GAP > {args.max_age:g} min | "
         + "CONF = scraper match confidence",
         "  "
-        + "Devig of Pinnacle odds: P(ref) / EV(ref) = proportional | "
-        + "pow = power | shin = Shin | OR = odds ratio",
+        + "Devig of Pinnacle odds: P(ref) / EV(ref) = power | "
+        + "OR = odds ratio | shin = Shin | prop = proportional",
         "  "
         + "One row per match (latest observation), best EV(ref) first; "
         + "every EV column is for the BET ON side",
