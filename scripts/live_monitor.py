@@ -464,10 +464,11 @@ def format_odds(value: Any) -> str:
     return f"{whole}.{decimals.ljust(2, '0')}"
 
 
-def fmt_age(seconds: float) -> str:
+def fmt_age(seconds: float, fixed: bool = False) -> str:
+    """`fixed` always shows minutes, so table cells share one width."""
     seconds = max(0, round(seconds))
 
-    if seconds < 60:
+    if seconds < 60 and not fixed:
         return f"{seconds} s"
 
     if seconds < 3600:
@@ -567,7 +568,7 @@ def table_header_lines() -> list[str]:
 
     header = (
         f"{'#':>3}  {'BET ON':<{PW}} {'Betclic':>7} {'Pinnacle':>8} "
-        f"{'P(ref)':>7} {ev_headers} {'GAP':>11} {'AGE':>11}  "
+        f"{'P(ref)':>7} {ev_headers} {'GAP':^11}  "
         f"{'CONF':<8} {'OPPONENT':<{PW + 3}}"
     )
 
@@ -581,26 +582,14 @@ def ev_cell(value: float | None, min_ev: float) -> str:
     return paint(f"{value * 100:>+7.2f}%", *ev_style(value, min_ev))
 
 
-def odds_age_seconds(row: dict, clock: datetime) -> float | None:
-    """Age of the row's Betclic odds (the Pinnacle odds are GAP older)."""
-    captured = parse_timestamp(row.get("betclic_captured_at"))
-
-    if captured is None:
-        return None
-
-    return (clock - captured).total_seconds()
-
-
 def table_row_lines(
     rows: list[dict],
     args: argparse.Namespace,
-    clock: datetime,
 ) -> list[str]:
     """One terminal line per match. Numbering is the absolute rank.
 
     BET ON is the side with the best reference EV; every EV column shows
-    that same side under a different devig method. AGE is measured up to
-    `clock`.
+    that same side under a different devig method.
     """
     if not rows:
         return [paint("  waiting for Betclic observations...", "2")]
@@ -641,21 +630,17 @@ def table_row_lines(
             )
 
         gap = number(row.get("observation_gap_seconds"))
-        gap_text = fmt_age(gap) if gap is not None else "--"
+        gap_text = fmt_age(gap, fixed=True) if gap is not None else "--"
         gap_cell = paint(
-            f"{gap_text:>11}",
+            f"{gap_text:^11}",
             *(("33",) if is_stale(row, args.max_age) else ("2",)),
         )
-
-        age = odds_age_seconds(row, clock)
-        age_text = fmt_age(age) if age is not None else "--"
-        age_cell = paint(f"{age_text:>11}", "2")
 
         confidence = f"{shorten(row.get('confidence'), 8):<8}"
 
         lines.append(
             f"{index:>3}  {player_cell} {betclic} {pinnacle} "
-            f"{probability} {ev_cells} {gap_cell} {age_cell}  {confidence} "
+            f"{probability} {ev_cells} {gap_cell}  {confidence} "
             f"{paint(f'vs {opponent[:PW]:<{PW}}', '2')}"
             f"{flags_for(row, args)}"
         )
@@ -666,9 +651,8 @@ def table_row_lines(
 def table_lines(
     rows: list[dict],
     args: argparse.Namespace,
-    clock: datetime,
 ) -> list[str]:
-    return table_header_lines() + table_row_lines(rows, args, clock)
+    return table_header_lines() + table_row_lines(rows, args)
 
 
 # ------------------------------------------------------------ statistics ----
@@ -865,8 +849,7 @@ def legend_lines(args: argparse.Namespace) -> list[str]:
         + paint("yellow", "33") + f" 0% < EV < {threshold} | "
         + paint("green", "1", "32") + f" EV >= {threshold}",
         "  "
-        + "GAP = Betclic capture minus Pinnacle capture | "
-        + "AGE = time since the Betclic odds were captured",
+        + "GAP = Betclic capture minus Pinnacle capture",
         "  "
         + paint("STALE", "1", "33")
         + f" = GAP > {args.max_age:g} min | "
@@ -922,7 +905,7 @@ def static_lines(
         + [""]
         + stats_box(all_rows, latest, args)
         + [""]
-        + table_lines(latest, args, clock)
+        + table_lines(latest, args)
         + [""]
         + legend_lines(args)
     )
@@ -996,7 +979,7 @@ def live_frame(
 
     body_h = max(3, body_h)
 
-    row_lines = table_row_lines(latest, args, session_clock(info, now))
+    row_lines = table_row_lines(latest, args)
     total = len(row_lines) if latest else 0
 
     max_offset = max(0, total - body_h)

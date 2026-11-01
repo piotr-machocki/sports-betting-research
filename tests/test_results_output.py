@@ -157,9 +157,9 @@ def test_table_shows_all_four_ev_columns_for_the_bet_on_side():
     rows = sorted(session_rows(), key=live_monitor.sort_key)
 
     with live_monitor.plain():
-        header, _, *lines = live_monitor.table_lines(rows, args(), NOW)
+        header, _, *lines = live_monitor.table_lines(rows, args())
 
-    for label in ("EV(ref)", "EV(pow)", "EV(shin)", "EV(OR)", "GAP", "AGE",
+    for label in ("EV(ref)", "EV(pow)", "EV(shin)", "EV(OR)", "GAP",
                   "P(ref)", "Betclic", "Pinnacle", "CONF", "OPPONENT"):
         assert label in header
 
@@ -176,8 +176,9 @@ def test_table_shows_all_four_ev_columns_for_the_bet_on_side():
         value = float(row[results_store.ev_column(method, side)])
         assert f"{value * 100:+.2f}%" in lines[0]
 
-    # Betclic captured 12:01, clock 12:10 -> 9 minutes old.
-    assert "9 min 00 s" in lines[0]
+    # GAP: Betclic captured one minute after Pinnacle; no AGE column.
+    assert "1 min 00 s" in lines[0]
+    assert "9 min 00 s" not in lines[0]
     assert lines[2].count("--") >= 4 + 3  # four EVs, odds, probability
 
 
@@ -280,7 +281,6 @@ def test_export_writes_display_report_and_latest(tmp_path):
         expected_table = live_monitor.table_lines(
             sorted(session_rows(), key=live_monitor.sort_key),
             results_store.report_namespace(SESSION),
-            live_monitor.session_clock(finished_info(), NOW),
         )
 
     # Same layout as the terminal table, every match included.
