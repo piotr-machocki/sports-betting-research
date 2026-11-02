@@ -11,6 +11,8 @@ Workflow:
     7. Finish the session and save its status.
     8. Save the raw data (data/results/raw/) and the display report
        (data/results/reports/) of the session.
+    9. Fetch finished match results, at most once a day
+       (scripts/match_results.py), unless the run was interrupted.
 
 Usage:
     python scripts/run_once.py
@@ -84,6 +86,7 @@ sys.path.insert(0, str(SRC_DIR))
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from betting.books import pinnacle  # noqa: E402
+import match_results  # noqa: E402
 from perf_summary import performance_lines  # noqa: E402
 import results_store  # noqa: E402
 
@@ -262,6 +265,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="Skip the first N Pinnacle matches.",
+    )
+
+    parser.add_argument(
+        "--no-results",
+        action="store_true",
+        help="Skip the daily fetch of finished match results.",
     )
 
     return parser.parse_args()
@@ -932,6 +941,9 @@ def main() -> None:
 
         for line in performance_lines(performance):
             print(line, flush=True)
+
+        if not args.no_results and session_status != "interrupted":
+            match_results.run_step()
 
         if monitor is not None and not monitor_closed:
             print(
