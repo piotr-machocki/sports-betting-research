@@ -49,6 +49,7 @@ CITY_ALIASES = {
     "lipsk": "leipzig", "norymberga": "nuremberg", "drezno": "dresden",
     "hanower": "hannover", "praga": "prague", "budapeszt": "budapest",
     "warszawa": "warsaw", "bukareszt": "bucharest", "belgrad": "belgrade",
+    "bratyslawa": "bratislava",
     "saloniki": "thessaloniki", "ateny": "athens",
     # --- Southern Europe ---
     "rzym": "rome", "mediolan": "milan", "neapol": "naples", "turyn": "turin",

@@ -106,8 +106,8 @@ def quality_section(
 
 
 def phase_lines(phases) -> list[str]:
-    """One line per collector phase (hybrid mode), indented under Scraping
-    time; empty for runs without a phase breakdown."""
+    """One line per collector phase (tournament and hybrid modes), indented
+    under Scraping time; empty for runs without a phase breakdown."""
     lines = []
 
     for phase in phases or []:

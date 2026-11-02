@@ -18,6 +18,7 @@ Usage:
     python scripts/run_once.py --limit 20 --min-ev 0.02 --top 20
     python scripts/run_once.py --limit 20 --include-live
     python scripts/run_once.py --head
+    python scripts/run_once.py --hybrid
     python scripts/run_once.py --search
     python scripts/run_once.py --scroll
 
@@ -26,9 +27,10 @@ browser runs headless unless --head is given. Debug dumps of failed matches
 (HTML + screenshot) are saved only with --debug, in either case. Closing the --head browser window stops the run, and so does
 closing the live monitor's terminal (Windows) while Betclic is collecting.
 
-Betclic is collected in hybrid mode (betclic_scroll.py --hybrid) unless
---search selects betclic.py or --scroll selects betclic_scroll.py alone
-(experimental). All modes publish the same queue messages.
+Betclic is collected in tournament mode (betclic_scroll.py) unless --hybrid
+selects betclic_scroll.py --hybrid, --search selects betclic.py or --scroll
+selects betclic_scroll.py --overview. All modes publish the same queue
+messages.
 """
 
 from __future__ import annotations
@@ -143,7 +145,8 @@ def write_json_atomic(path: Path, data: dict) -> None:
 
 def read_betclic_phases(session_id: str) -> list[dict] | None:
     """Phase breakdown a collector may leave in
-    data/betclic/timing/phases_<session_id>.json (the hybrid mode does):
+    data/betclic/timing/phases_<session_id>.json (the tournament and hybrid
+    modes do):
     a list of {name, seconds, matches, found}. None when absent or unreadable.
     """
     path = BETCLIC_TIMING_DIR / f"phases_{session_id}.json"
@@ -215,15 +218,23 @@ def parse_args() -> argparse.Namespace:
         ),
     )
 
-    # Betclic collector mode; hybrid is the default.
+    # Betclic collector mode; tournaments is the default.
     mode = parser.add_mutually_exclusive_group()
+
+    mode.add_argument(
+        "--tournaments",
+        dest="mode",
+        action="store_const",
+        const="tournaments",
+        help="Betclic: betclic_scroll.py (default).",
+    )
 
     mode.add_argument(
         "--hybrid",
         dest="mode",
         action="store_const",
         const="hybrid",
-        help="Betclic: betclic_scroll.py --hybrid (default).",
+        help="Betclic: betclic_scroll.py --hybrid.",
     )
 
     mode.add_argument(
@@ -239,10 +250,11 @@ def parse_args() -> argparse.Namespace:
         dest="mode",
         action="store_const",
         const="scroll",
-        help="Betclic: betclic_scroll.py (experimental).",
+        help="Betclic: betclic_scroll.py --overview.",
     )
 
-    # None = not chosen: hybrid, or search when betclic_scroll.py is missing.
+    # None = not chosen: tournaments, or search when betclic_scroll.py is
+    # missing.
     parser.set_defaults(mode=None)
 
     parser.add_argument(
@@ -622,7 +634,9 @@ def main() -> None:
     betclic_mode = args.mode
 
     if betclic_mode is None:
-        betclic_mode = "hybrid" if BETCLIC_SCROLL_SCRIPT.exists() else "search"
+        betclic_mode = (
+            "tournaments" if BETCLIC_SCROLL_SCRIPT.exists() else "search"
+        )
 
         if betclic_mode == "search":
             print(
@@ -635,7 +649,7 @@ def main() -> None:
         BETCLIC_SCRIPT if betclic_mode == "search" else BETCLIC_SCROLL_SCRIPT
     )
 
-    # The scroll and hybrid modes also need BETCLIC_SCRIPT: they reuse its
+    # The betclic_scroll.py modes also need BETCLIC_SCRIPT: they reuse its
     # helpers.
     for script in (
         PINNACLE_SCRIPT,
@@ -777,6 +791,8 @@ def main() -> None:
 
         if betclic_mode == "hybrid":
             betclic_args.append("--hybrid")
+        elif betclic_mode == "scroll":
+            betclic_args.append("--overview")
 
         if args.debug:
             betclic_args.append("--debug")
