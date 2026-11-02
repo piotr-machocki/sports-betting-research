@@ -30,6 +30,7 @@ LATEST_JSON = JSON_DIR / "latest.json"
 CSV_FIELDS = [
     "player1", "odds1", "player2", "odds2",
     "tournament", "round", "status", "captured_at",
+    "event_id", "starts_at",
 ]
 
 # Why an event did not become a match. Every event gets exactly one outcome.
@@ -113,6 +114,8 @@ def parse_event(
         "round": None,  # Pinnacle does not provide the round
         "status": ev.get("event_type") or "prematch",
         "captured_at": captured_at,
+        "event_id": ev.get("event_id"),
+        "starts_at": ev.get("starts"),  # scheduled start (UTC); it can move
     }, None
 
 

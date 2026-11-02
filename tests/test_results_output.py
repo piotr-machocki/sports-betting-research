@@ -538,3 +538,100 @@ def test_session_report_still_final_and_lists_every_method(tmp_path):
 
     for label in ("EV(ref):", "EV(OR):", "EV(shin):", "EV(prop):"):
         assert label in text
+
+
+# ----------------------------------- match identity, start time, margins ---
+
+
+def test_worker_stores_event_id_start_time_and_margins():
+    result = process_live_odds.calculate_observation(message(
+        pinnacle_event_id=1639701789,
+        pinnacle_starts_at="2026-10-30T18:00:00Z",
+    ))
+
+    assert result["pinnacle_event_id"] == 1639701789
+    assert result["pinnacle_starts_at"] == "2026-10-30T18:00:00Z"
+    assert result["pinnacle_margin"] == results_store.overround(1.50, 2.70)
+    assert result["betclic_margin"] == results_store.overround(1.55, 2.60)
+
+
+def test_not_found_row_keeps_pinnacle_side_and_blank_betclic_margin():
+    result = process_live_odds.calculate_observation(message(
+        status="NOT FOUND",
+        pinnacle_event_id=1639701789,
+        pinnacle_starts_at="2026-10-30T18:00:00Z",
+        betclic_odds_for_pin_p1="",
+        betclic_odds_for_pin_p2="",
+    ))
+
+    assert result["pinnacle_event_id"] == 1639701789
+    assert result["pinnacle_starts_at"] == "2026-10-30T18:00:00Z"
+    assert result["pinnacle_margin"] == results_store.overround(1.50, 2.70)
+    assert result["betclic_margin"] == ""
+
+
+def test_raw_record_has_typed_event_id_and_blank_for_older_rows():
+    new_row = as_csv_row(process_live_odds.calculate_observation(message(
+        pinnacle_event_id=1639701789,
+        pinnacle_starts_at="2026-10-30T18:00:00Z",
+    )))
+    old_row = {
+        key: value for key, value in new_row.items()
+        if key not in ("pinnacle_event_id", "pinnacle_starts_at",
+                       *results_store.MARGIN_FIELDS)
+    }
+
+    new = results_store.typed_record(results_store.raw_record(new_row, SESSION, True))
+    old = results_store.typed_record(results_store.raw_record(old_row, SESSION, True))
+
+    assert new["pinnacle_event_id"] == 1639701789
+    assert new["pinnacle_starts_at"] == "2026-10-30T18:00:00Z"
+    assert old["pinnacle_event_id"] is None
+    assert old["pinnacle_starts_at"] is None
+    assert old["pinnacle_margin"] == new["pinnacle_margin"]
+    assert old["betclic_margin"] == new["betclic_margin"]
+
+
+def test_historical_csv_gains_margins_without_changing_ev(tmp_path):
+    path = tmp_path / "processed_odds.csv"
+    new_columns = ("pinnacle_event_id", "pinnacle_starts_at",
+                   *results_store.MARGIN_FIELDS)
+    old_header = [
+        column for column in process_live_odds.OUTPUT_FIELDS
+        if column not in new_columns
+    ]
+    row = as_csv_row(process_live_odds.calculate_observation(message()))
+    not_found = {
+        "observation_id": "obs9", "status": "NOT FOUND",
+        "pinnacle_odds1": "1.5", "pinnacle_odds2": "2.7",
+    }
+
+    with path.open("w", encoding="utf-8-sig", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=old_header, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows([row, not_found])
+
+    earlier_backup = tmp_path / "processed_odds.legacy_backup.csv"
+    earlier_backup.write_text("from an earlier upgrade", encoding="utf-8")
+    original = path.read_bytes()
+
+    assert process_live_odds.upgrade_historical_csv(path) is True
+    assert process_live_odds.upgrade_historical_csv(path) is False
+
+    # The earlier backup survives and this upgrade got its own.
+    assert earlier_backup.read_text(encoding="utf-8") == "from an earlier upgrade"
+    backups = list(tmp_path.glob("processed_odds.backup_*.csv"))
+    assert [backup.read_bytes() for backup in backups] == [original]
+
+    with path.open(encoding="utf-8-sig", newline="") as file:
+        reader = csv.DictReader(file)
+        assert reader.fieldnames == process_live_odds.OUTPUT_FIELDS
+        upgraded, missing = list(reader)
+
+    for column in old_header:
+        assert upgraded[column] == row[column]
+    assert float(upgraded["pinnacle_margin"]) == results_store.overround(1.50, 2.70)
+    assert float(upgraded["betclic_margin"]) == results_store.overround(1.55, 2.60)
+    assert upgraded["pinnacle_event_id"] == ""
+    assert float(missing["pinnacle_margin"]) == results_store.overround(1.50, 2.70)
+    assert missing["betclic_margin"] == ""

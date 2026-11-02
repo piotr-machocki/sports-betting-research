@@ -48,9 +48,12 @@ Create a `.env` file in the repository root with the following content:
 
 ```dotenv
 PINNAPI_KEY=your_key_here
+RAPIDAPI_KEY=your_rapidapi_key_here
 ```
 
-Replace `your_key_here` with your actual API key. Do not commit your `.env` file.
+Replace the placeholders with your actual API keys. Do not commit your `.env` file.
+
+`RAPIDAPI_KEY` is optional: it fetches finished match results from the [Tennis API - ATP WTA ITF](https://rapidapi.com/jjrm365-kIFr3Nx_odV/api/tennis-api-atp-wta-itf) on RapidAPI (the free plan allows 50 requests a day). Without it, a run only skips that step.
 
 ## 6. Add the Betclic integration
 
@@ -89,9 +92,23 @@ When collecting Betclic odds, a Chromium browser window may open. Keep it open u
 
 Every run saves its results under `data/results/`:
 
-* `raw/<session_id>.csv` and `.json`: every observation with both bookmakers' odds, margins, fair probabilities and EV for all four devig methods (power, the reference method used for ranking and signals, then odds ratio, Shin and proportional), matching status, confidence and timestamps. Use these files for analysis.
+* `raw/<session_id>.csv` and `.json`: every observation with both bookmakers' odds, margins, fair probabilities and EV for all four devig methods (power, the reference method used for ranking and signals, then odds ratio, Shin and proportional), matching status, confidence and timestamps, plus Pinnacle's event ID (`pinnacle_event_id`, links one match across sessions) and scheduled start (`pinnacle_starts_at`, UTC). Both are blank for sessions recorded before they were added. Use these files for analysis.
 * `reports/<session_id>.txt`: the final terminal table as plain text (all matches, all EV columns). `reports/latest.txt` is always the newest one.
 * `sessions/`: the pipeline's working files for each session (session CSV, status JSON, full report with observation details).
+
+Finished match results are stored separately under `data/match_results/` and joined to the odds only when analysing:
+
+* `results.csv`: one row per finished match (winner, loser, score, `result_type`: completed, retired or walkover).
+* `raw/<date>_<tour>.json`: the provider's rows per day.
+* `state.json`: the last day fully fetched.
+
+`run_once.py` updates them at the end of a run. It makes no request while yesterday (UTC) is already covered, so it fetches at most once a day, however many runs you make; use `--no-results` to skip the step. After days without a run it catches up from the last covered day. To run it by hand or measure how many Pinnacle matches have a result:
+
+```bash
+python scripts/match_results.py                    # same step as run_once.py
+python scripts/match_results.py --from 2026-10-01  # fetch further back
+python scripts/match_results.py --report           # coverage, makes no requests
+```
 
 To regenerate the raw data and reports for past sessions:
 

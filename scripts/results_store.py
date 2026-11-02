@@ -73,6 +73,8 @@ def ev_column(method: str, side: int) -> str:
     return f"ev{side}_{method}"
 
 
+MARGIN_FIELDS = ["pinnacle_margin", "betclic_margin"]
+
 # Columns appended to the session CSV for the non-reference methods.
 METHOD_FIELDS = [
     column
@@ -158,6 +160,7 @@ RAW_FIELDS = [
     "observation_id",
     "match_no",
     "latest_for_match",
+    "pinnacle_event_id",
     "pinnacle_tournament",
     "pinnacle_player1",
     "pinnacle_player2",
@@ -166,6 +169,7 @@ RAW_FIELDS = [
     "status",
     "confidence",
     "betclic_status",
+    "pinnacle_starts_at",
     "pinnacle_captured_at",
     "betclic_captured_at",
     "observation_gap_seconds",
@@ -190,6 +194,7 @@ RAW_FIELDS = [
 
 NUMERIC_FIELDS = {
     "match_no",
+    "pinnacle_event_id",
     "observation_gap_seconds",
     "pinnacle_odds1",
     "pinnacle_odds2",
@@ -218,6 +223,24 @@ def overround(odds1: Any, odds2: Any) -> float | None:
     return round(1 / first + 1 / second - 1, 6)
 
 
+def margin_columns(row: dict) -> dict[str, Any]:
+    """Session CSV margin cells of a row; blank when a side has no odds."""
+    margins = {
+        "pinnacle_margin": overround(
+            row.get("pinnacle_odds1"), row.get("pinnacle_odds2")
+        ),
+        "betclic_margin": overround(
+            row.get("betclic_odds_for_pin_p1"),
+            row.get("betclic_odds_for_pin_p2"),
+        ),
+    }
+
+    return {
+        column: "" if margin is None else margin
+        for column, margin in margins.items()
+    }
+
+
 def raw_record(row: dict, session_id: str, latest: bool) -> dict:
     """One analysis-ready record (CSV cell values) from a session CSV row.
 
@@ -227,12 +250,15 @@ def raw_record(row: dict, session_id: str, latest: bool) -> dict:
     """
     ev1 = _number(row.get("ev1"))
     ev2 = _number(row.get("ev2"))
+    # Recalculated: older session CSVs have no margin columns.
+    margins = margin_columns(row)
 
     record = {
         "session_id": session_id,
         "observation_id": row.get("observation_id", ""),
         "match_no": row.get("match_no", ""),
         "latest_for_match": latest,
+        "pinnacle_event_id": row.get("pinnacle_event_id", ""),
         "pinnacle_tournament": row.get("pinnacle_tournament", ""),
         "pinnacle_player1": row.get("pinnacle_player1", ""),
         "pinnacle_player2": row.get("pinnacle_player2", ""),
@@ -241,20 +267,16 @@ def raw_record(row: dict, session_id: str, latest: bool) -> dict:
         "status": row.get("status", ""),
         "confidence": row.get("confidence", ""),
         "betclic_status": row.get("betclic_status", ""),
+        "pinnacle_starts_at": row.get("pinnacle_starts_at", ""),
         "pinnacle_captured_at": row.get("pinnacle_captured_at", ""),
         "betclic_captured_at": row.get("betclic_captured_at", ""),
         "observation_gap_seconds": row.get("observation_gap_seconds", ""),
         "pinnacle_odds1": row.get("pinnacle_odds1", ""),
         "pinnacle_odds2": row.get("pinnacle_odds2", ""),
-        "pinnacle_margin": overround(
-            row.get("pinnacle_odds1"), row.get("pinnacle_odds2")
-        ),
+        "pinnacle_margin": margins["pinnacle_margin"],
         "betclic_odds1": row.get("betclic_odds_for_pin_p1", ""),
         "betclic_odds2": row.get("betclic_odds_for_pin_p2", ""),
-        "betclic_margin": overround(
-            row.get("betclic_odds_for_pin_p1"),
-            row.get("betclic_odds_for_pin_p2"),
-        ),
+        "betclic_margin": margins["betclic_margin"],
         "best_side": (
             None if ev1 is None or ev2 is None else (1 if ev1 >= ev2 else 2)
         ),
@@ -288,7 +310,8 @@ def typed_record(record: dict) -> dict:
             parsed = _number(value)
             typed[key] = (
                 int(parsed)
-                if parsed is not None and key in ("match_no", "best_side")
+                if parsed is not None
+                and key in ("match_no", "pinnacle_event_id", "best_side")
                 else parsed
             )
         elif value == "":

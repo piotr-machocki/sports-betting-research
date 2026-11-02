@@ -31,9 +31,11 @@ from pathlib import Path
 from typing import Any
 
 from results_store import (
+    MARGIN_FIELDS,
     METHOD_FIELDS,
     REFERENCE_METHOD,
     complete_methods,
+    margin_columns,
     method_columns,
 )
 
@@ -58,6 +60,8 @@ FAILED_ATTEMPTS: dict[str, int] = {}
 OUTPUT_FIELDS = [
     "observation_id",
     "match_no",
+    "pinnacle_event_id",
+    "pinnacle_starts_at",
     "pinnacle_captured_at",
     "betclic_captured_at",
     "observation_gap_seconds",
@@ -72,6 +76,7 @@ OUTPUT_FIELDS = [
     "betclic_player2",
     "betclic_odds_for_pin_p1",
     "betclic_odds_for_pin_p2",
+    *MARGIN_FIELDS,
     "ev1",
     "ev2",
     "best_ev",
@@ -211,6 +216,8 @@ def calculate_observation(message: dict) -> dict:
     result.update({
         "observation_id": message.get("observation_id", ""),
         "match_no": message.get("match_no", ""),
+        "pinnacle_event_id": message.get("pinnacle_event_id", ""),
+        "pinnacle_starts_at": message.get("pinnacle_starts_at", ""),
         "pinnacle_captured_at": message.get(
             "pinnacle_captured_at", ""
         ),
@@ -242,6 +249,7 @@ def calculate_observation(message: dict) -> dict:
         "url": message.get("url", ""),
         "note": message.get("note", ""),
     })
+    result.update(margin_columns(result))
 
     if message.get("status") != "FOUND":
         result["note"] = (
@@ -364,15 +372,18 @@ def upgrade_historical_csv(path: Path) -> bool:
     Files written before the per-method columns (and before the switch of
     the reference method to power) lack them, so their unsuffixed EV columns
     would mean different methods in old and new rows. Every row with an EV
-    is recalculated from its stored odds (results_store.complete_methods);
-    columns the file has but OUTPUT_FIELDS doesn't are kept at the end. The
-    original is copied once to <name>.legacy_backup.csv. Returns True when
+    is recalculated from its stored odds (results_store.complete_methods)
+    and margins are filled in for every row. The event ID and start time of
+    older rows stay blank: the snapshots of that time did not keep them.
+    Columns the file has but OUTPUT_FIELDS doesn't are kept at the end. The
+    original is copied to <name>.legacy_backup.csv, or to
+    <name>.backup_<timestamp>.csv if that name is taken. Returns True when
     the file was rewritten.
     """
 
     header = csv_fieldnames(path) if path.exists() else OUTPUT_FIELDS
 
-    if all(column in header for column in METHOD_FIELDS):
+    if all(column in header for column in OUTPUT_FIELDS):
         return False
 
     with path.open("r", encoding="utf-8-sig", newline="") as file:
@@ -383,8 +394,10 @@ def upgrade_historical_csv(path: Path) -> bool:
     ]
 
     backup = path.with_name(f"{path.stem}.legacy_backup.csv")
-    if not backup.exists():
-        shutil.copy2(path, backup)
+    if backup.exists():
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup = path.with_name(f"{path.stem}.backup_{stamp}.csv")
+    shutil.copy2(path, backup)
 
     temp_path = path.with_name(f".{path.name}.tmp")
     with temp_path.open("w", encoding="utf-8-sig", newline="") as file:
@@ -392,7 +405,9 @@ def upgrade_historical_csv(path: Path) -> bool:
             file, fieldnames=fieldnames, extrasaction="ignore", restval=""
         )
         writer.writeheader()
-        writer.writerows(complete_methods(row) for row in rows)
+        writer.writerows(
+            {**complete_methods(row), **margin_columns(row)} for row in rows
+        )
 
     temp_path.replace(path)
     return True
