@@ -348,6 +348,26 @@ def test_doubles_take_one_line_and_the_row_stays_in_the_terminal():
     assert "| manual|" in line
 
 
+def test_legend_has_one_topic_per_line_with_aligned_labels():
+    with live_monitor.plain():
+        title, *lines = live_monitor.legend_lines(args())
+
+    assert title == "Legend:"
+
+    labels = [line[:2 + live_monitor.LEGEND_LABEL_W].strip() for line in lines]
+    assert labels == [
+        "BET ON", "Rows", "Betc / Pinn", "Mb / Mp", "Devig", "EV colours",
+        "GAP", "CONF", "No-EV letter", "TOURNAMENT", "Round",
+    ]
+
+    # The text after the label starts in the same column on every line.
+    start = 2 + live_monitor.LEGEND_LABEL_W + 2
+    assert all(line[start - 1] == " " and line[start] != " " for line in lines)
+
+    # The user's full-screen terminal is 156 columns wide.
+    assert max(map(len, lines)) < 156
+
+
 # ---------------------------------------------------------- raw records ----
 
 

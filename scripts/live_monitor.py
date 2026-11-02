@@ -107,6 +107,8 @@ TOURNAMENT_ROUNDS = {"Qualifiers": "Q", "Doubles": "D", "Final": "F"}
 
 STATUS_MARKS = {"NOT FOUND": "N", "VERIFY": "V", "AMBIGUOUS": "A"}
 
+LEGEND_LABEL_W = 12  # label column of the legend, see legend_row
+
 # EV column header per devig method (betting.margin.METHODS order).
 EV_LABELS = {
     "power": "EV(ref)",
@@ -933,44 +935,68 @@ def header_lines(
 
     return lines
 
+def legend_row(label: str, *items: str, styles: tuple[str, ...] = ("1",)) -> str:
+    """One topic per line: a bold label column, then its items."""
+    return (
+        f"  {paint(f'{label:<{LEGEND_LABEL_W}}', *styles)}  "
+        + paint(" | ", "90").join(items)
+    )
+
+
 def legend_lines(args: argparse.Namespace) -> list[str]:
     threshold = f"{args.min_ev * 100:g}%"
 
     return [
-        "Legend:",
-        "  "
-        + paint("BET ON", "1", "36")
-        + " = side with the best EV(ref)",
-        "  "
-        + paint("red", "31") + " EV < 0% | "
-        + paint("gray", "90") + " EV = 0% | "
-        + paint("yellow", "33") + f" 0% < EV < {threshold} | "
-        + paint("green", "1", "32") + f" EV >= {threshold}",
-        "  "
-        + "GAP = Betclic capture minus Pinnacle capture",
-        "  "
-        + paint("yellow GAP", "33")
-        + f" = over {args.max_age:g} min (stale) | "
-        + "CONF = scraper match confidence | "
-        + "Betc / Pinn = Betclic / Pinnacle odds | "
-        + "Mb / Mp = their margins (overround)",
-        "  "
-        + "Letter before BET ON = no EV: "
-        + paint("N", "1", "33") + " not found | "
-        + paint("V", "1", "33") + " verify | "
-        + paint("A", "1", "33") + " ambiguous | "
-        + paint("L", "1", "33") + " live | "
-        + paint("E", "1", "31") + " error | "
-        + paint("X", "90") + " other",
-        "  "
-        + "TOURNAMENT: CH = ATP Challenger | W125 = WTA 125k | "
-        + "ITF M/W = ITF Men/Women | Q = qualifiers | D = doubles | F = final",
-        "  "
-        + "Devig of Pinnacle odds: P(ref) / EV(ref) = power | "
-        + "OR = odds ratio | shin = Shin | prop = proportional",
-        "  "
-        + "One row per match (latest observation), best EV(ref) first; "
-        + "every EV column is for the BET ON side",
+        paint("Legend:", "1"),
+        legend_row(
+            "BET ON",
+            "side with the best EV(ref)",
+            "every EV column is for this side",
+            styles=("1", "36"),
+        ),
+        legend_row(
+            "Rows",
+            "one per match (latest observation)",
+            "best EV(ref) first",
+        ),
+        legend_row("Betc / Pinn", "Betclic / Pinnacle odds"),
+        legend_row("Mb / Mp", "Betclic / Pinnacle margin (overround)"),
+        legend_row(
+            "Devig",
+            "P(ref) / EV(ref) = power",
+            "OR = odds ratio",
+            "shin = Shin",
+            "prop = proportional",
+        ),
+        legend_row(
+            "EV colours",
+            paint("red", "31") + " < 0%",
+            paint("gray", "90") + " = 0%",
+            paint("yellow", "33") + f" 0% to {threshold}",
+            paint("green", "1", "32") + f" >= {threshold}",
+        ),
+        legend_row(
+            "GAP",
+            "Betclic capture minus Pinnacle capture",
+            paint("yellow", "33") + f" = over {args.max_age:g} min (stale)",
+        ),
+        legend_row("CONF", "scraper match confidence"),
+        legend_row(
+            "No-EV letter",
+            paint("N", "1", "33") + " not found",
+            paint("V", "1", "33") + " verify",
+            paint("A", "1", "33") + " ambiguous",
+            paint("L", "1", "33") + " live",
+            paint("E", "1", "31") + " error",
+            paint("X", "90") + " other",
+        ),
+        legend_row(
+            "TOURNAMENT",
+            "CH = ATP Challenger",
+            "W125 = WTA 125k",
+            "ITF M/W = ITF Men/Women",
+        ),
+        legend_row("Round", "Q = qualifiers", "D = doubles", "F = final"),
     ]
 
 
