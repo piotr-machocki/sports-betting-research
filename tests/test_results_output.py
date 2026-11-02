@@ -227,15 +227,31 @@ def test_table_shows_all_four_ev_columns_for_the_bet_on_side():
         header, _, *lines = live_monitor.table_lines(rows, args())
 
     for label in ("EV(ref)", "EV(OR)", "EV(shin)", "EV(prop)", "GAP",
-                  "P(ref)", "Betclic", "Pinnacle", "CONF", "OPPONENT"):
+                  "P(ref)", "Betc", "Pinn", "CONF", "OPPONENT",
+                  "Mb", "Mp", "TOURNAMENT"):
         assert label in header
+
+    assert "FLAGS" not in header
+
+    # Requested order: opponent next to BET ON, margins right after the odds,
+    # tournament last.
+    assert header.index("BET ON") < header.index("OPPONENT") < header.index("Betc")
+    assert header.index("Pinn") < header.index(" Mb ") < header.index(" Mp ")
+    assert header.rstrip().endswith("TOURNAMENT")
 
     # Every match is listed, negative EV and not found included, in the
     # existing order (best reference EV first, uncalculated last).
     assert len(lines) == 3
-    assert "Alice Alpha" in lines[0]
-    assert "Cara Gamma" in lines[1] or "Dana Delta" in lines[1]
-    assert "NOT FOUND" in lines[2]
+    assert "A. Alpha" in lines[0] and "B. Beta" in lines[0]
+    assert "C. Gamma" in lines[1] or "D. Delta" in lines[1]
+    assert lines[2][4] == "N"
+    assert lines[0][4] == " "
+    assert all(line.endswith("WTA Test R1") for line in lines)
+
+    # Margins: 1/1.55 + 1/2.60 - 1 and 1/1.50 + 1/2.70 - 1.
+    assert "2.98%" in lines[0] and "3.70%" in lines[0]
+    # Without Betclic odds only the Pinnacle margin is known.
+    assert "3.70%" in lines[2]
 
     row = rows[0]
     side = live_monitor.best_side(row)
@@ -244,9 +260,92 @@ def test_table_shows_all_four_ev_columns_for_the_bet_on_side():
         assert f"{value * 100:+.2f}%" in lines[0]
 
     # GAP: Betclic captured one minute after Pinnacle; no AGE column.
-    assert "1 min 00 s" in lines[0]
-    assert "9 min 00 s" not in lines[0]
-    assert lines[2].count("--") >= 4 + 3  # four EVs, odds, probability
+    assert "1m00s" in lines[0]
+    assert "9m00s" not in lines[0]
+    assert lines[2].count("--") >= 4 + 3 + 1  # EVs, odds, probability, margin
+
+
+@pytest.mark.parametrize("name, expected", [
+    ("Carlos Alcaraz", "C. Alcaraz"),
+    ("Alejandro Davidovich Fokina", "A. Fokina"),
+    ("Jan-Lennard Struff", "J. Struff"),
+    ("Austin Krajicek / Nikola Mektic", "Krajicek/Mektic"),
+    ("Aneta Kucmova / Aneta Laboutkova", "Kucmova/Laboutko"),
+    ("Polina Kudermetova / Maria Timofeeva", "Kuderme/Timofeev"),
+    ("Sinner", "Sinner"),
+    ("", "?"),
+    (None, "?"),
+])
+def test_short_name(name, expected):
+    assert live_monitor.short_name(name) == expected
+    assert len(expected) <= live_monitor.PW
+
+
+@pytest.mark.parametrize("seconds, expected", [
+    (19, "19s"),
+    (65, "1m05s"),
+    (3720, "1h02m"),
+])
+def test_fmt_gap_fits_the_column(seconds, expected):
+    assert live_monitor.fmt_gap(seconds) == expected
+
+
+@pytest.mark.parametrize("name, expected", [
+    ("ATP Challenger Bratislava - Qualifiers", "CH Bratislava Q"),
+    ("ATP Challenger Costa do Sauipe - R1", "CH Costa do Sauipe R1"),
+    ("WTA 125k Cali - R1", "W125 Cali R1"),
+    ("WTA 125K Courmayeur - Doubles", "W125 Courmayeur D"),
+    ("ITF Men Trois-Rivieres - R16", "ITF M Trois-Rivieres R16"),
+    ("ITF Women New Braunfels - Final", "ITF W New Braunfels F"),
+    ("ATP Paris - SF", "ATP Paris SF"),
+    ("WTA Hong Kong - QF", "WTA Hong Kong QF"),
+    ("Some Exhibition", "Some Exhibition"),
+    ("", ""),
+    (None, ""),
+])
+def test_short_tournament(name, expected):
+    assert live_monitor.short_tournament(name) == expected
+
+
+@pytest.mark.parametrize("overrides, mark", [
+    ({"status": "NOT FOUND"}, "N"),
+    ({"status": "VERIFY"}, "V"),
+    ({"status": "AMBIGUOUS"}, "A"),
+    ({"status": "ERROR"}, "E"),
+    ({"betclic_status": "live"}, "L"),
+    ({"odds_ok": False}, "X"),
+])
+def test_status_mark_says_why_a_match_has_no_ev(overrides, mark):
+    row = as_csv_row(process_live_odds.calculate_observation(message(**overrides)))
+
+    with live_monitor.plain():
+        assert live_monitor.status_mark(row) == mark
+
+
+def test_doubles_take_one_line_and_the_row_stays_in_the_terminal():
+    row = as_csv_row(process_live_odds.calculate_observation(message(
+        pinnacle_player1="Francisco Cerundolo / Tomas Martin Etcheverry",
+        pinnacle_player2="Austin Krajicek / Nikola Mektic",
+        pinnacle_tournament="ITF Women New Braunfels - R16",
+        confidence="manual_review",
+    )))
+
+    with live_monitor.plain():
+        header, rule, line = live_monitor.table_lines([row], args())
+
+    assert "Cerundo/Etchever" in line and "Krajicek/Mektic" in line
+    assert line.endswith("ITF W New Braunfels R16")
+
+    # The user's full-screen terminal is 156 columns wide.
+    assert max(map(len, (header, rule, line))) < 156
+
+    # The vertical bars line up on every line.
+    def bars(text, bar="|"):
+        return [position for position, char in enumerate(text) if char == bar]
+
+    assert len(bars(header)) == 14
+    assert bars(line) == bars(header) == bars(rule, "+")
+    assert "| manual|" in line
 
 
 # ---------------------------------------------------------- raw records ----
@@ -352,7 +451,7 @@ def test_export_writes_display_report_and_latest(tmp_path):
 
     # Same layout as the terminal table, every match included.
     assert "\n".join(expected_table) in report
-    for name in ("Alice Alpha", "Erin Epsilon"):
+    for name in ("A. Alpha", "E. Epsilon"):
         assert name in report
     assert "LIVE SESSION   FINISHED" in report
 

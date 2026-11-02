@@ -64,7 +64,7 @@ from pathlib import Path
 from typing import Any
 
 from perf_summary import performance_lines, quality_section
-from results_store import METHODS, complete_methods, ev_column
+from results_store import METHODS, complete_methods, ev_column, overround
 
 if os.name == "nt":
     import msvcrt
@@ -93,7 +93,19 @@ COMFORT_ROWS = 10
 # table only needs this many visible rows (it scrolls).
 QUALITY_MIN_ROWS = 5
 
-PW = 22  # player-name column width
+PW = 16  # player-name column width (shortened names, see short_name)
+TOURNAMENT_W = 20  # header width only; rows are never cut (short_tournament)
+
+# Table abbreviations of Pinnacle's "<prefix> <city> - <round>" tournament names.
+TOURNAMENT_PREFIXES = {
+    "atp challenger": "CH",
+    "wta 125k": "W125",
+    "itf men": "ITF M",
+    "itf women": "ITF W",
+}
+TOURNAMENT_ROUNDS = {"Qualifiers": "Q", "Doubles": "D", "Final": "F"}
+
+STATUS_MARKS = {"NOT FOUND": "N", "VERIFY": "V", "AMBIGUOUS": "A"}
 
 # EV column header per devig method (betting.margin.METHODS order).
 EV_LABELS = {
@@ -193,7 +205,7 @@ def parse_args() -> argparse.Namespace:
         default=15.0,
         help=(
             "Minutes between the Pinnacle and Betclic captures after which "
-            "an observation is flagged STALE. Default: 15."
+            "its GAP turns yellow. Default: 15."
         ),
     )
 
@@ -464,11 +476,10 @@ def format_odds(value: Any) -> str:
     return f"{whole}.{decimals.ljust(2, '0')}"
 
 
-def fmt_age(seconds: float, fixed: bool = False) -> str:
-    """`fixed` always shows minutes, so table cells share one width."""
+def fmt_age(seconds: float) -> str:
     seconds = max(0, round(seconds))
 
-    if seconds < 60 and not fixed:
+    if seconds < 60:
         return f"{seconds} s"
 
     if seconds < 3600:
@@ -477,13 +488,64 @@ def fmt_age(seconds: float, fixed: bool = False) -> str:
     return f"{seconds // 3600} h {seconds % 3600 // 60:02d} min"
 
 
-def shorten(value: Any, width: int) -> str:
-    text = str(value or "")
+def fmt_gap(seconds: float) -> str:
+    """Compact fmt_age for the table: '19s', '1m05s', '1h02m'."""
+    seconds = max(0, round(seconds))
 
-    if len(text) <= width:
-        return text
+    if seconds < 60:
+        return f"{seconds}s"
 
-    return text[: width - 3] + "..."
+    if seconds < 3600:
+        return f"{seconds // 60}m{seconds % 60:02d}s"
+
+    return f"{seconds // 3600}h{seconds % 3600 // 60:02d}m"
+
+
+def short_name(value: Any) -> str:
+    """'Carlos Alcaraz' -> 'C. Alcaraz'; doubles: 'Krajicek/Mektic', with the
+    surnames cut to share the name column ('Kucmova/Laboutko')."""
+    players = [part.split() for part in str(value or "").split("/")]
+    players = [tokens for tokens in players if tokens]
+
+    if not players:
+        return "?"
+
+    if len(players) > 1:
+        first, second = players[0][-1], players[-1][-1]
+        room = PW - 1
+        first = first[:max(room // 2, room - len(second))]
+        return f"{first}/{second[:room - len(first)]}"
+
+    tokens = players[0]
+
+    if len(tokens) == 1:
+        return tokens[0]
+
+    return f"{tokens[0][0]}. {tokens[-1]}"
+
+
+def short_tournament(value: Any) -> str:
+    """'ATP Challenger Bratislava - Qualifiers' -> 'CH Bratislava Q'."""
+    name, separator, stage = str(value or "").strip().rpartition(" - ")
+
+    if not separator:
+        name, stage = stage, ""
+
+    for prefix, short in TOURNAMENT_PREFIXES.items():
+        if name.lower().startswith(prefix + " "):
+            name = short + name[len(prefix):]
+            break
+
+    return f"{name} {TOURNAMENT_ROUNDS.get(stage, stage)}".strip()
+
+
+def format_margin(odds1: Any, odds2: Any) -> str:
+    margin = overround(odds1, odds2)
+
+    if margin is None:
+        return "--"
+
+    return f"{margin * 100:.2f}%"
 
 
 def match_name(row: dict) -> str:
@@ -539,47 +601,59 @@ def is_stale(row: dict, max_age_minutes: float) -> bool:
     return gap is not None and gap > max_age_minutes * 60
 
 
-def flags_for(row: dict, args: argparse.Namespace) -> str:
-    flags = []
+def status_mark(row: dict) -> str:
+    """One letter saying why a match has no EV; blank when it has one."""
+    if best_side(row) is not None:
+        return " "
 
-    if best_side(row) is None:
-        status = str(row.get("status") or "?")
+    status = str(row.get("status") or "?")
 
-        if status == "ERROR":
-            flags.append(paint(status, "1", "31"))
-        elif status != "FOUND":
-            flags.append(paint(status, "1", "33"))
-        elif str(row.get("betclic_status", "")).lower() == "live":
-            flags.append(paint("LIVE", "1", "33"))
-        else:
-            flags.append(paint("NO EV", "90"))
+    if status == "ERROR":
+        return paint("E", "1", "31")
 
-    if is_stale(row, args.max_age):
-        flags.append(paint("STALE", "1", "33"))
+    if status != "FOUND":
+        return paint(STATUS_MARKS.get(status, "?"), "1", "33")
 
-    return "".join(" " + flag for flag in flags)
+    if str(row.get("betclic_status", "")).lower() == "live":
+        return paint("L", "1", "33")
+
+    return paint("X", "90")
 
 
 # ---------------------------------------------------------------- table -----
 
 
+def table_row(cells: list[str]) -> str:
+    return paint("|", "90").join(cells)
+
+
 def table_header_lines() -> list[str]:
-    ev_headers = " ".join(f"{EV_LABELS[method]:>8}" for method in METHODS)
+    cells = [
+        f"{'#':>3}  ",
+        f" {'BET ON':<{PW}}",
+        f" {'OPPONENT':<{PW}}",
+        f"{'Betc':>5} ",
+        f"{'Pinn':>6} ",
+        f"{'Mb':>6} ",
+        f"{'Mp':>5} ",
+        f"{'P(ref)':>6} ",
+        *(f"{EV_LABELS[method]:^8}" for method in METHODS),
+        f"{'GAP':>5} ",
+        f" {'CONF':<6}",
+        f" {'TOURNAMENT':<{TOURNAMENT_W}}",
+    ]
 
-    header = (
-        f"{'#':>3}  {'BET ON':<{PW}} {'Betclic':>7} {'Pinnacle':>8} "
-        f"{'P(ref)':>7} {ev_headers} {'GAP':^11}  "
-        f"{'CONF':<8} {'OPPONENT':<{PW + 3}}"
-    )
-
-    return [paint(header, "1"), "-" * len(header)]
+    return [
+        table_row([paint(cell, "1") for cell in cells]),
+        "+".join("-" * len(cell) for cell in cells),
+    ]
 
 
 def ev_cell(value: float | None, min_ev: float) -> str:
     if value is None:
-        return paint(f"{'--':>8}", "2")
+        return paint(f"{'--':>7}", "2")
 
-    return paint(f"{value * 100:>+7.2f}%", *ev_style(value, min_ev))
+    return paint(f"{value * 100:>+6.2f}%", *ev_style(value, min_ev))
 
 
 def table_row_lines(
@@ -600,50 +674,74 @@ def table_row_lines(
         side = best_side(row)
 
         if side is None:
-            name = row.get("pinnacle_player1") or "?"
-            opponent = row.get("pinnacle_player2") or "?"
+            name = short_name(row.get("pinnacle_player1"))
+            opponent = short_name(row.get("pinnacle_player2"))
 
-            player_cell = paint(f"{name[:PW]:<{PW}}", "2")
-            betclic = probability = f"{'--':>7}"
-            pinnacle = f"{'--':>8}"
-            ev_cells = " ".join(ev_cell(None, args.min_ev) for _ in METHODS)
+            name_style = ("2",)
+            betclic = f"{'--':>5}"
+            pinnacle = probability = f"{'--':>6}"
+            ev_cells = [ev_cell(None, args.min_ev) for _ in METHODS]
 
         else:
             other = 2 if side == 1 else 1
 
-            name = row.get(f"pinnacle_player{side}") or "?"
-            opponent = row.get(f"pinnacle_player{other}") or "?"
+            name = short_name(row.get(f"pinnacle_player{side}"))
+            opponent = short_name(row.get(f"pinnacle_player{other}"))
 
-            player_cell = paint(f"{name[:PW]:<{PW}}", "1", "36")
+            name_style = ("1", "36")
             betclic = format_odds(
                 row.get(f"betclic_odds_for_pin_p{side}")
-            ).rjust(7)
+            ).rjust(5)
             pinnacle = format_odds(
                 row.get(f"pinnacle_odds{side}")
-            ).rjust(8)
+            ).rjust(6)
             probability = format_probability(
                 row.get(f"probability{side}")
-            ).rjust(7)
-            ev_cells = " ".join(
+            ).rjust(6)
+            ev_cells = [
                 ev_cell(number(row.get(ev_column(method, side))), args.min_ev)
                 for method in METHODS
-            )
+            ]
 
         gap = number(row.get("observation_gap_seconds"))
-        gap_text = fmt_age(gap, fixed=True) if gap is not None else "--"
+        gap_text = fmt_gap(gap) if gap is not None else "--"
         gap_cell = paint(
-            f"{gap_text:^11}",
+            f"{gap_text:>5}",
             *(("33",) if is_stale(row, args.max_age) else ("2",)),
         )
 
-        confidence = f"{shorten(row.get('confidence'), 8):<8}"
+        confidence = f"{str(row.get('confidence') or '')[:6]:<6}"
 
-        lines.append(
-            f"{index:>3}  {player_cell} {betclic} {pinnacle} "
-            f"{probability} {ev_cells} {gap_cell}  {confidence} "
-            f"{paint(f'vs {opponent[:PW]:<{PW}}', '2')}"
-            f"{flags_for(row, args)}"
-        )
+        # Margins cover the whole market, so they need no BET ON side.
+        betclic_margin = format_margin(
+            row.get("betclic_odds_for_pin_p1"),
+            row.get("betclic_odds_for_pin_p2"),
+        ).rjust(6)
+        pinnacle_margin = format_margin(
+            row.get("pinnacle_odds1"),
+            row.get("pinnacle_odds2"),
+        ).rjust(5)
+
+        # Numbers keep a space before the next bar, text a space after it.
+        lines.append(table_row([
+            f"{index:>3} {status_mark(row)}",
+            " " + paint(f"{name[:PW]:<{PW}}", *name_style),
+            " " + paint(f"{opponent[:PW]:<{PW}}", "2"),
+            *(
+                f"{cell} "
+                for cell in (
+                    betclic,
+                    pinnacle,
+                    betclic_margin,
+                    pinnacle_margin,
+                    probability,
+                    *ev_cells,
+                    gap_cell,
+                )
+            ),
+            f" {confidence}",
+            f" {short_tournament(row.get('pinnacle_tournament'))}",
+        ]))
 
     return lines
 
@@ -851,9 +949,22 @@ def legend_lines(args: argparse.Namespace) -> list[str]:
         "  "
         + "GAP = Betclic capture minus Pinnacle capture",
         "  "
-        + paint("STALE", "1", "33")
-        + f" = GAP > {args.max_age:g} min | "
-        + "CONF = scraper match confidence",
+        + paint("yellow GAP", "33")
+        + f" = over {args.max_age:g} min (stale) | "
+        + "CONF = scraper match confidence | "
+        + "Betc / Pinn = Betclic / Pinnacle odds | "
+        + "Mb / Mp = their margins (overround)",
+        "  "
+        + "Letter before BET ON = no EV: "
+        + paint("N", "1", "33") + " not found | "
+        + paint("V", "1", "33") + " verify | "
+        + paint("A", "1", "33") + " ambiguous | "
+        + paint("L", "1", "33") + " live | "
+        + paint("E", "1", "31") + " error | "
+        + paint("X", "90") + " other",
+        "  "
+        + "TOURNAMENT: CH = ATP Challenger | W125 = WTA 125k | "
+        + "ITF M/W = ITF Men/Women | Q = qualifiers | D = doubles | F = final",
         "  "
         + "Devig of Pinnacle odds: P(ref) / EV(ref) = power | "
         + "OR = odds ratio | shin = Shin | prop = proportional",
