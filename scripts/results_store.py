@@ -75,6 +75,16 @@ def ev_column(method: str, side: int) -> str:
 
 MARGIN_FIELDS = ["pinnacle_margin", "betclic_margin"]
 
+def raw_probability_column(method: str, side: int) -> str:
+    """Raw export column: unlike the session CSV, every method has its suffix."""
+    return f"probability{side}_{method}"
+
+
+def raw_ev_column(method: str, side: int) -> str:
+    """Raw export column: unlike the session CSV, every method has its suffix."""
+    return f"ev{side}_{method}"
+
+
 # Columns appended to the session CSV for the non-reference methods.
 METHOD_FIELDS = [
     column
@@ -180,9 +190,9 @@ RAW_FIELDS = [
     "betclic_odds2",
     "betclic_margin",
     *(
-        f"{kind}{side}_{method}"
+        column(method, side)
         for method in METHODS
-        for kind in ("probability", "ev")
+        for column in (raw_probability_column, raw_ev_column)
         for side in SIDES
     ),
     "best_side",
@@ -205,9 +215,9 @@ NUMERIC_FIELDS = {
     "best_side",
     "best_ev",
     *(
-        f"{kind}{side}_{method}"
+        column(method, side)
         for method in METHODS
-        for kind in ("probability", "ev")
+        for column in (raw_probability_column, raw_ev_column)
         for side in SIDES
     ),
 }
@@ -288,10 +298,10 @@ def raw_record(row: dict, session_id: str, latest: bool) -> dict:
 
     for method in METHODS:
         for side in SIDES:
-            record[f"probability{side}_{method}"] = row.get(
+            record[raw_probability_column(method, side)] = row.get(
                 probability_column(method, side), ""
             )
-            record[f"ev{side}_{method}"] = row.get(
+            record[raw_ev_column(method, side)] = row.get(
                 ev_column(method, side), ""
             )
 

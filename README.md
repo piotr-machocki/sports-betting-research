@@ -111,6 +111,14 @@ python scripts/match_results.py --from 2026-10-01  # fetch further back
 python scripts/match_results.py --report           # coverage, makes no requests
 ```
 
+To list every positive-EV opportunity found so far, with how both books moved afterwards, closing line value, agreement between the devig methods and the result (local files only, no requests; all columns go to `data/results/ev_evaluation/opportunities.csv`):
+
+```bash
+python scripts/evaluate_ev.py                # all opportunities
+python scripts/evaluate_ev.py --min-ev 0.02  # only EV of at least 2%
+python scripts/evaluate_ev.py --from 2026-11-03
+```
+
 To regenerate the raw data and reports for past sessions:
 
 ```bash
