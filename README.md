@@ -70,12 +70,13 @@ python scripts/run_once.py          # headless Betclic browser
 python scripts/run_once.py --head   # show the browser, for debugging
 python scripts/run_once.py --debug  # save HTML + screenshot of failed Betclic matches
 python scripts/run_once.py --no-monitor  # open no monitor terminal, for unattended runs
+python scripts/run_once.py --no-superbet  # skip the Superbet collection (only runs if superbet.py is present)
 ```
 
 The Betclic collector runs in tournament mode (`betclic_scroll.py`) when
 `src/betting/books/betclic_scroll.py` is present, and otherwise uses `betclic.py`.
-Other modes: `--hybrid` (`betclic_scroll.py --hybrid`), `--search` (`betclic.py`)
-and `--scroll` (`betclic_scroll.py --overview`).
+Other modes: `--hybrid` (`betclic_scroll.py --hybrid`), `--search` (`betclic.py`),
+`--scroll` (`betclic_scroll.py --overview`) and `--feed` (`betclic_feed.py`).
 
 Debug dumps (in `data/betclic/debug/`) are off by default because they slow
 down every failed match; use `--debug` when the scraper stops finding matches.

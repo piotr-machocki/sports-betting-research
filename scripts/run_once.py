@@ -23,7 +23,9 @@ Usage:
     python scripts/run_once.py --hybrid
     python scripts/run_once.py --search
     python scripts/run_once.py --scroll
+    python scripts/run_once.py --feed
     python scripts/run_once.py --no-monitor
+    python scripts/run_once.py --no-superbet
 
 Without --limit every available Pinnacle match is processed. The Betclic
 browser runs headless unless --head is given. Debug dumps of failed matches
@@ -32,8 +34,8 @@ closing the live monitor's terminal (Windows) while Betclic is collecting.
 --no-monitor opens no terminal, for unattended runs; the report is still written.
 
 Betclic is collected in tournament mode (betclic_scroll.py) unless --hybrid
-selects betclic_scroll.py --hybrid, --search selects betclic.py or --scroll
-selects betclic_scroll.py --overview. All modes publish the same queue
+selects betclic_scroll.py --hybrid, --search selects betclic.py, --scroll
+selects betclic_scroll.py --overview or --feed selects betclic_feed.py. All modes publish the same queue
 messages.
 """
 
@@ -61,6 +63,8 @@ SCRIPTS_DIR = ROOT / "scripts"
 PINNACLE_SCRIPT = SRC_DIR / "betting" / "books" / "pinnacle.py"
 BETCLIC_SCRIPT = SRC_DIR / "betting" / "books" / "betclic.py"
 BETCLIC_SCROLL_SCRIPT = SRC_DIR / "betting" / "books" / "betclic_scroll.py"
+BETCLIC_FEED_SCRIPT = SRC_DIR / "betting" / "books" / "betclic_feed.py"
+SUPERBET_SCRIPT = SRC_DIR / "betting" / "books" / "superbet.py"
 
 WORKER_SCRIPT = SCRIPTS_DIR / "process_live_odds.py"
 MONITOR_SCRIPT = SCRIPTS_DIR / "live_monitor.py"
@@ -258,6 +262,14 @@ def parse_args() -> argparse.Namespace:
         help="Betclic: betclic_scroll.py --overview.",
     )
 
+    mode.add_argument(
+        "--feed",
+        dest="mode",
+        action="store_const",
+        const="feed",
+        help="Betclic: betclic_feed.py.",
+    )
+
     # None = not chosen: tournaments, or search when betclic_scroll.py is
     # missing.
     parser.set_defaults(mode=None)
@@ -276,12 +288,43 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--no-superbet",
+        action="store_true",
+        help="Skip the Superbet collection (only runs if superbet.py is present).",
+    )
+
+    parser.add_argument(
         "--no-monitor",
         action="store_true",
         help="Open no live monitor terminal, for unattended runs.",
     )
 
     return parser.parse_args()
+
+
+# --------------------------------------------------------------- Superbet ---
+
+
+def collect_superbet(session_id: str, pinnacle_snapshot: Path) -> None:
+    """Optional and separate from the queue; a failure never stops the run."""
+    if not SUPERBET_SCRIPT.exists():
+        return
+
+    try:
+        subprocess.run(
+            [
+                sys.executable,
+                str(SUPERBET_SCRIPT),
+                "--session-id",
+                session_id,
+                "--input",
+                str(pinnacle_snapshot),
+            ],
+            check=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"WARNING: Superbet collection failed: {exc}", flush=True)
 
 
 # --------------------------------------------------------------- Pinnacle ---
@@ -675,15 +718,17 @@ def main() -> None:
                 flush=True,
             )
 
-    collector_script = (
-        BETCLIC_SCRIPT if betclic_mode == "search" else BETCLIC_SCROLL_SCRIPT
-    )
+    collector_script = {
+        "search": BETCLIC_SCRIPT,
+        "feed": BETCLIC_FEED_SCRIPT,
+    }.get(betclic_mode, BETCLIC_SCROLL_SCRIPT)
 
-    # The betclic_scroll.py modes also need BETCLIC_SCRIPT: they reuse its
-    # helpers.
+    # The other modes also need BETCLIC_SCRIPT and, for the feed,
+    # BETCLIC_SCROLL_SCRIPT: they reuse their helpers.
     for script in (
         PINNACLE_SCRIPT,
         BETCLIC_SCRIPT,
+        *([BETCLIC_SCROLL_SCRIPT] if betclic_mode == "feed" else []),
         collector_script,
         WORKER_SCRIPT,
         MONITOR_SCRIPT,
@@ -725,7 +770,7 @@ def main() -> None:
 
     # Everything about the Pinnacle collection is known now. It goes into the
     # status file the monitor reads, so PINNACLE DATA QUALITY can be shown
-    # before Betclic scraping starts. No further Pinnacle request is made.
+    # before Betclic collection starts. No further Pinnacle request is made.
     pinnacle_info = build_pinnacle_info(
         pinnacle_stats,
         pinnacle_seconds,
@@ -767,6 +812,9 @@ def main() -> None:
             "report": str(report_path),
         },
     )
+
+    if not args.no_superbet:
+        collect_superbet(session_id, pinnacle_snapshot)
 
     worker = None
     monitor = None
