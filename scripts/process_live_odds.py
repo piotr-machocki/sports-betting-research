@@ -57,6 +57,10 @@ POLL_SECONDS = 0.5
 MAX_ATTEMPTS = 3
 FAILED_ATTEMPTS: dict[str, int] = {}
 
+# Columns each output CSV appends with. Reopening a file just written to read
+# its header took 68 ms on Windows (3 Nov 2026), per row and per file.
+CSV_HEADERS: dict[Path, list[str]] = {}
+
 OUTPUT_FIELDS = [
     "observation_id",
     "match_no",
@@ -410,6 +414,7 @@ def upgrade_historical_csv(path: Path) -> bool:
         )
 
     temp_path.replace(path)
+    CSV_HEADERS.pop(path, None)
     return True
 
 
@@ -423,7 +428,8 @@ def append_csv_row(path: Path, row: dict) -> None:
         or path.stat().st_size == 0
     )
 
-    fieldnames = csv_fieldnames(path)
+    fieldnames = CSV_HEADERS.get(path) or csv_fieldnames(path)
+    CSV_HEADERS[path] = fieldnames
 
     with path.open(
         "a",
