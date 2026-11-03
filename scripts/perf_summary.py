@@ -107,7 +107,7 @@ def quality_section(
 
 def phase_lines(phases) -> list[str]:
     """One line per collector phase (tournament and hybrid modes), indented
-    under Scraping time; empty for runs without a phase breakdown."""
+    under Collection time; empty for runs without a phase breakdown."""
     lines = []
 
     for phase in phases or []:
@@ -161,7 +161,7 @@ def performance_lines(
         "Betclic",
         # Sessions from before --scroll existed were all search runs.
         f"  Mode:                    {bet.get('mode', 'search')}",
-        f"  Scraping time:           {format_duration(bet.get('seconds'))}",
+        f"  Collection time:         {format_duration(bet.get('seconds'))}",
         *phase_lines(bet.get("phases")),
         f"  Completed at:            {format_timestamp(bet.get('completed_at'))}",
         f"  Outcome:                 {bet.get('outcome', 'n/a')}",

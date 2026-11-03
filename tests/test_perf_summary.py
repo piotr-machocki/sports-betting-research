@@ -15,7 +15,7 @@ def betclic_lines(betclic: dict) -> list[str]:
     return lines[start:lines.index("", start)]
 
 
-def test_phases_are_listed_under_scraping_time():
+def test_phases_are_listed_under_collection_time():
     lines = betclic_lines({
         "mode": "hybrid",
         "seconds": 100.5,
@@ -25,8 +25,8 @@ def test_phases_are_listed_under_scraping_time():
         ],
     })
 
-    scraping = lines.index("  Scraping time:           1 min 40.50 s")
-    assert lines[scraping + 1:scraping + 3] == [
+    collection = lines.index("  Collection time:         1 min 40.50 s")
+    assert lines[collection + 1:collection + 3] == [
         "    scroll:                11.40 s  (25 of 68 matches found)",
         "    search:                1 min 26.00 s  (40 of 43 matches found)",
     ]
