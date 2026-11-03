@@ -23,11 +23,13 @@ Usage:
     python scripts/run_once.py --hybrid
     python scripts/run_once.py --search
     python scripts/run_once.py --scroll
+    python scripts/run_once.py --no-monitor
 
 Without --limit every available Pinnacle match is processed. The Betclic
 browser runs headless unless --head is given. Debug dumps of failed matches
 (HTML + screenshot) are saved only with --debug, in either case. Closing the --head browser window stops the run, and so does
 closing the live monitor's terminal (Windows) while Betclic is collecting.
+--no-monitor opens no terminal, for unattended runs; the report is still written.
 
 Betclic is collected in tournament mode (betclic_scroll.py) unless --hybrid
 selects betclic_scroll.py --hybrid, --search selects betclic.py or --scroll
@@ -271,6 +273,12 @@ def parse_args() -> argparse.Namespace:
         "--no-results",
         action="store_true",
         help="Skip the daily fetch of finished match results.",
+    )
+
+    parser.add_argument(
+        "--no-monitor",
+        action="store_true",
+        help="Open no live monitor terminal, for unattended runs.",
     )
 
     return parser.parse_args()
@@ -616,7 +624,20 @@ def save_results(session_id: str, args: argparse.Namespace) -> dict:
 # ------------------------------------------------------------------- main ---
 
 
+def use_utf8_when_redirected() -> None:
+    """Without a console Windows picks a legacy encoding, and printing a Polish
+    letter would crash this script or a child. A console keeps its own."""
+    if sys.stdout.isatty():
+        return
+
+    os.environ["PYTHONIOENCODING"] = "utf-8:replace"
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main() -> None:
+    use_utf8_when_redirected()
+
     run_clock = time.perf_counter()
     run_started_at = timestamp_string(utc_now())
 
@@ -764,13 +785,14 @@ def main() -> None:
         worker = start_worker(session_id)
 
         # Start the terminal monitor for this session.
-        monitor = start_monitor(
-            session_id=session_id,
-            session_start=session_start,
-            status_file=status_path,
-            output_file=report_path,
-            args=args,
-        )
+        if not args.no_monitor:
+            monitor = start_monitor(
+                session_id=session_id,
+                session_start=session_start,
+                status_file=status_path,
+                output_file=report_path,
+                args=args,
+            )
 
         # Give the worker a moment to initialize.
         time.sleep(1.0)
@@ -916,7 +938,7 @@ def main() -> None:
             report_path=report_path,
             results_path=results_path,
             args=args,
-            wait=0.0 if monitor_closed else 10.0,
+            wait=0.0 if monitor_closed or monitor is None else 10.0,
         )
 
         saved = save_results(session_id, args)

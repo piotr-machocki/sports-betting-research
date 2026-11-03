@@ -69,6 +69,7 @@ src/betting/books/betclic.py
 python scripts/run_once.py          # headless Betclic browser 
 python scripts/run_once.py --head   # show the browser, for debugging
 python scripts/run_once.py --debug  # save HTML + screenshot of failed Betclic matches
+python scripts/run_once.py --no-monitor  # open no monitor terminal, for unattended runs
 ```
 
 The Betclic collector runs in tournament mode (`betclic_scroll.py`) when
