@@ -64,7 +64,13 @@ from pathlib import Path
 from typing import Any
 
 from perf_summary import performance_lines, quality_section
-from results_store import METHODS, complete_methods, ev_column, overround
+from results_store import (
+    METHODS,
+    REFERENCE_METHOD,
+    complete_methods,
+    ev_column,
+    overround,
+)
 
 if os.name == "nt":
     import msvcrt
@@ -77,6 +83,7 @@ else:
 ROOT = Path(__file__).resolve().parents[1]
 
 SESSIONS_DIR = ROOT / "data" / "results" / "sessions"
+SUPERBET_RAW_DIR = ROOT / "data" / "superbet" / "raw"
 
 POLL_SECONDS = 1.0
 KEY_POLL_SECONDS = 0.25
@@ -361,6 +368,73 @@ def number(value: Any) -> float | None:
         return None
 
 
+def match_key(row: dict) -> tuple:
+    return (
+        row.get("pinnacle_player1", ""),
+        row.get("pinnacle_player2", ""),
+        row.get("pinnacle_tournament", ""),
+    )
+
+
+def read_superbet(session_id: str) -> dict[tuple, dict]:
+    """This session's Superbet matches, if it was collected. Never fails a run.
+
+    VERIFY rows have prices but no EV, so they show without affecting BET ON,
+    the sort or the counts.
+    """
+    path = SUPERBET_RAW_DIR / f"superbet_{session_id}.csv"
+
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as file:
+            return {
+                match_key(row): row
+                for row in csv.DictReader(file)
+                if row.get("status") in ("FOUND", "VERIFY")
+            }
+    except (OSError, csv.Error):
+        return {}
+
+
+def add_superbet(row: dict, superbet: dict[tuple, dict]) -> dict:
+    """superbet_* cells on a session row: prices, net odds and their EV."""
+    found = superbet.get(match_key(row))
+
+    if found is None:
+        return row
+
+    return {
+        **row,
+        "superbet_status": found.get("status", ""),
+        "superbet_player1": found.get("superbet_player1", ""),
+        "superbet_player2": found.get("superbet_player2", ""),
+        "superbet_price1": found.get("superbet_price1", ""),
+        "superbet_price2": found.get("superbet_price2", ""),
+        "superbet_odds1": found.get("superbet_odds1", ""),
+        "superbet_odds2": found.get("superbet_odds2", ""),
+        "superbet_ev1": found.get("ev1", ""),
+        "superbet_ev2": found.get("ev2", ""),
+        "superbet_best_ev": found.get("best_ev", ""),
+    }
+
+
+def has_superbet(rows: list[dict]) -> bool:
+    return any(row.get("superbet_odds1") for row in rows)
+
+
+def superbet_odds_cell(row: dict, side: int) -> str:
+    """Net odds in the 5-wide column; an unconfirmed match ends in a yellow '?'."""
+    # Net odds have up to 4 decimals; the column holds 2.
+    net_odds = number(row.get(f"superbet_odds{side}"))
+
+    if net_odds is None:
+        return f"{'--':>5}"
+
+    if row.get("superbet_status") != "VERIFY":
+        return f"{net_odds:.2f}".rjust(5)
+
+    return paint(f"{net_odds:.2f}"[:4].rstrip(".").rjust(4) + "?", "33")
+
+
 def read_session_rows(path: Path) -> list[dict[str, str]] | None:
     """
     Read only this session's processed CSV.
@@ -386,8 +460,10 @@ def read_session_rows(path: Path) -> list[dict[str, str]] | None:
 
     # complete_methods: sessions processed before the per-method columns
     # existed get them recalculated from the stored odds.
+    superbet = read_superbet(path.stem)
+
     return [
-        complete_methods(row)
+        add_superbet(complete_methods(row), superbet)
         for row in rows
         if row.get("observation_id")
         and None not in row
@@ -419,7 +495,7 @@ def pinnacle_info(info: dict) -> dict:
     """Pinnacle collection stats from the runner status file.
 
     The final "performance" block wins; before it exists the runner's early
-    "pinnacle" block (written before Betclic scraping starts) is used.
+    "pinnacle" block (written before Betclic collection starts) is used.
     """
     performance = info.get("performance") or {}
 
@@ -439,12 +515,16 @@ def early_quality_lines(info: dict) -> list[str]:
 
 
 def sort_key(row: dict) -> tuple:
-    ev = number(row.get("best_ev"))
+    evs = [
+        ev
+        for ev in (number(row.get("best_ev")), number(row.get("superbet_best_ev")))
+        if ev is not None
+    ]
 
-    if ev is None:
+    if not evs:
         return (1, 0.0)
 
-    return (0, -ev)
+    return (0, -max(evs))
 
 
 def format_probability(value: Any) -> str:
@@ -550,6 +630,16 @@ def format_margin(odds1: Any, odds2: Any) -> str:
     return f"{margin * 100:.2f}%"
 
 
+def format_net_margin(odds1: Any, odds2: Any) -> str:
+    """Margin of prices after tax; unlike overround it allows odds below 1.0."""
+    first, second = number(odds1), number(odds2)
+
+    if not first or not second:
+        return "--"
+
+    return f"{(1 / first + 1 / second - 1) * 100:.2f}%"
+
+
 def match_name(row: dict) -> str:
     return (
         f"{row.get('pinnacle_player1') or '?'} vs "
@@ -574,6 +664,23 @@ def best_side(row: dict) -> int | None:
     return 1 if ev1 >= ev2 else 2
 
 
+def table_side(row: dict) -> int | None:
+    """The BET ON side: the best EV of either book, side 1 on a tie."""
+    best = best_side(row)
+    ev1 = number(row.get("superbet_ev1"))
+    ev2 = number(row.get("superbet_ev2"))
+
+    if ev1 is None or ev2 is None:
+        return best
+
+    superbet = 1 if ev1 >= ev2 else 2
+
+    if best is None:
+        return superbet
+
+    return superbet if max(ev1, ev2) > number(row.get(f"ev{best}")) else best
+
+
 def latest_per_match(rows: list[dict]) -> list[dict]:
     """One row per match: the most recent Betclic observation.
 
@@ -583,11 +690,7 @@ def latest_per_match(rows: list[dict]) -> list[dict]:
     newest: dict[tuple, tuple[float, dict]] = {}
 
     for row in rows:
-        key = (
-            row.get("pinnacle_player1", ""),
-            row.get("pinnacle_player2", ""),
-            row.get("pinnacle_tournament", ""),
-        )
+        key = match_key(row)
 
         stamp = parse_timestamp(row.get("betclic_captured_at"))
         value = stamp.timestamp() if stamp else float("-inf")
@@ -629,17 +732,30 @@ def table_row(cells: list[str]) -> str:
     return paint("|", "90").join(cells)
 
 
-def table_header_lines() -> list[str]:
+def table_methods(superbet: bool, compact: bool) -> list[str]:
+    """Superbet's columns make the terminal table too wide for all four EVs."""
+    return [REFERENCE_METHOD] if superbet and compact else list(METHODS)
+
+
+def table_header_lines(superbet: bool = False, compact: bool = False) -> list[str]:
+    ev_labels = [
+        "EV(Bc)" if superbet and method == REFERENCE_METHOD else EV_LABELS[method]
+        for method in table_methods(superbet, compact)
+    ]
+
     cells = [
         f"{'#':>3}  ",
         f" {'BET ON':<{PW}}",
         f" {'OPPONENT':<{PW}}",
         f"{'Betc':>5} ",
+        *([f"{'Supb':>5} "] if superbet else []),
         f"{'Pinn':>6} ",
         f"{'Mb':>6} ",
+        *([f"{'Ms':>6} "] if superbet else []),
         f"{'Mp':>5} ",
         f"{'P(ref)':>6} ",
-        *(f"{EV_LABELS[method]:^8}" for method in METHODS),
+        *(f"{label:^8}" for label in ev_labels),
+        *([f"{'EV(Sb)':^8}"] if superbet else []),
         f"{'GAP':>5} ",
         f" {'CONF':<6}",
         f" {'TOURNAMENT':<{TOURNAMENT_W}}",
@@ -661,19 +777,23 @@ def ev_cell(value: float | None, min_ev: float) -> str:
 def table_row_lines(
     rows: list[dict],
     args: argparse.Namespace,
+    compact: bool = False,
 ) -> list[str]:
     """One terminal line per match. Numbering is the absolute rank.
 
     BET ON is the side with the best reference EV; every EV column shows
-    that same side under a different devig method.
+    that same side under a different devig method. With Superbet data the
+    side is the best of either book and its columns are added.
     """
     if not rows:
         return [paint("  waiting for Betclic observations...", "2")]
 
     lines = []
+    superbet = has_superbet(rows)
+    methods = table_methods(superbet, compact)
 
     for index, row in enumerate(rows, start=1):
-        side = best_side(row)
+        side = table_side(row)
 
         if side is None:
             name = short_name(row.get("pinnacle_player1"))
@@ -682,7 +802,9 @@ def table_row_lines(
             name_style = ("2",)
             betclic = f"{'--':>5}"
             pinnacle = probability = f"{'--':>6}"
-            ev_cells = [ev_cell(None, args.min_ev) for _ in METHODS]
+            ev_cells = [ev_cell(None, args.min_ev) for _ in methods]
+            superbet_odds = f"{'--':>5}"
+            superbet_ev = ev_cell(None, args.min_ev)
 
         else:
             other = 2 if side == 1 else 1
@@ -702,8 +824,13 @@ def table_row_lines(
             ).rjust(6)
             ev_cells = [
                 ev_cell(number(row.get(ev_column(method, side))), args.min_ev)
-                for method in METHODS
+                for method in methods
             ]
+            superbet_odds = superbet_odds_cell(row, side)
+            superbet_ev = ev_cell(
+                number(row.get(f"superbet_ev{side}")),
+                args.min_ev,
+            )
 
         gap = number(row.get("observation_gap_seconds"))
         gap_text = fmt_gap(gap) if gap is not None else "--"
@@ -723,6 +850,10 @@ def table_row_lines(
             row.get("pinnacle_odds1"),
             row.get("pinnacle_odds2"),
         ).rjust(5)
+        superbet_margin = format_net_margin(
+            row.get("superbet_odds1"),
+            row.get("superbet_odds2"),
+        ).rjust(6)
 
         # Numbers keep a space before the next bar, text a space after it.
         lines.append(table_row([
@@ -733,11 +864,14 @@ def table_row_lines(
                 f"{cell} "
                 for cell in (
                     betclic,
+                    *([superbet_odds] if superbet else []),
                     pinnacle,
                     betclic_margin,
+                    *([superbet_margin] if superbet else []),
                     pinnacle_margin,
                     probability,
                     *ev_cells,
+                    *([superbet_ev] if superbet else []),
                     gap_cell,
                 )
             ),
@@ -751,8 +885,12 @@ def table_row_lines(
 def table_lines(
     rows: list[dict],
     args: argparse.Namespace,
+    compact: bool = False,
 ) -> list[str]:
-    return table_header_lines() + table_row_lines(rows, args)
+    return (
+        table_header_lines(has_superbet(rows), compact)
+        + table_row_lines(rows, args, compact)
+    )
 
 
 # ------------------------------------------------------------ statistics ----
@@ -775,6 +913,16 @@ def stats_items(
         if args.expected
         else str(len(all_rows))
     )
+
+    superbet_evs = [number(row.get("superbet_best_ev")) for row in latest]
+    superbet_items = [
+        ("Superbet found", "SbFound", str(sum(ev is not None for ev in superbet_evs))),
+        (
+            "Superbet EV(ref) > 0%",
+            "SbEV>0",
+            str(sum(ev is not None and ev > 0 for ev in superbet_evs)),
+        ),
+    ] if has_superbet(latest) else []
 
     return [
         ("Observations processed", "Obs", processed),
@@ -824,6 +972,7 @@ def stats_items(
             "Stale",
             str(count(lambda r: is_stale(r, args.max_age))),
         ),
+        *superbet_items,
     ]
 
 
@@ -943,7 +1092,7 @@ def legend_row(label: str, *items: str, styles: tuple[str, ...] = ("1",)) -> str
     )
 
 
-def legend_lines(args: argparse.Namespace) -> list[str]:
+def legend_lines(args: argparse.Namespace, superbet: bool = False) -> list[str]:
     threshold = f"{args.min_ev * 100:g}%"
 
     return [
@@ -961,6 +1110,19 @@ def legend_lines(args: argparse.Namespace) -> list[str]:
         ),
         legend_row("Betc / Pinn", "Betclic / Pinnacle odds"),
         legend_row("Mb / Mp", "Betclic / Pinnacle margin (overround)"),
+        *(
+            [
+                legend_row(
+                    "Supb / Ms",
+                    "Superbet odds / margin after its 12% tax",
+                    "EV(Sb) = its power EV",
+                    "shown prices are in the report",
+                    "? = unconfirmed match, no EV",
+                ),
+            ]
+            if superbet
+            else []
+        ),
         legend_row(
             "Devig",
             "P(ref) / EV(ref) = power",
@@ -1010,6 +1172,7 @@ def static_lines(
     session_start: datetime,
     info: dict,
     now: datetime,
+    compact: bool = False,
 ) -> list[str]:
     """The complete dashboard with EVERY match (report, final dump, --plain)."""
     latest = sorted(latest_per_match(all_rows), key=sort_key)
@@ -1042,9 +1205,9 @@ def static_lines(
         + [""]
         + stats_box(all_rows, latest, args)
         + [""]
-        + table_lines(latest, args)
+        + table_lines(latest, args, compact)
         + [""]
-        + legend_lines(args)
+        + legend_lines(args, has_superbet(latest))
     )
 
 
@@ -1079,8 +1242,9 @@ def live_frame(
     latest = sorted(latest_per_match(all_rows), key=sort_key)
 
     head = header_lines(all_rows, args, session_start, info, now)
-    legend = legend_lines(args)
-    thead = table_header_lines()
+    superbet = has_superbet(latest)
+    legend = legend_lines(args, superbet)
+    thead = table_header_lines(superbet, compact=True)
 
     # The statistics box (found / not found / EV counts) is not part of the
     # live screen: it only means something once the Betclic odds are in, so it
@@ -1091,7 +1255,7 @@ def live_frame(
         (head + [""] + thead, [], COMFORT_ROWS),
     ]
 
-    # PINNACLE DATA QUALITY is known before Betclic scraping starts, so it is
+    # PINNACLE DATA QUALITY is known before Betclic collection starts, so it is
     # pinned under the header from the first frame and stays there, ahead of
     # the legend.
     quality = quality_section(pinnacle_info(info))
@@ -1116,7 +1280,7 @@ def live_frame(
 
     body_h = max(3, body_h)
 
-    row_lines = table_row_lines(latest, args)
+    row_lines = table_row_lines(latest, args, compact=True)
     total = len(row_lines) if latest else 0
 
     max_offset = max(0, total - body_h)
@@ -1361,6 +1525,36 @@ def render_report(
                     f"{format_ev(row.get(ev_column(method, 2)))}"
                     for method in METHODS
                 ),
+                *(
+                    [
+                        *(
+                            [
+                                "Superbet match UNCONFIRMED: "
+                                f"{row.get('superbet_player1', '')} vs "
+                                f"{row.get('superbet_player2', '')}"
+                            ]
+                            if row.get("superbet_status") == "VERIFY"
+                            else []
+                        ),
+                        (
+                            "Superbet odds as shown: "
+                            f"{format_odds(row.get('superbet_price1'))} / "
+                            f"{format_odds(row.get('superbet_price2'))}"
+                        ),
+                        (
+                            "Superbet odds after tax: "
+                            f"{format_odds(row.get('superbet_odds1'))} / "
+                            f"{format_odds(row.get('superbet_odds2'))}"
+                        ),
+                        (
+                            "Superbet EV(ref): "
+                            f"{format_ev(row.get('superbet_ev1'))} / "
+                            f"{format_ev(row.get('superbet_ev2'))}"
+                        ),
+                    ]
+                    if row.get("superbet_odds1")
+                    else []
+                ),
                 f"Best EV: {format_ev(row.get('best_ev'))}",
                 f"Best player: {row.get('best_player', '')}",
                 f"Betclic status: {row.get('betclic_status', '')}",
@@ -1548,7 +1742,7 @@ def main() -> None:
                         pinnacle_info(info),
                         title=(
                             "PINNACLE DATA QUALITY "
-                            "(collected before Betclic scraping)"
+                            "(known before Betclic collection)"
                         ),
                     )
 
@@ -1625,6 +1819,7 @@ def main() -> None:
                 session_start,
                 info,
                 datetime.now(timezone.utc),
+                compact=True,
             )
         ),
         flush=True,

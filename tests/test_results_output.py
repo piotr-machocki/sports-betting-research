@@ -217,6 +217,39 @@ def test_old_historical_csv_is_upgraded_and_recalculated(tmp_path):
         process_live_odds.OUTPUT_FIELDS)] == process_live_odds.OUTPUT_FIELDS
 
 
+def test_header_is_read_once_per_file_and_again_after_an_upgrade(tmp_path, monkeypatch):
+    path = tmp_path / "session.csv"
+    reads = []
+    real = process_live_odds.csv_fieldnames
+
+    def counted(target):
+        reads.append(target)
+        return real(target)
+
+    monkeypatch.setattr(process_live_odds, "csv_fieldnames", counted)
+    monkeypatch.setattr(process_live_odds, "CSV_HEADERS", {})
+
+    for number in range(3):
+        process_live_odds.append_csv_row(path, {"observation_id": str(number)})
+
+    assert reads == [path]
+
+    with path.open(encoding="utf-8-sig", newline="") as file:
+        rows = list(csv.DictReader(file))
+    assert [row["observation_id"] for row in rows] == ["0", "1", "2"]
+
+    # An existing file keeps its own columns, also when first seen in this run.
+    old = tmp_path / "old.csv"
+    old.write_text("observation_id,old_extra\n1,x\n", encoding="utf-8")
+    process_live_odds.append_csv_row(old, {"observation_id": "2", "old_extra": "y"})
+    process_live_odds.append_csv_row(old, {"observation_id": "3", "old_extra": "z"})
+    assert old.read_text(encoding="utf-8").splitlines()[1:] == ["1,x", "2,y", "3,z"]
+
+    # upgrade_historical_csv rewrites the header, so it must be read again.
+    process_live_odds.upgrade_historical_csv(old)
+    assert old not in process_live_odds.CSV_HEADERS
+
+
 # ------------------------------------------------------------ live table ---
 
 
@@ -635,3 +668,203 @@ def test_historical_csv_gains_margins_without_changing_ev(tmp_path):
     assert upgraded["pinnacle_event_id"] == ""
     assert float(missing["pinnacle_margin"]) == results_store.overround(1.50, 2.70)
     assert missing["betclic_margin"] == ""
+
+
+# ---------------------------------------------------- optional second book ---
+
+
+def superbet_row(**overrides) -> dict:
+    data = {
+        "status": "FOUND",
+        "pinnacle_player1": "Alice Alpha",
+        "pinnacle_player2": "Bella Beta",
+        "pinnacle_tournament": "WTA Test - R1",
+        "superbet_player1": "Alice Alpha",
+        "superbet_player2": "Bella Beta",
+        "superbet_price1": "1.60",
+        "superbet_price2": "2.50",
+        "superbet_odds1": "1.408",
+        "superbet_odds2": "2.2",
+        "ev1": "-0.05",
+        "ev2": "-0.20",
+        "best_ev": "-0.05",
+    }
+    data.update(overrides)
+    return data
+
+
+def unconfirmed_row(**overrides) -> dict:
+    return superbet_row(**{
+        "status": "VERIFY",
+        "superbet_player1": "Jazmin Ortenzi",
+        "superbet_player2": "Elizabeth Mandlik",
+        "ev1": "",
+        "ev2": "",
+        "best_ev": "",
+        **overrides,
+    })
+
+
+def write_superbet(directory: Path, session: str, rows: list[dict]) -> None:
+    with (directory / f"superbet_{session}.csv").open(
+        "w", encoding="utf-8", newline=""
+    ) as file:
+        writer = csv.DictWriter(file, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def with_superbet(row: dict, **overrides) -> dict:
+    found = superbet_row(**overrides)
+    return live_monitor.add_superbet(row, {live_monitor.match_key(found): found})
+
+
+def test_no_superbet_data_leaves_the_table_unchanged():
+    rows = sorted(session_rows(), key=live_monitor.sort_key)
+
+    with live_monitor.plain():
+        assert (
+            live_monitor.table_lines(rows, args(), compact=True)
+            == live_monitor.table_lines(rows, args())
+        )
+        header = live_monitor.table_lines(rows, args())[0]
+        legend = "\n".join(live_monitor.legend_lines(args()))
+
+    assert "Supb" not in header and "EV(Sb)" not in header
+    assert "Supb" not in legend
+
+
+def test_compact_table_has_one_ev_per_book_and_fits_the_terminal():
+    row = with_superbet(as_csv_row(process_live_odds.calculate_observation(message(
+        pinnacle_player1="Francisco Cerundolo / Tomas Martin Etcheverry",
+        pinnacle_player2="Austin Krajicek / Nikola Mektic",
+        pinnacle_tournament="ITF Women New Braunfels - R16",
+        confidence="manual_review",
+    ))), pinnacle_player1="Francisco Cerundolo / Tomas Martin Etcheverry",
+        pinnacle_player2="Austin Krajicek / Nikola Mektic",
+        pinnacle_tournament="ITF Women New Braunfels - R16",
+        superbet_odds1="2.2748", superbet_odds2="1.4243",
+        ev1="0.3", ev2="0.3", best_ev="0.3")
+
+    with live_monitor.plain():
+        header, rule, line = live_monitor.table_lines([row], args(), compact=True)
+
+    assert " 2.27 " in line
+
+    for label in ("Betc", "Supb", "Mb", "Ms", "EV(Bc)", "EV(Sb)"):
+        assert label in header
+    for label in ("EV(OR)", "EV(shin)", "EV(prop)"):
+        assert label not in header
+
+    assert max(map(len, (header, rule, line))) < 156
+
+    def bars(text, bar="|"):
+        return [position for position, char in enumerate(text) if char == bar]
+
+    assert bars(line) == bars(header) == bars(rule, "+")
+
+
+def test_net_margin_handles_a_price_below_one():
+    assert live_monitor.format_net_margin("0.968", "6.16") == "19.54%"
+    assert live_monitor.format_net_margin("", "6.16") == "--"
+
+
+def test_saved_table_with_superbet_keeps_every_method():
+    row = with_superbet(session_rows()[0])
+
+    with live_monitor.plain():
+        header = live_monitor.table_lines([row], args())[0]
+
+    for label in ("EV(Bc)", "EV(OR)", "EV(shin)", "EV(prop)", "EV(Sb)"):
+        assert label in header
+
+
+def test_bet_on_side_is_the_best_of_either_book():
+    row = {"ev1": "-0.10", "ev2": "-0.05"}
+
+    assert live_monitor.table_side(row) == 2
+    assert live_monitor.table_side({**row, "superbet_ev1": "0.03", "superbet_ev2": "-0.2"}) == 1
+    assert live_monitor.table_side({**row, "superbet_ev1": "-0.2", "superbet_ev2": "-0.3"}) == 2
+    assert live_monitor.table_side({"ev1": "", "ev2": "", "superbet_ev1": "-0.2", "superbet_ev2": "-0.1"}) == 2
+
+
+def test_rows_sort_on_the_best_ev_of_either_book():
+    betclic = {"best_ev": "0.01"}
+    superbet = {"best_ev": "-0.05", "superbet_best_ev": "0.04"}
+
+    assert sorted([betclic, superbet], key=live_monitor.sort_key)[0] is superbet
+
+
+def test_read_session_rows_joins_found_and_verify_superbet_rows(tmp_path, monkeypatch):
+    monkeypatch.setattr(live_monitor, "SUPERBET_RAW_DIR", tmp_path)
+    rows = session_rows()
+    path = tmp_path / f"{SESSION}.csv"
+    with path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=list(rows[0]), extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+    assert not live_monitor.has_superbet(live_monitor.read_session_rows(path))
+
+    write_superbet(tmp_path, SESSION, [
+        superbet_row(),
+        unconfirmed_row(pinnacle_player1="Cara Gamma", pinnacle_player2="Dana Delta"),
+    ])
+    joined = live_monitor.read_session_rows(path)
+
+    assert joined[0]["superbet_odds1"] == "1.408"
+    assert joined[0]["superbet_ev1"] == "-0.05"
+    assert joined[0]["superbet_status"] == "FOUND"
+    assert joined[1]["superbet_odds1"] == "1.408"
+    assert joined[1]["superbet_status"] == "VERIFY"
+    assert joined[1]["superbet_best_ev"] == ""
+
+
+def test_read_session_rows_leaves_out_not_found_superbet_rows(tmp_path, monkeypatch):
+    monkeypatch.setattr(live_monitor, "SUPERBET_RAW_DIR", tmp_path)
+    write_superbet(tmp_path, SESSION, [
+        superbet_row(),
+        superbet_row(status="NOT FOUND", pinnacle_player1="Cara Gamma", pinnacle_player2="Dana Delta"),
+    ])
+
+    assert list(live_monitor.read_superbet(SESSION)) == [
+        ("Alice Alpha", "Bella Beta", "WTA Test - R1"),
+    ]
+
+
+def test_unconfirmed_superbet_match_is_marked_and_not_counted():
+    row = session_rows()[0]
+    unconfirmed = live_monitor.add_superbet(
+        row, {live_monitor.match_key(row): unconfirmed_row()}
+    )
+
+    with live_monitor.plain():
+        header, _, line = live_monitor.table_lines([unconfirmed], args(), compact=True)
+
+    side = live_monitor.table_side(row)
+    expected = {1: "1.41?", 2: "2.20?"}[side]
+    assert f"|{expected} |" in line
+    assert [i for i, c in enumerate(line) if c == "|"] == [i for i, c in enumerate(header) if c == "|"]
+
+    assert live_monitor.table_side(unconfirmed) == live_monitor.table_side(row)
+    assert live_monitor.sort_key(unconfirmed) == live_monitor.sort_key(row)
+
+    text = live_monitor.render_report([unconfirmed], args(), START, {}, NOW)
+    assert "Superbet match UNCONFIRMED: Jazmin Ortenzi vs Elizabeth Mandlik" in text
+
+
+def test_unconfirmed_odds_cell_keeps_the_column_width():
+    row = {"superbet_status": "VERIFY", "superbet_odds1": "12.345", "superbet_odds2": "100.5"}
+
+    with live_monitor.plain():
+        assert live_monitor.superbet_odds_cell(row, 1) == "12.3?"
+        assert live_monitor.superbet_odds_cell(row, 2) == " 100?"
+
+
+def test_report_shows_superbet_prices_as_shown_and_after_tax():
+    row = with_superbet(session_rows()[0])
+
+    text = live_monitor.render_report([row], args(), START, {}, NOW)
+
+    assert "Superbet odds as shown: 1.60 / 2.50" in text
+    assert "Superbet odds after tax: 1.408 / 2.20" in text
