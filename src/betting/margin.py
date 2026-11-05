@@ -6,9 +6,16 @@ They differ in HOW the overround is spread across outcomes.
 from math import sqrt
 from typing import Callable
 
-from scipy.optimize import brentq
 
 _EPS = 1e-12
+
+
+def brentq(f: Callable[[float], float], low: float, high: float) -> float:
+    # Imported on first use: scipy takes seconds to load, and the dashboard and
+    # monitor only need it for rows from before the per-method columns.
+    from scipy.optimize import brentq as solve
+
+    return solve(f, low, high)
 
 
 def _proportional(q: list[float]) -> list[float]:
