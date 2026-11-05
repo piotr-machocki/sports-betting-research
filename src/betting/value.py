@@ -36,3 +36,21 @@ def ev_by_method(
         results[method] = (probabilities, evs)
 
     return results
+
+
+def net_evs_by_method(
+    fair_odds: list[float],
+    net_odds: list[float],
+) -> dict[str, list[float]]:
+    """EVs per devig method for prices after a tax paid on the return.
+
+    Not calculate_ev: a net price of 1.0 or less is real (a 1.10 favourite at
+    0.88 pays 0.968) and is simply a losing bet, not bad input.
+    """
+    return {
+        method: [
+            probability * odds - 1
+            for probability, odds in zip(remove_margin(fair_odds, method), net_odds)
+        ]
+        for method in METHODS
+    }

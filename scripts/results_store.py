@@ -35,7 +35,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from betting.margin import METHODS  # noqa: E402
-from betting.value import ev_by_method  # noqa: E402
+from betting.value import ev_by_method, net_evs_by_method  # noqa: E402
 
 RESULTS_DIR = ROOT / "data" / "results"
 SESSIONS_DIR = RESULTS_DIR / "sessions"

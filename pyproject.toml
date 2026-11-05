@@ -19,6 +19,9 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+dashboard = [
+    "streamlit>=1.66",
+]
 historical = [
     "matplotlib>=3.8",
     "numpy>=1.26",

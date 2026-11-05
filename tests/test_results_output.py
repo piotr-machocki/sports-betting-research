@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import live_monitor  # noqa: E402
 import process_live_odds  # noqa: E402
 import results_store  # noqa: E402
-from betting.margin import METHODS  # noqa: E402
+from betting.margin import METHODS, remove_margin  # noqa: E402
 from betting.value import ev_by_method  # noqa: E402
 
 SESSION = "session_20261030_120000_abc123"
@@ -717,6 +717,33 @@ def write_superbet(directory: Path, session: str, rows: list[dict]) -> None:
 def with_superbet(row: dict, **overrides) -> dict:
     found = superbet_row(**overrides)
     return live_monitor.add_superbet(row, {live_monitor.match_key(found): found})
+
+
+def test_superbet_methods_come_from_the_csv_or_are_calculated_for_old_ones():
+    prices = dict(
+        pinnacle_odds1="1.5",
+        pinnacle_odds2="2.7",
+        superbet_odds1="1.408",
+        superbet_odds2="2.2",
+        ev1="-0.1",
+        ev2="0.1",
+    )
+    stored = live_monitor.superbet_method_evs(
+        {
+            **prices,
+            **{
+                live_monitor.ev_column(method, side): "0.5"
+                for method in live_monitor.ALT_METHODS
+                for side in live_monitor.SIDES
+            },
+        }
+    )
+    calculated = live_monitor.superbet_method_evs(prices)
+    fair = remove_margin([1.5, 2.7], "shin")
+
+    assert stored["superbet_ev2_shin"] == "0.5"
+    assert calculated["superbet_ev2_shin"] == round(fair[1] * 2.2 - 1, 4)
+    assert live_monitor.superbet_method_evs({"ev1": ""})["superbet_ev1_shin"] == ""
 
 
 def test_no_superbet_data_leaves_the_table_unchanged():

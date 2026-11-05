@@ -57,6 +57,7 @@ import re
 import shutil
 import sys
 import time
+from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -65,10 +66,13 @@ from typing import Any
 
 from perf_summary import performance_lines, quality_section
 from results_store import (
+    ALT_METHODS,
     METHODS,
     REFERENCE_METHOD,
+    SIDES,
     complete_methods,
     ev_column,
+    net_evs_by_method,
     overround,
 )
 
@@ -113,6 +117,8 @@ TOURNAMENT_PREFIXES = {
 TOURNAMENT_ROUNDS = {"Qualifiers": "Q", "Doubles": "D", "Final": "F"}
 
 STATUS_MARKS = {"NOT FOUND": "N", "VERIFY": "V", "AMBIGUOUS": "A"}
+
+NO_EV_LABEL = "FOUND but no EV (live etc.)"
 
 LEGEND_LABEL_W = 12  # label column of the legend, see legend_row
 
@@ -395,6 +401,34 @@ def read_superbet(session_id: str) -> dict[tuple, dict]:
         return {}
 
 
+def superbet_method_evs(found: dict) -> dict:
+    """Superbet's superbet_ev cells for the non-reference devig methods. A CSV from
+    before 5 Nov 2026 has only the reference EV, so these are calculated for it."""
+    cells = {
+        ev_column(method, side): found.get(ev_column(method, side), "")
+        for method in ALT_METHODS
+        for side in SIDES
+    }
+
+    fair = [number(found.get(f"pinnacle_odds{side}")) for side in SIDES]
+    net = [number(found.get(f"superbet_odds{side}")) for side in SIDES]
+
+    # No reference EV (VERIFY) stays without one here too, as its match is unconfirmed.
+    if (
+        number(found.get("ev1")) is not None
+        and any(number(value) is None for value in cells.values())
+        and all(fair + net)
+    ):
+        evs = net_evs_by_method(fair, net)
+        cells = {
+            ev_column(method, side): round(evs[method][side - 1], 4)
+            for method in ALT_METHODS
+            for side in SIDES
+        }
+
+    return {f"superbet_{column}": value for column, value in cells.items()}
+
+
 def add_superbet(row: dict, superbet: dict[tuple, dict]) -> dict:
     """superbet_* cells on a session row: prices, net odds and their EV."""
     found = superbet.get(match_key(row))
@@ -414,6 +448,7 @@ def add_superbet(row: dict, superbet: dict[tuple, dict]) -> dict:
         "superbet_ev1": found.get("ev1", ""),
         "superbet_ev2": found.get("ev2", ""),
         "superbet_best_ev": found.get("best_ev", ""),
+        **superbet_method_evs(found),
     }
 
 
@@ -725,6 +760,34 @@ def status_mark(row: dict) -> str:
     return paint("X", "90")
 
 
+def no_ev_reason(row: dict) -> str:
+    """Why a FOUND match has no EV, from what process_live_odds.py left in the
+    row. Live comes first, as in status_mark, even when its odds are bad too."""
+    note = str(row.get("note") or "")
+
+    if str(row.get("betclic_status", "")).lower() == "live":
+        return "live"
+
+    if note.startswith(("Not calculated: odds_ok=", "Not calculated: invalid")):
+        return "odds missing"
+
+    if note.startswith("Calculation error"):
+        return "calculation error"
+
+    return "other"
+
+
+def no_ev_reasons(rows: list[dict]) -> dict[str, int]:
+    """Reason -> count for FOUND matches without EV, most common first."""
+    return dict(
+        Counter(
+            no_ev_reason(row)
+            for row in rows
+            if row.get("status") == "FOUND" and number(row.get("best_ev")) is None
+        ).most_common()
+    )
+
+
 # ---------------------------------------------------------------- table -----
 
 
@@ -922,15 +985,21 @@ def stats_items(
             "SbEV>0",
             str(sum(ev is not None and ev > 0 for ev in superbet_evs)),
         ),
+        (
+            f"Superbet EV(ref) >= {args.min_ev:.2%}",
+            f"SbEV>={args.min_ev:.0%}",
+            str(sum(ev is not None and ev >= args.min_ev for ev in superbet_evs)),
+        ),
     ] if has_superbet(latest) else []
 
     return [
-        ("Observations processed", "Obs", processed),
+        ("Pinnacle matches processed", "Pin", processed),
         ("Unique matches", "Matches", str(len(latest))),
         (
+            "Found on Betclic",
             "Found",
-            "Found",
-            str(count(lambda r: r.get("status") == "FOUND")),
+            f"{count(lambda r: r.get('status') == 'FOUND')} / "
+            f"{args.expected or len(latest)}",
         ),
         (
             "Not found",
@@ -943,14 +1012,9 @@ def stats_items(
             str(count(lambda r: r.get("status") == "ERROR")),
         ),
         (
-            "FOUND but no EV (live etc.)",
+            NO_EV_LABEL,
             "NoEV",
-            str(
-                count(
-                    lambda r: r.get("status") == "FOUND"
-                    and number(r.get("best_ev")) is None
-                )
-            ),
+            str(sum(no_ev_reasons(latest).values())),
         ),
         (
             "EV calculated",

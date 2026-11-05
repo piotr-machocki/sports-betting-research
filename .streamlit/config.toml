@@ -1,0 +1,12 @@
+# Local only: not reachable from other machines, no usage statistics sent.
+[server]
+address = "localhost"
+# Watching source files for auto-reload held back the table by about 5 s per page
+# load. Without it, restart the dashboard after editing its code.
+fileWatcherType = "none"
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"

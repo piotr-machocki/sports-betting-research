@@ -73,10 +73,19 @@ python scripts/run_once.py --no-monitor  # open no monitor terminal, for unatten
 python scripts/run_once.py --no-superbet  # skip the Superbet collection (only runs if superbet.py is present)
 ```
 
-The Betclic collector runs in tournament mode (`betclic_scroll.py`) when
-`src/betting/books/betclic_scroll.py` is present, and otherwise uses `betclic.py`.
-Other modes: `--hybrid` (`betclic_scroll.py --hybrid`), `--search` (`betclic.py`),
-`--scroll` (`betclic_scroll.py --overview`) and `--feed` (`betclic_feed.py`).
+To follow a run in the browser instead of the monitor terminal, with filters:
+
+```bash
+pip install -e ".[dashboard]"
+python scripts/dashboard.py   # http://localhost:8501; leave the one-time email prompt blank; stops about 10 s after the last tab closes
+```
+
+It only reads the session files, so it can stay open across runs. "Latest" follows the newest session and shows its matches as they are written. Combine it with `--no-monitor` if you do not want the terminal as well.
+
+The Betclic collector is `betclic_feed.py` when it and `betclic_scroll.py` are present
+in `src/betting/books/`, then `betclic_scroll.py`, and otherwise `betclic.py`.
+Other modes: `--tournaments` (`betclic_scroll.py`), `--hybrid` (`betclic_scroll.py --hybrid`),
+`--search` (`betclic.py`) and `--scroll` (`betclic_scroll.py --overview`).
 
 Debug dumps (in `data/betclic/debug/`) are off by default because they slow
 down every failed match; use `--debug` when the scraper stops finding matches.
