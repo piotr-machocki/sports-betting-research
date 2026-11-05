@@ -439,6 +439,7 @@ def add_superbet(row: dict, superbet: dict[tuple, dict]) -> dict:
     return {
         **row,
         "superbet_status": found.get("status", ""),
+        "superbet_captured_at": found.get("captured_at", ""),
         "superbet_player1": found.get("superbet_player1", ""),
         "superbet_player2": found.get("superbet_player2", ""),
         "superbet_price1": found.get("superbet_price1", ""),
