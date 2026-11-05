@@ -125,6 +125,9 @@ def phase_lines(phases) -> list[str]:
             f"    {label:<23}{format_duration(phase.get('seconds'))}{count}"
         )
 
+        if phase.get("error"):
+            lines.append(f"      error: {phase['error']}")
+
     return lines
 
 

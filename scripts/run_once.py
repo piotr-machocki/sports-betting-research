@@ -5,7 +5,7 @@ Workflow:
     1. Collect Pinnacle odds.
     2. Generate a unique session ID.
     3. Preserve a timestamped Pinnacle snapshot.
-    4. Start the EV worker and live monitor.
+    4. Start the EV worker (and the live monitor with --monitor).
     5. Collect Betclic observations into a unique raw CSV.
     6. Process observations for this session.
     7. Finish the session and save its status.
@@ -24,14 +24,14 @@ Usage:
     python scripts/run_once.py --search
     python scripts/run_once.py --scroll
     python scripts/run_once.py --tournaments
-    python scripts/run_once.py --no-monitor
+    python scripts/run_once.py --monitor
     python scripts/run_once.py --no-superbet
 
 Without --limit every available Pinnacle match is processed. The Betclic
 browser runs headless unless --head is given. Debug dumps of failed matches
-(HTML + screenshot) are saved only with --debug, in either case. Closing the --head browser window stops the run, and so does
-closing the live monitor's terminal (Windows) while Betclic is collecting.
---no-monitor opens no terminal, for unattended runs; the report is still written.
+(HTML + screenshot) are saved only with --debug, in either case. Closing the --head browser window stops the run.
+No monitor terminal opens unless --monitor is given; the report is written either way.
+Closing that terminal (Windows) while Betclic is collecting stops the run.
 
 Betclic is collected by betclic_feed.py unless --tournaments selects
 betclic_scroll.py, --hybrid selects betclic_scroll.py --hybrid, --search selects
@@ -301,9 +301,16 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--monitor",
+        action="store_true",
+        help="Open the live monitor terminal. Closing it stops the collection.",
+    )
+
+    # The default since the monitor became opt-in; still accepted as a no-op.
+    parser.add_argument(
         "--no-monitor",
         action="store_true",
-        help="Open no live monitor terminal, for unattended runs.",
+        help=argparse.SUPPRESS,
     )
 
     return parser.parse_args()
@@ -624,10 +631,11 @@ def ensure_report(
     if report_is_final():
         return
 
-    print(
-        "Monitor did not write the final report; writing it here.",
-        flush=True,
-    )
+    if wait > 0:
+        print(
+            "Monitor did not write the final report; writing it here.",
+            flush=True,
+        )
 
     try:
         import live_monitor
@@ -837,8 +845,8 @@ def main() -> None:
         # Start the worker before Betclic publishes observations.
         worker = start_worker(session_id)
 
-        # Start the terminal monitor for this session.
-        if not args.no_monitor:
+        # Start the terminal monitor for this session, if asked for.
+        if args.monitor:
             monitor = start_monitor(
                 session_id=session_id,
                 session_start=session_start,

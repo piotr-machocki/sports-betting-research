@@ -28,3 +28,17 @@ def test_default_mode_follows_the_files_present(tmp_path, monkeypatch, present, 
         monkeypatch.setattr(run_once, constant, path)
 
     assert run_once.default_betclic_mode() == expected
+
+
+@pytest.mark.parametrize(
+    ("flags", "expected"),
+    [
+        ([], False),
+        (["--no-monitor"], False),  # the old flag still parses
+        (["--monitor"], True),
+    ],
+)
+def test_monitor_terminal_opens_only_on_request(monkeypatch, flags, expected):
+    monkeypatch.setattr(sys, "argv", ["run_once.py", *flags])
+
+    assert run_once.parse_args().monitor is expected

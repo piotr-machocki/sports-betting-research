@@ -69,18 +69,18 @@ src/betting/books/betclic.py
 python scripts/run_once.py          # headless Betclic browser 
 python scripts/run_once.py --head   # show the browser, for debugging
 python scripts/run_once.py --debug  # save HTML + screenshot of failed Betclic matches
-python scripts/run_once.py --no-monitor  # open no monitor terminal, for unattended runs
+python scripts/run_once.py --monitor  # also open the live monitor terminal; closing it stops the run
 python scripts/run_once.py --no-superbet  # skip the Superbet collection (only runs if superbet.py is present)
 ```
 
-To follow a run in the browser instead of the monitor terminal, with filters:
+To follow a run in the browser, with filters:
 
 ```bash
 pip install -e ".[dashboard]"
 python scripts/dashboard.py   # http://localhost:8501; leave the one-time email prompt blank; stops about 10 s after the last tab closes
 ```
 
-It only reads the session files, so it can stay open across runs. "Latest" follows the newest session and shows its matches as they are written. Combine it with `--no-monitor` if you do not want the terminal as well.
+It only reads the session files, so it can stay open across runs. "Latest" follows the newest session and shows its matches as they are written.
 
 The Betclic collector is `betclic_feed.py` when it and `betclic_scroll.py` are present
 in `src/betting/books/`, then `betclic_scroll.py`, and otherwise `betclic.py`.

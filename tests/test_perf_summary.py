@@ -41,3 +41,13 @@ def test_phase_without_a_time_shows_n_a():
     [line] = perf_summary.phase_lines([{"name": "search", "seconds": None, "matches": 0, "found": 0}])
 
     assert line == "    search:                n/a  (0 of 0 matches found)"
+
+
+def test_a_phase_error_is_shown_under_its_phase():
+    lines = perf_summary.phase_lines([
+        {"name": "feed", "seconds": 38.0, "matches": 91, "found": 86, "error": "request failed"},
+        {"name": "tournaments", "seconds": 31.0, "matches": 91, "found": 86},
+    ])
+
+    assert lines[1] == "      error: request failed"
+    assert lines[2].startswith("    tournaments:")
