@@ -23,7 +23,7 @@ Usage:
     python scripts/run_once.py --hybrid
     python scripts/run_once.py --search
     python scripts/run_once.py --scroll
-    python scripts/run_once.py --feed
+    python scripts/run_once.py --tournaments
     python scripts/run_once.py --no-monitor
     python scripts/run_once.py --no-superbet
 
@@ -33,10 +33,10 @@ browser runs headless unless --head is given. Debug dumps of failed matches
 closing the live monitor's terminal (Windows) while Betclic is collecting.
 --no-monitor opens no terminal, for unattended runs; the report is still written.
 
-Betclic is collected in tournament mode (betclic_scroll.py) unless --hybrid
-selects betclic_scroll.py --hybrid, --search selects betclic.py, --scroll
-selects betclic_scroll.py --overview or --feed selects betclic_feed.py. All modes publish the same queue
-messages.
+Betclic is collected by betclic_feed.py unless --tournaments selects
+betclic_scroll.py, --hybrid selects betclic_scroll.py --hybrid, --search selects
+betclic.py or --scroll selects betclic_scroll.py --overview. All modes publish
+the same queue messages.
 """
 
 from __future__ import annotations
@@ -168,6 +168,14 @@ def read_betclic_phases(session_id: str) -> list[dict] | None:
     return phases if isinstance(phases, list) else None
 
 
+def default_betclic_mode() -> str:
+    """The collector for a run that names none. The feed reuses betclic_scroll.py."""
+    if not BETCLIC_SCROLL_SCRIPT.exists():
+        return "search"
+
+    return "feed" if BETCLIC_FEED_SCRIPT.exists() else "tournaments"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Collect odds and launch the live EV monitor."
@@ -227,7 +235,7 @@ def parse_args() -> argparse.Namespace:
         ),
     )
 
-    # Betclic collector mode; tournaments is the default.
+    # Betclic collector mode; feed is the default.
     mode = parser.add_mutually_exclusive_group()
 
     mode.add_argument(
@@ -235,7 +243,7 @@ def parse_args() -> argparse.Namespace:
         dest="mode",
         action="store_const",
         const="tournaments",
-        help="Betclic: betclic_scroll.py (default).",
+        help="Betclic: betclic_scroll.py.",
     )
 
     mode.add_argument(
@@ -267,11 +275,10 @@ def parse_args() -> argparse.Namespace:
         dest="mode",
         action="store_const",
         const="feed",
-        help="Betclic: betclic_feed.py.",
+        help="Betclic: betclic_feed.py (default).",
     )
 
-    # None = not chosen: tournaments, or search when betclic_scroll.py is
-    # missing.
+    # None = not chosen: feed, or the next collector whose files are present.
     parser.set_defaults(mode=None)
 
     parser.add_argument(
@@ -707,14 +714,12 @@ def main() -> None:
     betclic_mode = args.mode
 
     if betclic_mode is None:
-        betclic_mode = (
-            "tournaments" if BETCLIC_SCROLL_SCRIPT.exists() else "search"
-        )
+        betclic_mode = default_betclic_mode()
 
-        if betclic_mode == "search":
+        if betclic_mode != "feed":
             print(
-                f"Note: {BETCLIC_SCROLL_SCRIPT.name} not found; "
-                "using search mode (betclic.py).",
+                f"Note: {BETCLIC_FEED_SCRIPT.name} or a file it needs not found; "
+                f"using {betclic_mode} mode.",
                 flush=True,
             )
 
