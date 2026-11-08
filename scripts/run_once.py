@@ -11,7 +11,9 @@ Workflow:
     7. Finish the session and save its status.
     8. Save the raw data (data/results/raw/) and the display report
        (data/results/reports/) of the session.
-    9. Fetch finished match results, at most once a day
+    9. Send a Telegram message for each new bet at or above --min-ev
+       (scripts/notify.py; only with TELEGRAM_* in .env, skipped with --no-notify).
+    10. Fetch finished match results, at most once a day
        (scripts/match_results.py), unless the run was interrupted.
 
 Usage:
@@ -93,6 +95,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 from betting.books import pinnacle  # noqa: E402
 import match_results  # noqa: E402
+import notify  # noqa: E402
 from perf_summary import performance_lines  # noqa: E402
 import results_store  # noqa: E402
 
@@ -198,7 +201,7 @@ def parse_args() -> argparse.Namespace:
         "--min-ev",
         type=float,
         default=0.02,
-        help="Threshold for the monitor's positive-EV count. Default: 2%%.",
+        help="Threshold for the monitor's positive-EV count and Telegram messages. Default: 2%%.",
     )
 
     parser.add_argument(
@@ -292,6 +295,12 @@ def parse_args() -> argparse.Namespace:
         "--no-results",
         action="store_true",
         help="Skip the daily fetch of finished match results.",
+    )
+
+    parser.add_argument(
+        "--no-notify",
+        action="store_true",
+        help="Send no Telegram messages for this run.",
     )
 
     parser.add_argument(
@@ -1024,6 +1033,9 @@ def main() -> None:
 
         for line in performance_lines(performance):
             print(line, flush=True)
+
+        if not args.no_notify and session_status != "interrupted":
+            notify.run_step(session_id, args.min_ev)
 
         if not args.no_results and session_status != "interrupted":
             match_results.run_step()
