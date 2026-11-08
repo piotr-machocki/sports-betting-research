@@ -280,7 +280,12 @@ def print_chat_ids() -> None:
     chats = {}
 
     for update in updates:
-        chat = (update.get("message") or update.get("channel_post") or {}).get("chat") or {}
+        # my_chat_member: the bot was added to a group or channel, even with no message since.
+        event = (
+            update.get("message") or update.get("channel_post")
+            or update.get("my_chat_member") or {}
+        )
+        chat = event.get("chat") or {}
         if "id" in chat:
             chats[chat["id"]] = chat.get("username") or chat.get("title") or chat.get("first_name", "")
 
