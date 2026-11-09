@@ -311,6 +311,67 @@ table.matches .tax-switch:hover, table.matches .book-switch:hover {
 table.matches .tax-switch::before, table.matches .book-switch::before {
     content: "\\21C4";
 }
+/* Phones get one card per match instead of the table (user, 10 Nov 2026): the sticky
+   name column took half the screen and left room for one more column. */
+.match-cards { display: none; }
+@media (max-width: 700px) {
+    table.matches { display: none; }
+    .match-cards { display: flex; flex-direction: column; gap: 8px; }
+    /* Opaque, so the sidebar button does not sit on top of the scrolled cards. */
+    [data-testid="stHeader"] { background: var(--page-background) !important; }
+    [data-testid="stMainBlockContainer"] { padding-top: 3.5rem !important; }
+}
+.match-card {
+    padding: 10px 12px;
+    border: 1px solid rgba(128, 128, 128, 0.25);
+    border-radius: 10px;
+    font-size: 14px;
+    line-height: 20px;
+}
+.match-card.dimmed { opacity: 0.6; }
+.mc-head { display: flex; align-items: flex-start; gap: 10px; }
+.mc-names { flex: 1; min-width: 0; }
+.mc-bet { font-size: 16px; font-weight: 600; line-height: 22px; }
+.mc-vs, .mc-meta, .mc-book .label, .mc-book .sub {
+    color: color-mix(in srgb, currentColor 65%, transparent);
+}
+.mc-vs, .mc-meta { font-size: 13px; }
+.mc-meta { margin-top: 2px; }
+.mc-best {
+    flex: none;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 18px;
+    line-height: 26px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+.mc-books {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+    gap: 6px;
+    margin-top: 8px;
+}
+.mc-book {
+    padding: 5px 8px;
+    border-radius: 6px;
+    background-color: rgba(128, 128, 128, 0.1);
+    font-variant-numeric: tabular-nums;
+}
+.mc-book .label, .mc-book .sub { font-size: 12px; line-height: 16px; }
+.mc-book .price { font-size: 16px; font-weight: 600; }
+.mc-book .ev { margin-left: -3px; padding: 0 3px; border-radius: 4px; font-weight: 600; }
+.mc-extra {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 14px;
+    margin-top: 8px;
+    font-size: 13px;
+}
+.mc-extra .label {
+    margin-right: 4px;
+    color: color-mix(in srgb, currentColor 65%, transparent);
+}
 </style>"""
 
 # One horizontal row of cards; on a narrow window they wrap. Same colours in both themes:
@@ -1382,6 +1443,102 @@ def table_html(
     )
 
 
+def cards_html(
+    records: list[dict], min_ev: float, superbet: bool, betclic: bool = True
+) -> str:
+    """The same records as table_html, one card each, for phone-width screens (CSS
+    shows one or the other). Best EV leads, then one tile per book for the Bet on
+    side; doubles names stay whole, since a card can wrap them."""
+
+    def attribute(name: str, value: Any) -> str:
+        return f' {name}="{html.escape(str(value))}"' if value else ""
+
+    def text(column: str, record: dict) -> str:
+        value = record.get(column)
+
+        return "--" if value is None or value == "" else CELL_FORMATS.get(column, str)(value)
+
+    def ev(column: str, record: dict) -> str:
+        return (
+            f'<span class="ev"{attribute("style", ev_css(record.get(column), min_ev))}>'
+            f"EV {html.escape(text(column, record))}</span>"
+        )
+
+    def tile(label: str, price: str, *subs: str) -> str:
+        lines = "".join(f'<div class="sub">{sub}</div>' for sub in subs if sub)
+
+        return (
+            f'<div class="mc-book"><div class="label">{label}</div>'
+            f'<div class="price">{html.escape(price)}</div>{lines}</div>'
+        )
+
+    cards = []
+
+    for record in records:
+        dimmed = record.get("EV Betclic") is None and record.get("EV Superbet") is None
+        best = record.get("Best EV")
+        best_style = ev_css(best, min_ev)
+        meta = " · ".join(
+            html.escape(part)
+            for part in (
+                text("Starts", record) if record.get("Starts") else "",
+                record.get("Tournament") or "",
+            )
+            if part
+        )
+        tiles = []
+
+        if betclic:
+            tiles.append(tile(
+                "Betclic",
+                text("Betclic", record),
+                ev("EV Betclic", record),
+                f"margin {html.escape(text('Margin Betclic', record))}",
+            ))
+        if superbet:
+            tiles.append(tile(
+                "Superbet",
+                text("Superbet", record),
+                ev("EV Superbet", record),
+                f"net {html.escape(text('Superbet net', record))}",
+            ))
+        tiles.append(tile(
+            "Pinnacle",
+            text("Pinnacle", record),
+            f"fair {html.escape(text('Fair prob', record))}",
+            f"margin {html.escape(text('Margin Pinnacle', record))}",
+        ))
+
+        extras = []
+
+        for column in ("Result", "CLV", "Session"):
+            if column not in record:
+                continue
+
+            style = cell_css(column, record[column], False, min_ev)
+            extras.append(
+                f'<span{attribute("title", record.get(f"_title {column}"))}>'
+                f'<span class="label">{column}</span>'
+                f'<span{attribute("style", style)}>'
+                f"{html.escape(text(column, record))}</span></span>"
+            )
+
+        cards.append(
+            f'<div class="match-card{" dimmed" if dimmed else ""}">'
+            '<div class="mc-head"><div class="mc-names">'
+            f'<div class="mc-bet" style="{BET_ON}">{html.escape(record["Bet on"])}</div>'
+            f'<div class="mc-vs">vs {html.escape(record["Opponent"])}</div></div>'
+            f'<div class="mc-best"{attribute("style", best_style)}>'
+            f'{html.escape(format_ev(best) if best is not None else "no EV")}</div></div>'
+            f'<div class="mc-meta">{meta}</div>'
+            f'<div class="mc-books">{"".join(tiles)}</div>'
+            + (f'<div class="mc-extra">{"".join(extras)}</div>' if extras else "")
+            + "</div>"
+        )
+
+    return f'<div class="match-cards">{"".join(cards)}</div>'
+
+
 def share(part: int, whole: int) -> str:
     return f"{part / whole:.0%}" if whole else "--"
 
@@ -1886,7 +2043,11 @@ def render_table(
             result=filters["show_result"],
         )
 
-    box.html(table_html(shown, min_ev, superbet, "Betclic" in books))
+    betclic = "Betclic" in books
+    box.html(
+        table_html(shown, min_ev, superbet, betclic)
+        + cards_html(shown, min_ev, superbet, betclic)
+    )
 
 
 PICKER_STYLE = """<style>

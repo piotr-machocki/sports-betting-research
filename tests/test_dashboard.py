@@ -847,6 +847,26 @@ def test_superbet_prices_share_a_switch_and_only_sessions_with_superbet_have_it(
     assert "tax-switch" not in dashboard.table_html(records, 0.02, False)
 
 
+def test_cards_show_each_match_with_its_books_for_phones():
+    records = dashboard.table_records(
+        [
+            row(superbet_ev2="0.30", superbet_odds2="2.5", superbet_price2="2.84"),
+            row(**NO_EV, pinnacle_player1="Cara", status="NOT FOUND"),
+        ]
+    )
+    with_superbet = dashboard.cards_html(records, 0.02, True)
+    without = dashboard.cards_html(records, 0.02, False)
+
+    assert with_superbet.count('class="match-card"') == 1
+    assert with_superbet.count('class="match-card dimmed"') == 1
+    assert ">Superbet<" in with_superbet and ">2.84<" in with_superbet
+    assert "net 2.50" in with_superbet
+    assert ">Superbet<" not in without and ">Betclic<" in without
+    assert ">Betclic<" not in dashboard.cards_html(records, 0.02, True, betclic=False)
+    assert "no EV" in with_superbet
+    assert "&#x27;" not in with_superbet and 'style="color' in with_superbet
+
+
 def test_superbet_margin_has_both_tax_versions_and_only_sessions_with_superbet_have_them():
     records = dashboard.table_records(
         [
