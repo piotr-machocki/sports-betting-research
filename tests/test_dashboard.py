@@ -1,6 +1,7 @@
 """The dashboard's data layer (scripts/dashboard.py). No Streamlit, no network."""
 
 import sys
+from types import SimpleNamespace
 from datetime import date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -720,6 +721,23 @@ def polls_until_stop(counts: list[int]) -> int:
     dashboard.wait_for_browsers_to_close(lambda: next(remaining), sleep=lambda _: None)
 
     return len(counts) - sum(1 for _ in remaining)
+
+
+def test_keep_running_turns_the_browser_watcher_off(monkeypatch):
+    started = []
+    monkeypatch.setattr(
+        dashboard.threading,
+        "Thread",
+        lambda **kw: started.append(kw) or SimpleNamespace(start=lambda: None),
+    )
+
+    monkeypatch.setenv(dashboard.KEEP_RUNNING_ENV, "1")
+    dashboard.start_browser_watch()
+    assert started == []
+
+    monkeypatch.setenv(dashboard.KEEP_RUNNING_ENV, "0")
+    dashboard.start_browser_watch()
+    assert len(started) == 1
 
 
 GRACE = dashboard.STOP_AFTER_SECONDS

@@ -14,6 +14,8 @@ when the session file or a filter changes: styling and drawing it is the slow pa
 
 The server stops by itself a few seconds after the last browser tab closes, and
 waits as long as it takes for the first one. A page reload does not stop it.
+With DASHBOARD_KEEP_RUNNING=1 in the environment it never stops by itself, for a
+server that runs as a service (it is then stopped like any other process).
 
 Each table row is one match (latest observation), for the BET ON side, as in
 the terminal table. It is a plain HTML table, not st.dataframe: that one draws on a
@@ -71,6 +73,8 @@ IDLE_REFRESH_SECONDS = 10
 
 # Long enough for a page reload, which drops the connection and opens a new one.
 STOP_AFTER_SECONDS = 10
+# Set to 1 to turn the browser watcher off, for a dashboard that runs as a service.
+KEEP_RUNNING_ENV = "DASHBOARD_KEEP_RUNNING"
 
 # live_monitor's defaults for --min-ev and --max-age.
 DEFAULT_MIN_EV_PERCENT = 2.0
@@ -2161,7 +2165,14 @@ def stop_server_when_browsers_close() -> None:
     os._exit(0)
 
 
+def keep_running() -> bool:
+    return os.environ.get(KEEP_RUNNING_ENV, "").strip() == "1"
+
+
 def start_browser_watch() -> None:
+    if keep_running():
+        return
+
     threading.Thread(target=stop_server_when_browsers_close, daemon=True).start()
 
 
