@@ -7,6 +7,10 @@ message per match. Sent bets are kept in data/notify/sent.json, so a match is
 announced once per book and side, not every run. A failed send is not recorded,
 so the next run tries again. No retry, and nothing here can fail a run.
 
+With --after-run, called by scheduled_run.sh after every run, it instead counts
+failed runs in a row (data/notify/failures.json) and sends one alert once
+FAIL_STREAK fail in a row, at most once per local day.
+
 Needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env; without them it does
 nothing. Uses no PinnAPI requests.
 
@@ -15,6 +19,7 @@ Usage:
     python scripts/notify.py --test                      # send a test message
     python scripts/notify.py --session-id ID --dry-run   # print what would be sent
     python scripts/notify.py [--session-id ID] [--min-ev 0.02]   # latest session by default
+    python scripts/notify.py --after-run EXIT_CODE --run-started EPOCH  # scheduled_run.sh
 """
 
 from __future__ import annotations
@@ -46,6 +51,13 @@ MIN_EV = 0.02
 SENT_FILE = ROOT / "data" / "notify" / "sent.json"
 SENT_KEEP_DAYS = 3  # older entries are dropped; a match is long over by then
 LOCAL_TZ = "Europe/Warsaw"
+
+# Failed-run alerts (--after-run, called by scheduled_run.sh after each run).
+FAILURES_FILE = ROOT / "data" / "notify" / "failures.json"
+RUN_LOG = ROOT / "data" / "logs" / "scheduled_run.log"
+FAIL_STREAK = 3  # failed runs in a row before an alert; one-off failures happen
+LOG_TAIL_BYTES = 64_000
+REASON_MAX_CHARS = 300
 
 
 # ----------------------------------------------------------------- Telegram ---
@@ -154,16 +166,21 @@ def bet_key(bet: dict) -> str:
     return "|".join((bet["player1"], bet["player2"], bet["tournament"], bet["book"], str(bet["side"])))
 
 
+def to_local(moment: datetime) -> tuple[datetime, str]:
+    """The moment in LOCAL_TZ, or in UTC with a " UTC" label without a tz database
+    (Windows without tzdata)."""
+    try:
+        from zoneinfo import ZoneInfo
+        return moment.astimezone(ZoneInfo(LOCAL_TZ)), ""
+    except Exception:
+        return moment.astimezone(timezone.utc), " UTC"
+
+
 def local_time(moment: datetime | None) -> str:
     if moment is None:
         return "start unknown"
 
-    try:
-        from zoneinfo import ZoneInfo
-        local = moment.astimezone(ZoneInfo(LOCAL_TZ))
-        label = ""
-    except Exception:  # no tz database (Windows without tzdata)
-        local, label = moment.astimezone(timezone.utc), " UTC"
+    local, label = to_local(moment)
 
     today = datetime.now(local.tzinfo).date()
     day = "" if local.date() == today else local.strftime("%a %d %b ")
@@ -268,6 +285,158 @@ def run_step(session_id: str, min_ev: float = MIN_EV) -> None:
     print(f"Telegram: {result['status']}, {result['sent']} sent", flush=True)
 
 
+# ----------------------------------------------------------- failed runs ---
+
+def run_failure(
+    exit_code: int,
+    started: datetime,
+    sessions_dir: Path | None = None,
+    log_path: Path = RUN_LOG,
+) -> str | None:
+    """Why the run that just ended failed, or None if it did not.
+
+    A run fails when run_once.py exits with an error (e.g. the Pinnacle request
+    failed, before any session exists) or its session ends as "failed". A run that
+    finished with fewer matches (a feed failure without a browser) is not a failure.
+    """
+    sessions_dir = sessions_dir or live_monitor.SESSIONS_DIR
+    started_s = started.timestamp()
+
+    for path in sorted(sessions_dir.glob("session_*_status.json"), reverse=True):
+        try:
+            if path.stat().st_mtime < started_s:
+                break
+            info = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        if str(info.get("status", "")).lower() == "failed":
+            return str(info.get("error") or "session failed")[:REASON_MAX_CHARS]
+        break
+
+    if exit_code == 0:
+        return None
+
+    return (last_error_line(log_path) or f"run_once.py exited with code {exit_code}")[
+        :REASON_MAX_CHARS
+    ]
+
+
+def last_error_line(log_path: Path = RUN_LOG) -> str | None:
+    """The last ERROR line of the latest run in the cron log (each starts at a ===== line)."""
+    try:
+        with log_path.open("rb") as log:
+            log.seek(0, os.SEEK_END)
+            log.seek(max(0, log.tell() - LOG_TAIL_BYTES))
+            tail = log.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+
+    # A cron call made during the run writes a "skipped" header into it; only a
+    # header without that starts a run.
+    lines = tail.splitlines()
+    starts = [
+        number for number, line in enumerate(lines)
+        if line.startswith("===== ") and line.endswith(" UTC =====")
+    ]
+    run = lines[starts[-1] + 1:] if starts else lines
+    errors = [line.strip() for line in run if line.strip().startswith("ERROR")]
+
+    return errors[-1] if errors else None
+
+
+def load_failures(path: Path = FAILURES_FILE) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_failures(state: dict, path: Path = FAILURES_FILE) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=1, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+
+def failure_message(state: dict, now: datetime) -> str:
+    local, label = to_local(now)
+    since = live_monitor.parse_timestamp(state.get("first_failed_at"))
+    since_text = ""
+
+    if since:
+        first = to_local(since)[0]
+        day = "" if first.date() == local.date() else first.strftime("%a %d %b ")
+        since_text = f" since {day}{first:%H:%M}{label}"
+
+    return (
+        f"⚠️ Collector: {state['streak']} runs failed in a row{since_text} "
+        f"(last at {local:%H:%M}{label}).\n"
+        f"Last error: {state.get('reason') or 'unknown'}\n"
+        "No more alerts about this today."
+    )
+
+
+def notify_run(
+    failure: str | None,
+    now: datetime | None = None,
+    path: Path = FAILURES_FILE,
+    send_alert=None,
+) -> dict:
+    """Counts failed runs in a row and alerts once FAIL_STREAK is reached, at most
+    once per local day. A finished run resets the count. A failed send is not
+    recorded, so the next failed run tries again."""
+    now = now or datetime.now(timezone.utc)
+    state = load_failures(path)
+
+    if failure is None:
+        if state.get("streak"):
+            state.update(streak=0, first_failed_at=None, reason=None)
+            save_failures(state, path)
+        return {"status": "ok", "streak": 0, "alerted": False}
+
+    if not state.get("streak"):
+        state["first_failed_at"] = now.isoformat()
+    state["streak"] = int(state.get("streak") or 0) + 1
+    state["reason"] = failure
+    today = to_local(now)[0].date().isoformat()
+    alerted = False
+    status = "counted"
+
+    if state["streak"] >= FAIL_STREAK and state.get("alerted_on") != today:
+        if send_alert is None:
+            creds = credentials()
+            send_alert = (lambda text: send(*creds, text)) if creds else None
+
+        if send_alert is None:
+            status = "no TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID in .env"
+        else:
+            try:
+                send_alert(failure_message(state, now))
+                state["alerted_on"] = today
+                alerted = True
+                status = "alert sent"
+            except TelegramError as exc:
+                status = f"alert failed: {exc}"
+
+    save_failures(state, path)
+
+    return {"status": status, "streak": state["streak"], "alerted": alerted}
+
+
+def after_run(exit_code: int, started: datetime) -> None:
+    """scheduled_run.sh's hook: prints one line, never raises."""
+    try:
+        result = notify_run(run_failure(exit_code, started))
+    except Exception as exc:  # noqa: BLE001 - the cron script goes on either way
+        print(f"WARNING: failed-run check failed: {type(exc).__name__}: {exc}", flush=True)
+        return
+
+    if result["streak"]:
+        print(f"Failed runs in a row: {result['streak']} ({result['status']})", flush=True)
+
+
 # ----------------------------------------------------------------------- CLI ---
 
 def print_chat_ids() -> None:
@@ -303,7 +472,21 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Print, send nothing, record nothing.")
     parser.add_argument("--test", action="store_true", help="Send a test message.")
     parser.add_argument("--chat-id", action="store_true", help="Print chat IDs that messaged the bot.")
+    parser.add_argument(
+        "--after-run", type=int, metavar="EXIT_CODE",
+        help="Record the run that just ended (scheduled_run.sh) and alert after "
+        f"{FAIL_STREAK} failed runs in a row, at most once a day.",
+    )
+    parser.add_argument(
+        "--run-started", type=float, metavar="EPOCH",
+        help="With --after-run: when that run started (Unix seconds).",
+    )
     args = parser.parse_args()
+
+    if args.after_run is not None:
+        started = datetime.fromtimestamp(args.run_started or 0, timezone.utc)
+        after_run(args.after_run, started)
+        return
 
     # The Windows console's code page cannot print the emoji in --dry-run.
     if hasattr(sys.stdout, "reconfigure"):

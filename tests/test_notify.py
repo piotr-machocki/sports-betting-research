@@ -88,3 +88,87 @@ def test_each_bet_sent_once_and_failures_retried(tmp_path, monkeypatch):
 def test_without_credentials_does_nothing(monkeypatch):
     monkeypatch.setattr(notify, "credentials", lambda: None)
     assert notify.notify_session("s", now=NOW)["sent"] == 0
+
+
+# ------------------------------------------------------------ failed runs ---
+
+def at(hour: int, day: int = 9) -> datetime:
+    return datetime(2026, 11, day, hour, 0, tzinfo=timezone.utc)
+
+
+def test_alert_after_three_failed_runs_in_a_row_at_most_once_a_day(tmp_path):
+    path = tmp_path / "failures.json"
+    sent = []
+
+    def run(failure, now):
+        return notify.notify_run(failure, now, path, sent.append)
+
+    run("ERROR: boom", at(10))
+    run("ERROR: boom", at(11))
+    assert sent == []
+
+    assert run("ERROR: boom", at(12))["alerted"]
+    assert "3 runs failed in a row" in sent[0] and "ERROR: boom" in sent[0]
+
+    run("ERROR: boom", at(13))
+    run(None, at(14))
+    for hour in (15, 16, 17):
+        run("ERROR: again", at(hour))
+    assert len(sent) == 1  # already alerted today
+
+    assert run("ERROR: again", at(10, day=10))["alerted"]  # still failing the next day
+    assert len(sent) == 2 and "4 runs failed in a row since Mon 09 Nov" in sent[1]
+
+
+def test_a_finished_run_resets_the_streak(tmp_path):
+    path = tmp_path / "failures.json"
+    sent = []
+
+    for failure in ("x", "x", None, "x", "x"):
+        result = notify.notify_run(failure, at(10), path, sent.append)
+
+    assert result["streak"] == 2 and sent == []
+
+
+def test_a_failed_alert_is_tried_again_on_the_next_failed_run(tmp_path):
+    path = tmp_path / "failures.json"
+
+    def broken(text):
+        raise notify.TelegramError("HTTP 502")
+
+    for hour in (10, 11):
+        notify.notify_run("x", at(hour), path, broken)
+    assert notify.notify_run("x", at(12), path, broken)["status"] == "alert failed: HTTP 502"
+
+    sent = []
+    assert notify.notify_run("x", at(13), path, sent.append)["alerted"]
+
+
+def test_run_failure_reads_the_session_status_or_the_log(tmp_path):
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    log = tmp_path / "run.log"
+    log.write_text(
+        "===== 2026-11-09 10:00:00 UTC =====\nERROR: old\nexit code 1\n"
+        "===== 2026-11-09 10:15:00 UTC =====\n"
+        "===== 2026-11-09 10:30:00 UTC: previous run still going, skipped =====\n"
+        "ERROR: Pinnacle collection failed: HTTPError: 429\nexit code 1\n",
+        encoding="utf-8",
+    )
+    started = datetime(2000, 1, 1, tzinfo=timezone.utc)
+
+    assert notify.run_failure(0, started, sessions, log) is None
+    assert notify.run_failure(1, started, sessions, log) == (
+        "ERROR: Pinnacle collection failed: HTTPError: 429"
+    )
+
+    status = sessions / "session_20261109_101500_abcdef_status.json"
+    status.write_text('{"status": "failed", "error": "Betclic process exited with code 1."}')
+    assert notify.run_failure(0, started, sessions, log) == "Betclic process exited with code 1."
+
+    status.write_text('{"status": "finished"}')
+    assert notify.run_failure(0, started, sessions, log) is None
+
+    later = datetime(2100, 1, 1, tzinfo=timezone.utc)  # session older than the run
+    status.write_text('{"status": "failed"}')
+    assert notify.run_failure(0, later, sessions, log) is None
