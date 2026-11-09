@@ -357,8 +357,9 @@ OVERVIEW_STYLE = """<style>
     margin-left: -8px;
     font-variant-numeric: tabular-nums;
     font-weight: 600;
-    color: #e3b341;
 }
+.fresh { color: #1f9d55; }
+.stale { color: #d64545; }
 .overview { margin-bottom: 4px; }
 .overview-title { font-weight: 600; margin-bottom: 6px; }
 .overview-cards { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -558,9 +559,22 @@ TABLE_SCRIPT = """<script>
         if (!age || !age.firstChild) return;
 
         const seconds = Math.max(0, Math.round(Date.now() / 1000 - Number(age.dataset.since)));
-        const shown = ageText(seconds, Number(age.dataset.staleAfter));
+        const staleAfter = Number(age.dataset.staleAfter);
+        const shown = ageText(seconds, staleAfter);
+        const stale = seconds > staleAfter;
 
         if (age.firstChild.nodeValue !== shown) age.firstChild.nodeValue = shown;
+
+        // Green while fresh, red once stale: the age and the Performance card's flag.
+        const flag = document.querySelector(".overview-tile [data-stale-flag]");
+        [age.parentElement, flag].forEach(element => {
+            if (!element || element.classList.contains("stale") === stale) return;
+            element.classList.toggle("stale", stale);
+            element.classList.toggle("fresh", !stale);
+        });
+        if (flag && flag.firstChild && flag.firstChild.nodeValue !== (stale ? "Yes" : "No")) {
+            flag.firstChild.nodeValue = stale ? "Yes" : "No";
+        }
     }, 250);
 })();
 </script>"""
@@ -1531,15 +1545,19 @@ def overview_checks(summary: dict, stats: dict, books: list[str] = BOOKS) -> str
     age = summary["pinnacle_age"]
     stale = age is not None and age > STALE_MINUTES * 60
     stale_text = "--" if age is None else "Yes" if stale else "No"
-    tiles = [
-        *(gap(book) for book in BOOKS if book in books),
-        warning(
-            f"Stale (over {STALE_MINUTES:g} min)",
-            stale_text,
-            stale,
-            f"Whether the Pinnacle odds are more than {STALE_MINUTES:g} minutes old right now",
-        ),
-    ]
+    # Green while fresh, red once stale, like the age in the session bar. TABLE_SCRIPT
+    # flips both when the age passes the limit, between server ticks.
+    stale_tile = overview_tile(
+        f"Stale (over {STALE_MINUTES:g} min)",
+        stale_text,
+        f"Whether the Pinnacle odds are more than {STALE_MINUTES:g} minutes old right now",
+        attributes="" if age is None else ' data-stale-flag=""',
+    )
+    if age is not None:
+        stale_tile = stale_tile.replace(
+            'class="value"', f'class="value {"stale" if stale else "fresh"}"', 1
+        )
+    tiles = [*(gap(book) for book in BOOKS if book in books), stale_tile]
 
     # Only in the stats when it matters: see session_summary. They are Betclic's.
     if "Errors" in stats and "Betclic" in books:
@@ -1550,9 +1568,9 @@ def overview_checks(summary: dict, stats: dict, books: list[str] = BOOKS) -> str
 
 
 def session_bar_html(summary: dict, session_id: str) -> str:
-    """The session's state above the overview: status, start (to the minute) and, in
-    amber, the age of its oldest Pinnacle prices, which TABLE_SCRIPT counts on each
-    second."""
+    """The session's state above the overview: status, start (to the minute) and the
+    age of its oldest Pinnacle prices, green while fresh and red once stale, which
+    TABLE_SCRIPT counts on each second."""
     colour = STATUS_COLOURS.get(summary["status"], OVERVIEW_BLUE)
     started = session_started(session_id)
     run_on = session_id if started is None else started.strftime("%Y-%m-%d %H:%M")
@@ -1560,8 +1578,9 @@ def session_bar_html(summary: dict, session_id: str) -> str:
     age_html = ""
 
     if age is not None:
+        freshness = "stale" if age > STALE_MINUTES * 60 else "fresh"
         age_html = (
-            '<span class="session-age" title="Time since the Pinnacle odds were captured,'
+            f'<span class="session-age {freshness}" title="Time since the Pinnacle odds were captured,'
             ' up to now: the oldest prices in the run">'
             f'<span data-since="{summary["pinnacle_captured"]}"'
             f' data-stale-after="{STALE_MINUTES * 60:g}">{pinnacle_age_text(age)}</span>'
@@ -2235,8 +2254,8 @@ Pinnacle's price is fair, and it is measured against results as they come in
 * **Result**: Won or Lost for the Bet on side, once the match results include it.
 * **CLV** (closing line value): the price taken against Pinnacle's last fair price
   before the start. Consistently positive CLV is the usual sign that an edge is real.
-* **Session bar**: the run's status, when it started and, in yellow, how long ago
-  its oldest Pinnacle prices were captured.
+* **Session bar**: the run's status, when it started and how long ago
+  its oldest Pinnacle prices were captured (green, red once over 15 minutes).
 * **Performance**: how long after the Pinnacle prices each bookmaker's prices were
   read, and whether the Pinnacle prices are stale (over 15 minutes old).
 """

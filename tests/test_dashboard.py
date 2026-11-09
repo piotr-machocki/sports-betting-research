@@ -1289,3 +1289,18 @@ def test_about_page_renders_without_the_sidebar():
     assert not app.exception
     assert not app.sidebar.children
     assert any("Tennis EV" in block.value for block in app.markdown)
+
+
+@pytest.mark.parametrize(
+    "captured_at, freshness",
+    [("2026-11-03T17:45:00+00:00", "fresh"), ("2026-11-03T17:44:59+00:00", "stale")],
+)
+def test_pinnacle_age_and_stale_flag_are_green_while_fresh_and_red_once_stale(
+    captured_at, freshness
+):
+    summary = dashboard.session_summary([row(pinnacle_captured_at=captured_at)], {}, 0.02, NOW)
+    summary["status"] = "finished"
+    bar = dashboard.session_bar_html(summary, "session_20261105_151211_abcdef")
+
+    assert f'class="session-age {freshness}"' in bar
+    assert f'class="value {freshness}" data-stale-flag=""' in dashboard.overview_html(summary)
