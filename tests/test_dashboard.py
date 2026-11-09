@@ -283,7 +283,8 @@ def test_session_bar_shows_the_status_and_run_time():
 
     assert ">Finished</span>" in bar
     assert ">Run on</span>" in bar
-    assert dashboard.session_label("session_20261105_151211_abcdef") in bar
+    started = dashboard.session_started("session_20261105_151211_abcdef")
+    assert f"{started:%Y-%m-%d %H:%M}" in bar
 
 
 @pytest.mark.parametrize(
@@ -369,7 +370,7 @@ def test_overview_puts_the_status_cards_in_the_first_row():
     first, second = dashboard.overview_html(summary).split('<div class="overview-cards">')[1:]
 
     assert "Betclic EV status" in first and "Superbet EV status" in first
-    assert "Positive EV" in second and "Checks" in second
+    assert "Positive EV" in second and "Performance" in second
 
 
 def test_overview_with_the_ev_filter_keeps_only_the_positive_ev_card():
@@ -379,7 +380,7 @@ def test_overview_with_the_ev_filter_keeps_only_the_positive_ev_card():
 
     assert page.count('<div class="overview-cards">') == 1
     assert "Positive EV" in page
-    assert "Checks" not in page and "EV status" not in page and "spacer" not in page
+    assert "Performance" not in page and "EV status" not in page and "spacer" not in page
     assert 'class="overview-card fit"' in page
 
 
@@ -619,10 +620,26 @@ def test_checks_card_shows_the_gap_in_minutes_past_a_minute():
     assert "1m05s Betclic gap" in overview_text(rows)
 
 
-def test_checks_card_starts_with_the_pinnacle_data_age():
-    checks = overview_text([row()]).split("Checks ")[1]
+def test_performance_card_has_no_pinnacle_data_age():
+    performance = overview_text([row()]).split("Performance ")[1]
 
-    assert checks.startswith("10 min 00 s Pinnacle data age")
+    assert performance.startswith("10.0s Betclic gap")
+    assert "Pinnacle data age" not in overview_text([row()])
+
+
+def test_session_bar_shows_the_start_to_the_minute_and_the_pinnacle_age():
+    summary = dashboard.session_summary([row()], {}, 0.02, NOW)
+    summary["status"] = "finished"
+    bar = dashboard.session_bar_html(summary, "session_20261105_151211_abcdef")
+    started = dashboard.session_started("session_20261105_151211_abcdef")
+
+    assert f">{started:%Y-%m-%d %H:%M}</span>" in bar
+    assert f"{started:%H:%M:%S}" not in bar
+    assert ">10 min 00 s</span> ago</span>" in bar
+
+
+def test_session_bar_without_prices_has_no_age():
+    assert "session-age" not in session_bar()
 
 
 def test_checks_card_drops_the_seconds_once_the_data_is_stale():
@@ -633,12 +650,15 @@ def test_checks_card_drops_the_seconds_once_the_data_is_stale():
     assert dashboard.pinnacle_age_text(3600 + 2 * 60) == "1 h 02 min"
 
 
-def test_checks_card_gives_the_browser_the_capture_time_to_count_from():
+def test_session_bar_gives_the_browser_the_capture_time_to_count_from():
     summary = dashboard.session_summary([row()], {}, 0.02, NOW)
+    summary["status"] = "finished"
     captured = (NOW - timedelta(minutes=10)).timestamp()
 
     assert summary["pinnacle_captured"] == captured
-    assert f'data-since="{captured}" data-stale-after="900"' in dashboard.overview_html(summary)
+    assert f'data-since="{captured}" data-stale-after="900"' in dashboard.session_bar_html(
+        summary, "session_20261105_151211_abcdef"
+    )
 
 
 def test_checks_card_says_whether_the_data_is_stale():
@@ -654,7 +674,6 @@ def test_checks_card_says_whether_the_data_is_stale():
 def test_checks_card_without_prices():
     text = overview_text([])
 
-    assert "-- Pinnacle data age" in text
     assert "-- Betclic gap" in text
     assert "-- Stale (over 15 min)" in text
 
