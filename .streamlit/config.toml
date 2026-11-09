@@ -10,3 +10,11 @@ gatherUsageStats = false
 
 [client]
 toolbarMode = "minimal"
+
+# Streamlit 1.67 changed the default dark theme to a brown-grey; pin the earlier navy
+# one so every machine looks the same whatever version it has.
+[theme]
+base = "dark"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#262730"
+textColor = "#fafafa"
