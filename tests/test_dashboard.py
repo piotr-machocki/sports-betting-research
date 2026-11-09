@@ -1304,3 +1304,17 @@ def test_pinnacle_age_and_stale_flag_are_green_while_fresh_and_red_once_stale(
 
     assert f'class="session-age {freshness}"' in bar
     assert f'class="value {freshness}" data-stale-flag=""' in dashboard.overview_html(summary)
+
+
+def test_calendar_shows_each_days_session_count_in_its_month_only():
+    days = {
+        date(2026, 11, 2): ["a", "b"],
+        date(2026, 11, 9): ["c"] * 96,
+        date(2026, 10, 31): ["d"],
+    }
+    style = dashboard.day_count_style(days, date(2026, 11, 1))
+
+    assert '.st-key-day_2026-11-02 button::after { content: "2"; }' in style
+    assert '.st-key-day_2026-11-09 button::after { content: "96"; }' in style
+    assert "2026-10-31" not in style
+    assert dashboard.day_count_style(days, date(2026, 12, 1)) == ""

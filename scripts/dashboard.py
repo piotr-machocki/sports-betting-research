@@ -1907,9 +1907,23 @@ PICKER_STYLE = """<style>
     min-width: 0;
 }
 .st-key-session_calendar button {
-    min-height: 2.1rem;
+    min-height: 2.7rem;
     min-width: 2.4rem;
     padding: 0;
+}
+.st-key-session_calendar button { position: relative; }
+.st-key-session_calendar button::after {
+    position: absolute;
+    top: 3px;
+    right: 4px;
+    font-size: 0.72rem;
+    line-height: 1;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: #e3b341;
+}
+.st-key-session_calendar [data-testid="stBaseButton-primary"]::after {
+    color: rgba(255, 255, 255, 0.85);
 }
 .st-key-session_calendar .weekday {
     text-align: center;
@@ -2001,6 +2015,19 @@ def book_pills(st: Any) -> list[str]:
     st.session_state[previous_key("books")] = chosen
 
     return chosen
+
+
+def day_count_style(days: dict[date, list[str]], month: date) -> str:
+    """Each day's session count in its button's top-right corner (PICKER_STYLE places
+    and colours it). A button cannot hold HTML, so CSS adds it through the class
+    Streamlit gives each keyed widget, st-key-<key>."""
+    rules = "".join(
+        f'.st-key-day_{day.isoformat()} button::after {{ content: "{len(runs)}"; }}\n'
+        for day, runs in sorted(days.items())
+        if runs and (day.year, day.month) == (month.year, month.month)
+    )
+
+    return f"<style>\n{rules}</style>" if rules else ""
 
 
 def picker_label(selected: str) -> str:
@@ -2100,6 +2127,10 @@ def render_session_picker(st: Any) -> None:
             state[DAY_KEY] = day
 
         with st.container(key="session_calendar"):
+            counts = day_count_style(days, month)
+            if counts:
+                st.html(counts)
+
             back, title, forward = st.columns([1, 5, 1], vertical_alignment="center")
             back.button("‹", key="month_back", on_click=move, args=(-1,),
                         disabled=month <= first_month, width="stretch")
