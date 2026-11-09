@@ -419,6 +419,13 @@ OVERVIEW_STYLE = """<style>
     font-variant-numeric: tabular-nums;
     font-weight: 600;
 }
+/* One line on a phone (user, 10 Nov 2026): no "Run on" label or year, tighter gaps. */
+@media (max-width: 700px) {
+    .session-bar { gap: 4px 12px; font-size: 13px; }
+    .session-status { padding: 0 9px; }
+    .session-fact .label, .session-fact .year { display: none; }
+    .session-age { margin-left: 0; }
+}
 .fresh { color: #1f9d55; }
 .stale { color: #d64545; }
 .overview { margin-bottom: 4px; }
@@ -1730,7 +1737,12 @@ def session_bar_html(summary: dict, session_id: str) -> str:
     TABLE_SCRIPT counts on each second."""
     colour = STATUS_COLOURS.get(summary["status"], OVERVIEW_BLUE)
     started = session_started(session_id)
-    run_on = session_id if started is None else started.strftime("%Y-%m-%d %H:%M")
+    # Phones hide the year (and the label), so the whole bar fits on one line.
+    run_on = (
+        html.escape(session_id)
+        if started is None
+        else f'<span class="year">{started:%Y-}</span>{started:%m-%d %H:%M}'
+    )
     age = summary.get("pinnacle_age")
     age_html = ""
 
@@ -1749,7 +1761,7 @@ def session_bar_html(summary: dict, session_id: str) -> str:
         f'<span class="session-status" style="--status: {colour}">'
         f"{html.escape(summary['status'].capitalize())}</span>"
         '<span class="session-fact"><span class="label">Run on</span>'
-        f'<span class="value">{html.escape(run_on)}</span></span>'
+        f'<span class="value">{run_on}</span></span>'
         f"{age_html}</div>"
     )
 
