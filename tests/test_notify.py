@@ -172,3 +172,17 @@ def test_run_failure_reads_the_session_status_or_the_log(tmp_path):
     later = datetime(2100, 1, 1, tzinfo=timezone.utc)  # session older than the run
     status.write_text('{"status": "failed"}')
     assert notify.run_failure(0, later, sessions, log) is None
+
+
+def test_backup_failure_alert_names_the_reason():
+    sent = []
+
+    assert notify.backup_failed("upload failed", at(4), sent.append) == "alert sent"
+    assert "Daily data backup failed" in sent[0] and "Reason: upload failed" in sent[0]
+
+
+def test_backup_failure_alert_never_raises():
+    def broken(text):
+        raise notify.TelegramError("HTTP 502")
+
+    assert notify.backup_failed("x", at(4), broken) == "alert failed: HTTP 502"

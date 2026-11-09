@@ -20,6 +20,7 @@ Usage:
     python scripts/notify.py --session-id ID --dry-run   # print what would be sent
     python scripts/notify.py [--session-id ID] [--min-ev 0.02]   # latest session by default
     python scripts/notify.py --after-run EXIT_CODE --run-started EPOCH  # scheduled_run.sh
+    python scripts/notify.py --backup-failed REASON                     # backup_data.sh
 """
 
 from __future__ import annotations
@@ -425,6 +426,32 @@ def notify_run(
     return {"status": status, "streak": state["streak"], "alerted": alerted}
 
 
+def backup_failed(reason: str, now: datetime | None = None, send_alert=None) -> str:
+    """backup_data.sh's hook: one alert per failed daily backup (so at most one a
+    day without a retry). Returns what happened; never raises."""
+    local, label = to_local(now or datetime.now(timezone.utc))
+    text = (
+        f"⚠️ Daily data backup failed at {local:%H:%M}{label}.\n"
+        f"Reason: {reason[:REASON_MAX_CHARS]}\n"
+        "The next backup includes everything this one missed."
+    )
+
+    if send_alert is None:
+        creds = credentials()
+        if creds is None:
+            return "no TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID in .env"
+        send_alert = lambda message: send(*creds, message)  # noqa: E731
+
+    try:
+        send_alert(text)
+    except TelegramError as exc:
+        return f"alert failed: {exc}"
+    except Exception as exc:  # noqa: BLE001
+        return f"alert failed: {type(exc).__name__}"
+
+    return "alert sent"
+
+
 def after_run(exit_code: int, started: datetime) -> None:
     """scheduled_run.sh's hook: prints one line, never raises."""
     try:
@@ -481,7 +508,15 @@ def main() -> None:
         "--run-started", type=float, metavar="EPOCH",
         help="With --after-run: when that run started (Unix seconds).",
     )
+    parser.add_argument(
+        "--backup-failed", metavar="REASON",
+        help="Send an alert that the daily backup failed (backup_data.sh).",
+    )
     args = parser.parse_args()
+
+    if args.backup_failed is not None:
+        print(f"Telegram: {backup_failed(args.backup_failed)}", flush=True)
+        return
 
     if args.after_run is not None:
         started = datetime.fromtimestamp(args.run_started or 0, timezone.utc)
