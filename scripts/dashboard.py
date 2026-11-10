@@ -66,7 +66,13 @@ from live_monitor import (  # noqa: E402
     stats_items,
     table_side,
 )
-from results_store import METHODS, REFERENCE_METHOD, ev_column, overround  # noqa: E402
+from results_store import (  # noqa: E402
+    BETCLIC_MIN_ODDS,
+    METHODS,
+    REFERENCE_METHOD,
+    ev_column,
+    overround,
+)
 
 REFRESH_SECONDS = 1
 IDLE_REFRESH_SECONDS = 10
@@ -489,6 +495,14 @@ OVERVIEW_STYLE = """<style>
     line-height: 16px;
     color: color-mix(in srgb, currentColor 65%, transparent);
 }
+.track-rows {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 6px 16px;
+}
+.track-book { font-weight: 600; }
+.overview-empty { color: color-mix(in srgb, currentColor 65%, transparent); }
 </style>"""
 
 # Installed once. Streamlit runs a script before inserting the HTML sent with it, and
@@ -1139,6 +1153,168 @@ def records_cache() -> dict:
     return {}
 
 
+# ------------------------------------------------------------ track record ---
+
+
+def session_flags(session_id: str, cache: dict) -> dict[str, list[dict]]:
+    """Each book's records in a session with an EV of at least 0 (the slider's lowest
+    minimum), read again only when the file changed. Only these are kept, because
+    every session is held at once. A failed read keeps the last good ones."""
+    path = session_csv(session_id)
+
+    try:
+        stat = path.stat()
+    except OSError:
+        return {}
+
+    signature = (stat.st_mtime_ns, stat.st_size)
+    held = cache.get(session_id)
+
+    if held and held[0] == signature:
+        return held[1]
+
+    rows = read_session_rows(path)
+
+    if rows is None:
+        return held[1] if held else {}
+
+    flags = {
+        book: [
+            record
+            for record in table_records(rows, [book])
+            if record["Best EV"] is not None and record["Best EV"] >= 0
+        ]
+        for book in BOOKS
+    }
+    cache[session_id] = (signature, flags)
+
+    return flags
+
+
+def first_flags(
+    records: list[dict], book: str, min_ev: float, sightings: dict
+) -> list[dict]:
+    """Each match once, from the first (oldest) record that reached min_ev before the
+    match's latest known start, so it could have been bet at that price. Betclic
+    prices below its minimum odds are not bets."""
+    import evaluate_ev
+
+    seen, first = set(), []
+
+    for record in records:
+        key = match_key(record)
+
+        if key in seen or record["Best EV"] < min_ev or not record["_price"]:
+            continue
+
+        if book == "Betclic" and record["_price"] < BETCLIC_MIN_ODDS:
+            continue
+
+        pair = evaluate_ev.match_key(record["Bet on"], record["Opponent"], record["Tournament"])
+        start = known_start(record, sightings.get(pair, []))
+        captured = evaluate_ev.parse_time(record["_captured_at"])
+
+        if start and captured and captured >= start:
+            continue
+
+        seen.add(key)
+        first.append(record)
+
+    return first
+
+
+def track_stats(flags: list[dict]) -> dict:
+    """One book's record of first flags with Result and CLV (add_outcomes). Profit
+    counts completed matches only, stake 1 at the flagged price (Superbet's after
+    tax): how a retirement or walkover settles is not checked, as in evaluate_ev."""
+    settled = [record for record in flags if record["Result"] in ("Won", "Lost")]
+    profits = [
+        record["_price"] - 1 if record["Result"] == "Won" else -1.0 for record in settled
+    ]
+    clvs = [record["CLV"] for record in flags if record["CLV"] is not None]
+    # EV = price x fair - 1 at the flag, for either book (a Superbet row without a
+    # Betclic match has no probability column).
+    fair = [(1 + record["Best EV"]) / record["_price"] for record in settled]
+
+    def mean(values: list[float]) -> float | None:
+        return statistics.mean(values) if values else None
+
+    return {
+        "signals": len(flags),
+        "won": sum(profit > 0 for profit in profits),
+        "lost": sum(profit < 0 for profit in profits),
+        "pending": sum(record["Result"] == "Pending" for record in flags),
+        "no_result": sum(record["Result"] == "No result" for record in flags),
+        "other": sum(record["Result"].endswith(")") for record in flags),
+        "win_rate": mean([float(profit > 0) for profit in profits]),
+        "expected": mean(fair),
+        "roi": mean(profits),
+        "roi_margin": (
+            1.96 * statistics.pstdev(profits) / len(profits) ** 0.5
+            if len(profits) > 1
+            else None
+        ),
+        "units": sum(profits),
+        "ev": mean([record["Best EV"] for record in flags]),
+        "clv": mean(clvs),
+        "clv_positive": mean([float(clv > 0) for clv in clvs]),
+        "clv_count": len(clvs),
+    }
+
+
+def settled_outcomes(flags: list[dict], sources: dict, now: datetime, memo: dict) -> list[dict]:
+    """add_outcomes, keeping each settled match's Result and CLV until the sources
+    change: linking a result costs about 50 ms a match on the VM, and every new row
+    of a run reruns the page. Pending ones are worked out again each time."""
+    signature = sources.get("signature")
+
+    if memo.get("signature") != signature:
+        memo.clear()
+        memo["signature"] = signature
+
+    def key(flag: dict) -> tuple:
+        return match_key(flag), flag["_captured_at"], flag["_price"]
+
+    fresh = {}
+
+    for record in add_outcomes([flag for flag in flags if key(flag) not in memo], sources, now):
+        (fresh if record["Result"] == "Pending" else memo)[key(record)] = record
+
+    return [memo.get(key(flag)) or fresh[key(flag)] for flag in flags]
+
+
+def track_record(
+    sessions: list[str],
+    cache: dict,
+    sources: dict,
+    min_ev: float,
+    now: datetime,
+    books: list[str] = BOOKS,
+) -> dict[str, dict]:
+    """Each book shown with at least one first flag -> track_stats. sessions are
+    newest first, as list_sessions gives them."""
+    oldest_first = [session_flags(session_id, cache) for session_id in reversed(sessions)]
+    record = {}
+
+    for book in BOOKS:
+        if book not in books:
+            continue
+
+        records = [flag for flags in oldest_first for flag in flags.get(book, [])]
+        flags = first_flags(records, book, min_ev, sources["sightings"])
+
+        if flags:
+            memo = cache.setdefault(("outcomes", book), {})
+            record[book] = track_stats(settled_outcomes(flags, sources, now, memo))
+
+    return record
+
+
+def track_cache() -> dict:
+    """Held by st.cache_resource, so every tab and rerun shares one."""
+    return {}
+
+
 def filter_records(
     records: list[dict],
     with_ev: bool = False,
@@ -1674,6 +1850,107 @@ def overview_positive(stats: dict, books: list[str] = BOOKS) -> str:
     return f'<div class="overview-tiles">{"".join(tiles)}</div>'
 
 
+def signed_css(value: float | None) -> str:
+    """Green above 0, red below, like Result."""
+    if not value:
+        return ""
+
+    return EV_GREEN.split(";")[0] if value > 0 else EV_RED
+
+
+def overview_track(record: dict[str, dict]) -> str:
+    """One row of tiles per book. CLV first: it settles in a day, while ROI needs
+    hundreds of bets before its range stops covering 0."""
+
+    def pct(value: float | None, digits: int = 1, signed: bool = True) -> str:
+        if value is None:
+            return "--"
+
+        return f"{value:+.{digits}%}" if signed else f"{value:.0%}"
+
+    rows = []
+
+    for book, stats in record.items():
+        expected = stats["expected"]
+        margin = stats["roi_margin"]
+        open_text = f"{stats['pending']} pending, {stats['no_result']} with no result"
+        if stats["other"]:
+            open_text += f", {stats['other']} retired or walkover (not in W-L or ROI)"
+
+        tiles = [
+            overview_tile(
+                "Signals",
+                str(stats["signals"]),
+                f"Matches flagged, each once, at its first flag: {open_text}",
+            ),
+            overview_tile(
+                "Avg CLV",
+                pct(stats["clv"]),
+                f"Mean CLV of the {stats['clv_count']} matches that have started: the "
+                "flagged price against Pinnacle's last power-devigged price before the "
+                "start. Above 0 means the price beat the close.",
+                signed_css(stats["clv"]),
+            ),
+            overview_tile(
+                "CLV > 0",
+                pct(stats["clv_positive"], signed=False),
+                f"Share of the {stats['clv_count']} started matches whose price beat the close",
+            ),
+            overview_tile(
+                "Won-Lost",
+                f"{stats['won']}-{stats['lost']}",
+                "Completed matches only",
+            ),
+            overview_tile(
+                "Win rate"
+                + (f" (exp. {expected:.0%})" if expected is not None else ""),
+                pct(stats["win_rate"], signed=False),
+                "Won share of completed matches; expected = mean of Pinnacle's "
+                "power-devigged probability for the side bet",
+            ),
+            overview_tile(
+                "ROI" + (f" ±{margin:.0%}" if margin is not None else ""),
+                pct(stats["roi"]),
+                "Profit per stake of 1 on completed matches, with its 95% range. "
+                "While the range covers 0 the results prove nothing either way.",
+                signed_css(stats["roi"]),
+            ),
+            overview_tile(
+                "Units",
+                f"{stats['units']:+.2f}",
+                "Total profit at a stake of 1 per completed match",
+                signed_css(stats["units"]),
+            ),
+            overview_tile(
+                "Avg EV",
+                pct(stats["ev"]),
+                "Mean EV at the first flag, what the prices promised",
+            ),
+        ]
+        rows.append(
+            f'<div class="track-book">{html.escape(book)}</div>'
+            f'<div class="overview-tiles">{"".join(tiles)}</div>'
+        )
+
+    return f'<div class="track-rows">{"".join(rows)}</div>'
+
+
+def track_card(record: dict[str, dict], min_ev: float, books: list[str] = BOOKS) -> str:
+    """The Track record card, for overview_html's last row."""
+    limit = f", Betclic odds ≥ {BETCLIC_MIN_ODDS:.2f}" if "Betclic" in books else ""
+    heading = f"Track record (all sessions, first flag at EV ≥ {min_ev:.1%}{limit})"
+    body = (
+        overview_track(record)
+        if record
+        else '<div class="overview-empty">No match has reached this EV before its start yet.</div>'
+    )
+
+    return (
+        '<div class="overview-card">'
+        f'<div class="overview-heading">{html.escape(heading)}</div>{body}</div>'
+    )
+
+
 def pinnacle_age_text(age: float) -> str:
     """Seconds stop mattering once the prices are stale. TABLE_SCRIPT's ageText keeps
     this format going between server ticks."""
@@ -1771,8 +2048,10 @@ def overview_html(
     ev_only: bool = False,
     ev_stats: dict | None = None,
     books: list[str] = BOOKS,
+    track: str = "",
 ) -> str:
-    """The stats of session_summary as two rows of cards. Bars, not pies: the counts are
+    """The stats of session_summary as two rows of cards, then track (track_card,
+    over all sessions) on its own row when given. Bars, not pies: the counts are
     often close together (99 and 105 of 110), which pie slices do not show. ev_only
     (the EV filter is on) keeps only the Positive EV card, as narrow as its tiles,
     counted over ev_stats (all sessions) when given."""
@@ -1800,7 +2079,9 @@ def overview_html(
 
         return (
             '<section class="overview"><div class="overview-title">Overview</div>'
-            f'<div class="overview-cards">{positive}</div></section>'
+            f'<div class="overview-cards">{positive}</div>'
+            + (f'<div class="overview-cards">{track}</div>' if track else "")
+            + "</section>"
         )
 
     coverage = [
@@ -1847,7 +2128,9 @@ def overview_html(
     return (
         '<section class="overview"><div class="overview-title">Overview</div>'
         f'<div class="overview-cards">{"".join(coverage)}</div>'
-        f'<div class="overview-cards">{"".join(results)}</div></section>'
+        f'<div class="overview-cards">{"".join(results)}</div>'
+        + (f'<div class="overview-cards">{track}</div>' if track else "")
+        + "</section>"
     )
 
 
@@ -1944,8 +2227,10 @@ def render_header(
     ev_only: bool = False,
     ev_stats: dict | None = None,
     books: list[str] = BOOKS,
+    track: str = "",
 ) -> None:
-    """Runs every second, so it stays cheap. rows belong to table_session."""
+    """Runs every second, so it stays cheap: track is made by the full run.
+    rows belong to table_session."""
     info = session_info(session_id)
     now = datetime.now(timezone.utc)
     waiting = table_session != session_id
@@ -1969,7 +2254,7 @@ def render_header(
                 "The run may have stopped without updating its status."
             )
 
-    st.html(overview_html(summary, ev_only, ev_stats, books))
+    st.html(overview_html(summary, ev_only, ev_stats, books, track))
 
     if waiting:
         age = session_summary(rows, {}, min_ev, now)["pinnacle_age"]
@@ -2462,6 +2747,11 @@ Pinnacle's price is fair, and it is measured against results as they come in
   its oldest Pinnacle prices were captured (green, red once over 15 minutes).
 * **Performance**: how long after the Pinnacle prices each bookmaker's prices were
   read, and whether the Pinnacle prices are stale (over 15 minutes old).
+* **Track record**: every match that reached the minimum EV before its start, counted
+  once at its first flag and price (Betclic only from odds of 1.14, the lowest it takes
+  for a single). Its average CLV and share above 0 say first whether the edge is real;
+  win rate, ROI and units need many more bets, and while ROI's 95% range covers 0 the
+  results show nothing either way.
 """
 
 
@@ -2558,7 +2848,7 @@ def main() -> None:
                 "Show all matches with EV",
                 key="with_ev",
                 help="Only matches whose best EV is at least the minimum below. "
-                "The overview then keeps only its Positive EV card.",
+                "The overview then keeps only its Positive EV and Track record cards.",
             )
             scope = st.radio(
                 "Sessions",
@@ -2577,7 +2867,7 @@ def main() -> None:
                 step=0.1,
                 format="%.1f%%",
                 disabled=not with_ev,
-                help="Green from here up.",
+                help="Green from here up. The Track record counts matches from here up.",
             )
             show_result = st.checkbox(
                 "Show result",
@@ -2632,11 +2922,18 @@ def main() -> None:
     if filters["all_sessions"]:
         ev_stats = positive_ev_stats(all_records, filters["min_ev"])
 
-    outcomes = None
-    if show_clv or show_result:
-        cache = st.cache_resource(show_spinner=False)(outcomes_cache)()
-        with st.spinner("Reading Pinnacle snapshots and match results..."):
-            outcomes = load_outcome_sources(cache)
+    # The track record needs the results and closing prices on every page.
+    cache = st.cache_resource(show_spinner=False)(outcomes_cache)()
+    with st.spinner("Reading Pinnacle snapshots and match results..."):
+        sources = load_outcome_sources(cache)
+    outcomes = sources if show_clv or show_result else None
+
+    cache = st.cache_resource(show_spinner=False)(track_cache)()
+    with st.spinner("Reading every session for the track record..."):
+        record = track_record(
+            list_sessions(), cache, sources, filters["min_ev"], datetime.now(timezone.utc), books
+        )
+    track = track_card(record, filters["min_ev"], books)
 
     @st.fragment(run_every=REFRESH_SECONDS if running else IDLE_REFRESH_SECONDS)
     def live_header() -> None:
@@ -2661,6 +2958,7 @@ def main() -> None:
                 filters["with_ev"],
                 ev_stats,
                 books,
+                track,
             )
 
     # Header first: it is quick, and the table can take a second or two.

@@ -1339,3 +1339,109 @@ def test_calendar_shows_each_days_session_count_in_its_month_only():
     assert '.st-key-day_2026-11-09 button::after { content: "96"; }' in style
     assert "2026-10-31" not in style
     assert dashboard.day_count_style(days, date(2026, 12, 1)) == ""
+
+
+# ---------- track record ----------
+
+
+def track_for(tmp_path, monkeypatch, sessions: dict, min_ev=0.02, books=dashboard.BOOKS):
+    """sessions: id -> rows, oldest first, like run order."""
+    monkeypatch.setattr(dashboard, "SESSIONS_DIR", tmp_path)
+    monkeypatch.setattr(dashboard, "read_session_rows", lambda path: sessions[path.stem])
+
+    for session_id in sessions:
+        (tmp_path / f"{session_id}.csv").write_text("x")
+
+    newest_first = list(reversed(sessions))
+    return dashboard.track_record(newest_first, {}, outcome_sources(), min_ev, AFTER_START, books)
+
+
+def test_track_record_counts_each_match_once_per_book_at_its_first_flag(tmp_path, monkeypatch):
+    record = track_for(tmp_path, monkeypatch, {
+        "session_20261103_170000_aaaaaa": [row(**BOTH_BOOKS)],
+        # Later and lower: the first flag's price is the one counted.
+        "session_20261103_180000_bbbbbb": [row(**BOTH_BOOKS, betclic_odds_for_pin_p2="2.0", ev2="0.05",
+                                               pinnacle_captured_at="2026-11-03T18:50:00+00:00")],
+    })
+
+    betclic, superbet = record["Betclic"], record["Superbet"]
+    # Betclic bets Bea Beta at 2.2 (won); Superbet bets Ann Alpha at 2.5 after tax (lost).
+    assert (betclic["signals"], betclic["won"], betclic["lost"]) == (1, 1, 0)
+    assert betclic["units"] == pytest.approx(1.2) and betclic["ev"] == pytest.approx(0.144)
+    assert betclic["expected"] == pytest.approx(1.144 / 2.2) and betclic["clv"] is not None
+    assert (superbet["won"], superbet["lost"], superbet["units"]) == (0, 1, -1.0)
+    assert betclic["roi_margin"] is None  # one bet has no range
+
+
+def test_track_record_skips_low_betclic_odds_late_flags_and_books_off(tmp_path, monkeypatch):
+    low = row(betclic_odds_for_pin_p2="1.13", ev2="0.05")
+    late = row(pinnacle_captured_at="2026-11-03T20:30:00+00:00")
+    assert track_for(tmp_path, monkeypatch, {"session_20261103_170000_aaaaaa": [low]}) == {}
+    assert track_for(tmp_path, monkeypatch, {"session_20261103_170000_aaaaaa": [late]}) == {}
+
+    # A later flag at a bettable price still counts.
+    record = track_for(tmp_path, monkeypatch, {
+        "session_20261103_170000_aaaaaa": [low],
+        "session_20261103_180000_bbbbbb": [row(betclic_odds_for_pin_p2="1.14", ev2="0.03")],
+    })
+    assert record["Betclic"]["signals"] == 1 and record["Betclic"]["units"] == pytest.approx(0.14)
+
+    only_betclic = track_for(
+        tmp_path, monkeypatch, {"session_20261103_170000_aaaaaa": [row(**BOTH_BOOKS)]},
+        books=["Betclic"],
+    )
+    assert list(only_betclic) == ["Betclic"]
+
+
+def test_track_stats_range_and_open_matches():
+    def flag(result, price=2.0, fair=0.5, clv=None):
+        return {"Result": result, "_price": price, "Fair prob": fair, "CLV": clv, "Best EV": 0.03}
+
+    stats = dashboard.track_stats([
+        flag("Won", clv=0.04), flag("Lost", clv=-0.02), flag("Won", clv=0.01),
+        flag("Pending"), flag("No result"), flag("Won (retired)", clv=0.03),
+    ])
+
+    assert (stats["signals"], stats["won"], stats["lost"]) == (6, 2, 1)
+    assert (stats["pending"], stats["no_result"], stats["other"]) == (1, 1, 1)
+    assert stats["roi"] == pytest.approx(1 / 3) and stats["units"] == pytest.approx(1.0)
+    assert stats["roi_margin"] == pytest.approx(1.96 * 0.9428090 / 3 ** 0.5, rel=1e-5)
+    assert stats["clv_count"] == 4 and stats["clv_positive"] == 0.75
+
+
+def test_track_card_shows_each_book_and_says_when_nothing_qualified():
+    stats = dashboard.track_stats([
+        {"Result": "Won", "_price": 2.0, "Fair prob": 0.5, "CLV": 0.05, "Best EV": 0.03},
+        {"Result": "Lost", "_price": 2.0, "Fair prob": 0.5, "CLV": -0.01, "Best EV": 0.03},
+    ])
+    page = dashboard.track_card({"Betclic": stats}, 0.02)
+
+    assert "first flag at EV ≥ 2.0%, Betclic odds ≥ 1.14" in page
+    assert '<div class="track-book">Betclic</div>' in page
+    for text in (">1-1<", ">+2.0%<", ">50%<", "Win rate (exp. 52%)", "ROI ±139%", ">+0.00<"):
+        assert text in page
+    assert "Betclic odds" not in dashboard.track_card({}, 0.02, ["Superbet"])
+    assert "No match has reached this EV" in dashboard.track_card({}, 0.02)
+
+    summary = dashboard.session_summary([row()], {"pinnacle": {"matches": 1}}, 0.02, NOW)
+    for ev_only in (False, True):
+        overview = dashboard.overview_html(summary, ev_only, track="<p>TRACK</p>")
+        assert overview.endswith('<div class="overview-cards"><p>TRACK</p></div></section>')
+
+
+def test_settled_outcomes_are_kept_until_the_sources_change(monkeypatch):
+    flags = dashboard.table_records([row()])
+    sources = {**outcome_sources(), "signature": 1}
+    memo, calls = {}, []
+    real = dashboard.add_outcomes
+    monkeypatch.setattr(dashboard, "add_outcomes", lambda records, *a: calls.append(len(records)) or real(records, *a))
+
+    assert dashboard.settled_outcomes(flags, sources, AFTER_START, memo)[0]["Result"] == "Won"
+    assert dashboard.settled_outcomes(flags, sources, AFTER_START, memo)[0]["Result"] == "Won"
+    assert calls == [1, 0]
+
+    # Pending is worked out again; new sources drop what was kept.
+    before = datetime(2026, 11, 3, 19, tzinfo=timezone.utc)
+    dashboard.settled_outcomes(flags, {**sources, "signature": 2}, before, memo)
+    dashboard.settled_outcomes(flags, {**sources, "signature": 2}, before, memo)
+    assert calls == [1, 0, 1, 1]
