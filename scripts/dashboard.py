@@ -503,6 +503,30 @@ OVERVIEW_STYLE = """<style>
     gap: 6px 16px;
 }
 .track-book { font-weight: 600; }
+/* Phones (user, 11 Nov 2026: the wrapped tiles blended together): each book gets a
+   header line over its own grid of boxed tiles, three a row, so every value keeps its label. */
+@media (max-width: 700px) {
+    .track-rows { display: block; }
+    .track-book {
+        margin: 12px 0 6px;
+        padding-bottom: 4px;
+        border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+        font-size: 14px;
+    }
+    .track-book:first-child { margin-top: 2px; }
+    .track-rows .overview-tiles {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+    }
+    .track-rows .overview-tile {
+        padding: 5px 8px;
+        border-radius: 6px;
+        background-color: rgba(128, 128, 128, 0.1);
+    }
+    .track-rows .overview-tile .value { font-size: 18px; line-height: 24px; }
+    .track-rows .overview-tile .label { font-size: 11px; line-height: 14px; }
+}
 .overview-empty { color: color-mix(in srgb, currentColor 65%, transparent); }
 </style>"""
 
