@@ -194,3 +194,30 @@ def test_backup_failure_alert_never_raises():
         raise notify.TelegramError("HTTP 502")
 
     assert notify.backup_failed("x", at(4), broken) == "alert failed: HTTP 502"
+
+
+def test_sent_memory_keeps_price_and_reads_old_entries(tmp_path, monkeypatch):
+    sent_path = tmp_path / "sent.json"
+    sent_path.write_text(
+        '{"Old One|Old Two|ATP Paris - R1|Superbet|1": "2026-11-07T10:00:00+00:00"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(notify, "credentials", lambda: ("token", "chat"))
+    monkeypatch.setattr(notify.live_monitor, "read_session_rows", lambda path: [row()])
+    monkeypatch.setattr(notify, "send", lambda *_: None)
+    notify.notify_session("s", now=NOW, sent_path=sent_path)
+
+    alerts = {alert["player"]: alert for alert in notify.sent_alerts(sent_path)}
+
+    new = alerts["Bea Beta"]
+    assert (new["book"], new["price"], new["ev"], new["at"]) == ("Betclic", 2.25, 0.08, NOW)
+    assert (new["player1"], new["player2"], new["tournament"]) == ("Ann Alpha", "Bea Beta", "WTA Finals - R1")
+
+    old = alerts["Old One"]
+    assert (old["book"], old["price"], old["ev"]) == ("Superbet", None, None)
+    assert old["at"] == datetime(2026, 11, 7, 10, tzinfo=timezone.utc)
+
+    # Old entries still expire.
+    later = datetime(2026, 11, 10, 12, tzinfo=timezone.utc)
+    notify.save_sent(notify.load_sent(sent_path), later, sent_path)
+    assert [alert["player"] for alert in notify.sent_alerts(sent_path)] == ["Bea Beta"]

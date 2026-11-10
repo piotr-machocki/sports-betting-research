@@ -3,8 +3,9 @@
 run_once.py calls run_step() after the session is saved. It reads the session's
 rows the way the monitor and dashboard do (both books), keeps prematch matches
 whose EV reaches the minimum and that have not been sent before, and sends one
-message per match. Sent bets are kept in data/notify/sent.json, so a match is
-announced once per book and side, not every run. A failed send is not recorded,
+message per match. Sent bets are kept in data/notify/sent.json (time, price and
+EV), so a match is announced once per book and side, not every run, however its EV
+moves later; the dashboard marks those matches. A failed send is not recorded,
 so the next run tries again. No retry, and nothing here can fail a run.
 
 With --after-run, called by scheduled_run.sh after every run, it instead counts
@@ -213,7 +214,9 @@ def message(bet: dict) -> str:
 
 # --------------------------------------------------------------- sent memory ---
 
-def load_sent(path: Path = SENT_FILE) -> dict[str, str]:
+def load_sent(path: Path = SENT_FILE) -> dict[str, dict | str]:
+    """Key -> {"at", "price", "ev"}; entries written before 11 Nov 2026 are only
+    the time (a string)."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
@@ -221,17 +224,48 @@ def load_sent(path: Path = SENT_FILE) -> dict[str, str]:
         return {}
 
 
-def save_sent(sent: dict[str, str], now: datetime, path: Path = SENT_FILE) -> None:
+def sent_entry(bet: dict, now: datetime) -> dict:
+    # The price as the book shows it (Superbet's before tax), the one bet in the app.
+    return {"at": now.isoformat(), "price": bet["price"], "ev": bet["ev"]}
+
+
+def sent_at(entry: dict | str) -> datetime | None:
+    return live_monitor.parse_timestamp(entry.get("at") if isinstance(entry, dict) else entry)
+
+
+def save_sent(sent: dict[str, dict | str], now: datetime, path: Path = SENT_FILE) -> None:
     cutoff = now - timedelta(days=SENT_KEEP_DAYS)
-    kept = {
-        key: stamp
-        for key, stamp in sent.items()
-        if (live_monitor.parse_timestamp(stamp) or now) >= cutoff
-    }
+    kept = {key: entry for key, entry in sent.items() if (sent_at(entry) or now) >= cutoff}
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(kept, indent=1, ensure_ascii=False), encoding="utf-8")
     tmp.replace(path)
+
+
+def sent_alerts(path: Path = SENT_FILE) -> list[dict]:
+    """Every alert still remembered, one dict per bet_key, for the dashboard."""
+    alerts = []
+
+    for key, entry in load_sent(path).items():
+        parts = key.split("|")
+
+        if len(parts) != 5 or parts[4] not in ("1", "2"):
+            continue
+
+        player1, player2, tournament, book, side = parts
+        details = entry if isinstance(entry, dict) else {}
+        alerts.append({
+            "player1": player1,
+            "player2": player2,
+            "tournament": tournament,
+            "book": book,
+            "player": player1 if side == "1" else player2,
+            "at": sent_at(entry),
+            "price": number(details.get("price")),
+            "ev": number(details.get("ev")),
+        })
+
+    return alerts
 
 
 # ---------------------------------------------------------------------- step ---
@@ -273,7 +307,7 @@ def notify_session(
             error = str(exc)
             break  # the rest go next run
 
-        sent[bet_key(bet)] = now.isoformat()
+        sent[bet_key(bet)] = sent_entry(bet, now)
         count += 1
 
     if count:

@@ -1489,3 +1489,44 @@ def test_track_loader_shows_a_failure_on_the_card(monkeypatch):
     assert "Could not work out the track record: OSError: disk gone" in dashboard.track_card(
         None, 0.02, error=loader.error
     )
+
+
+def alert(player, book="Betclic", price=3.9, hour=23):
+    return {
+        "player1": "Ann Alpha",
+        "player2": "Bea Beta",
+        "tournament": "WTA Chennai - R16",
+        "book": book,
+        "player": player,
+        "at": datetime(2026, 11, 2, hour, 15, tzinfo=timezone.utc),
+        "price": price,
+        "ev": 0.26 if price else None,
+    }
+
+
+def test_alerted_matches_name_the_first_alert():
+    records = dashboard.table_records([row()])  # Bet on Bea Beta
+
+    assert dashboard.add_alerts(records, []) == records
+    other_match = {**alert("Bea Beta"), "tournament": "WTA Chennai - QF"}
+    assert dashboard.add_alerts(records, [other_match]) == records
+
+    [record] = dashboard.add_alerts(
+        records, [alert("Bea Beta", "Superbet", 3.75, hour=23), alert("Bea Beta", price=3.9, hour=22)]
+    )
+    assert list(record)[:3] == ["Bet on", "Opponent", "Alerted"]
+    time = dashboard.alert_time(datetime(2026, 11, 2, 22, 15, tzinfo=timezone.utc))
+    assert record["Alerted"] == f"🔔 Betclic 3.90, Superbet 3.75 · {time}"
+    assert "EV +26.0%" in record["_title Alerted"] and "already bet" in record["_title Alerted"]
+    assert dashboard.cell_css("Alerted", record["Alerted"], False, 0.02) == dashboard.EV_AMBER
+
+    # An alert on the other player is a different bet, shown dimmed; no price in
+    # entries written before prices were kept.
+    [record] = dashboard.add_alerts(records, [alert("Ann Alpha", price=None)])
+    assert record["Alerted"].startswith("🔔 other side: Betclic · ")
+    assert dashboard.cell_css("Alerted", record["Alerted"], False, 0.02) == dashboard.DIMMED
+
+    page = dashboard.table_html(dashboard.add_alerts(records, [alert("Bea Beta")]), 0.02, False)
+    assert "<th" in page and ">Alerted</th>" in page and "🔔 Betclic 3.90" in page
+    cards = dashboard.cards_html(dashboard.add_alerts(records, [alert("Bea Beta")]), 0.02, False)
+    assert "🔔 Betclic 3.90" in cards

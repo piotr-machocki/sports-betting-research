@@ -156,6 +156,7 @@ TEXT_COLUMNS = {
     "Match conf",
     "Session",
     "Result",
+    "Alerted",
 }
 
 # Files behind the CLV and Result columns: Pinnacle's snapshots (every match, so
@@ -1143,6 +1144,92 @@ def add_outcomes(
     return out
 
 
+ALERT_BELL = "🔔"
+ALERT_OTHER_SIDE = f"{ALERT_BELL} other side:"
+
+
+def alert_time(moment: datetime | None) -> str:
+    if moment is None:
+        return "time unknown"
+
+    local = moment.astimezone()
+    return f"{local.day} {local:%b %H:%M}"
+
+
+def alert_text(alerts: list[dict], same_side: bool) -> tuple[str, str]:
+    """('🔔 Betclic 3.90, Superbet 3.75 · 10 Nov 00:15', tooltip) for one side's
+    alerts, timed by the first."""
+    alerts = sorted(alerts, key=lambda alert: alert["at"] or datetime.max.replace(tzinfo=timezone.utc))
+    prices = ", ".join(
+        f"{alert['book']} {alert['price']:.2f}" if alert["price"] else alert["book"]
+        for alert in alerts
+    )
+    when = alert_time(alerts[0]["at"])
+    prefix = ALERT_BELL if same_side else ALERT_OTHER_SIDE
+    sent = "; ".join(
+        f"{alert['book']}"
+        + (f" {alert['price']:.2f}" if alert["price"] else "")
+        + (f" (EV {alert['ev']:+.1%})" if alert["ev"] is not None else "")
+        + f" at {alert_time(alert['at'])}"
+        for alert in alerts
+    )
+    title = (
+        f"Telegram alert already sent on {alerts[0]['player']}: {sent}. "
+        + (
+            "Treat it as already bet; a later EV on this side is the same bet again."
+            if same_side
+            else "That was the other player, so this row is a different bet."
+        )
+    )
+
+    return f"{prefix} {prices} · {when}", title
+
+
+def add_alerts(records: list[dict], alerts: list[dict]) -> list[dict]:
+    """An Alerted column after the names (and Session) for matches a Telegram alert
+    was sent for (notify.sent_alerts), naming the first alert's price and time.
+    Records unchanged when none of them was alerted."""
+    by_match: dict[tuple, list[dict]] = {}
+
+    for alert in alerts:
+        key = frozenset((alert["player1"], alert["player2"])), alert["tournament"]
+        by_match.setdefault(key, []).append(alert)
+
+    if not any(match_key(record) in by_match for record in records):
+        return records
+
+    out = []
+
+    for record in records:
+        found = by_match.get(match_key(record), [])
+        same = [alert for alert in found if alert["player"] == record["Bet on"]]
+        other = [alert for alert in found if alert["player"] != record["Bet on"]]
+        text, title = alert_text(same or other, bool(same)) if found else ("", None)
+        anchor = "Session" if "Session" in record else "Opponent"
+        new = {}
+
+        for column, value in record.items():
+            new[column] = value
+
+            if column == anchor:
+                new["Alerted"] = text
+                new["_title Alerted"] = title
+
+        out.append(new)
+
+    return out
+
+
+def load_alerts() -> list[dict]:
+    """The Telegram alerts still in notify's memory (3 days); none if it cannot be read."""
+    try:
+        import notify
+
+        return notify.sent_alerts()
+    except Exception:  # noqa: BLE001 - the table must show without it
+        return []
+
+
 def outcomes_cache() -> dict:
     """Held by st.cache_resource, so every tab and rerun shares one."""
     return {}
@@ -1634,6 +1721,9 @@ def cell_css(column: str, value: Any, dimmed: bool, min_ev: float) -> str:
     if column == "Result" and value:
         return result_css(value)
 
+    if column == "Alerted" and value:
+        return DIMMED if str(value).startswith(ALERT_OTHER_SIDE) else EV_AMBER
+
     if dimmed:
         return DIMMED
 
@@ -1767,7 +1857,7 @@ def cards_html(
 
         extras = []
 
-        for column in ("Result", "CLV", "Session"):
+        for column in ("Alerted", "Result", "CLV", "Session"):
             if column not in record:
                 continue
 
@@ -2238,6 +2328,9 @@ COLUMN_HELP = {
     "started; hover a value for how close to the start that price was.",
     "Result": "Whether the Bet on player won (Matchstat results). Pending until the "
     "match is played and the results cover its day; retirements and walkovers are named.",
+    "Alerted": "A Telegram alert was already sent for this match: the book, price "
+    "and time of the first one. On the Bet on side it is the bet you already placed, "
+    "so a later EV here is not a new bet. Hover for EV and every book.",
     "Session": "The run every value in the row is from. With the EV filter over all "
     "sessions, the latest run that priced this match at or above the minimum EV.",
     "Match conf": "How well the Betclic match fit the Pinnacle names.",
@@ -2424,6 +2517,7 @@ def render_table(
             result=filters["show_result"],
         )
 
+    shown = add_alerts(shown, load_alerts())
     betclic = "Betclic" in books
     box.html(
         table_html(shown, min_ev, superbet, betclic)
@@ -2827,6 +2921,10 @@ Pinnacle's price is fair, and it is measured against results as they come in
 * **Result**: Won or Lost for the Bet on side, once the match results include it.
 * **CLV** (closing line value): the price taken against Pinnacle's last fair price
   before the start. Consistently positive CLV is the usual sign that an edge is real.
+* **Alerted** (🔔): a Telegram alert was already sent for this match, with the
+  first alert's book, price and time. On the Bet on side that is the bet already
+  placed, so a later, smaller EV there is not a new bet; an alert on the other
+  player is shown greyed out.
 * **Session bar**: the run's status, when it started and how long ago
   its oldest Pinnacle prices were captured (green, red once over 15 minutes).
 * **Performance**: how long after the Pinnacle prices each bookmaker's prices were
