@@ -43,6 +43,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import live_monitor  # noqa: E402
 
+from results_store import BETCLIC_MIN_ODDS  # noqa: E402
+
 load_dotenv(ROOT / ".env")
 
 API = "https://api.telegram.org/bot{token}/{method}"
@@ -142,13 +144,19 @@ def candidates(rows: list[dict], min_ev: float, now: datetime) -> list[dict]:
             if evs[side] < min_ev:
                 continue
 
+            price = number(row.get(price_field.format(side=side)))
+
+            # Betclic takes no single below its minimum odds.
+            if book == "Betclic" and (price is None or price < BETCLIC_MIN_ODDS):
+                continue
+
             probability = number(row.get(f"probability{side}"))
 
             bets.append({
                 "book": book,
                 "side": side,
                 "ev": evs[side],
-                "price": number(row.get(price_field.format(side=side))),
+                "price": price,
                 "net": number(row.get(net_field.format(side=side))),
                 "fair": 1 / probability if probability else None,
                 "player": row.get(f"pinnacle_player{side}", ""),

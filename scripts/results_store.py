@@ -53,6 +53,10 @@ ALT_METHODS = [method for method in METHODS if method != REFERENCE_METHOD]
 
 SIDES = (1, 2)
 
+# Betclic does not take a single below these odds (user, 10 Nov 2026), so such a
+# price is not a bet: no alert, and the dashboard's Track record leaves it out.
+BETCLIC_MIN_ODDS = 1.14
+
 
 # ------------------------------------------------- session CSV columns ------
 

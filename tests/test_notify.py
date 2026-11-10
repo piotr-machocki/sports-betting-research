@@ -45,6 +45,14 @@ def test_skips_low_ev_started_and_unconfirmed():
     assert notify.candidates([row(status="VERIFY")], 0.02, NOW) == []
 
 
+def test_skips_betclic_prices_below_its_minimum():
+    low = {"betclic_odds_for_pin_p2": "1.13", "probability2": "0.92", "ev2": "0.04"}
+    assert notify.candidates([row(**low)], 0.02, NOW) == []
+
+    [bet] = notify.candidates([row(**{**low, "betclic_odds_for_pin_p2": "1.14"})], 0.02, NOW)
+    assert bet["price"] == 1.14
+
+
 def test_superbet_only_when_found():
     superbet = {
         "superbet_status": "FOUND", "superbet_ev1": "0.05", "superbet_ev2": "-0.2",
