@@ -1445,3 +1445,47 @@ def test_settled_outcomes_are_kept_until_the_sources_change(monkeypatch):
     dashboard.settled_outcomes(flags, {**sources, "signature": 2}, before, memo)
     dashboard.settled_outcomes(flags, {**sources, "signature": 2}, before, memo)
     assert calls == [1, 0, 1, 1]
+
+
+def test_track_loader_draws_a_placeholder_until_the_thread_is_done(monkeypatch):
+    import threading
+
+    gate = threading.Event()
+    calls = []
+
+    def slow(sessions, cache, sources, min_ev, now, books):
+        calls.append((min_ev, books))
+        gate.wait(5)
+        return {"Betclic": {"signals": 1}}
+
+    monkeypatch.setattr(dashboard, "load_outcome_sources", lambda cache: {})
+    monkeypatch.setattr(dashboard, "list_sessions", lambda: [])
+    monkeypatch.setattr(dashboard, "track_record", slow)
+    loader = dashboard.TrackLoader({})
+
+    assert loader.request(0.02, ["Betclic"], wait=0.05) is None  # cold: still loading
+    assert not loader.ready(0.02, ["Betclic"])
+    assert "Loading" in dashboard.track_card(None, 0.02)
+
+    gate.set()
+    loader.thread.join(5)
+    assert loader.ready(0.02, ["Betclic"]) and loader.thread is None
+    # Warm: worked out again and returned within the wait.
+    assert loader.request(0.02, ["Betclic"], wait=2) == {"Betclic": {"signals": 1}}
+    assert calls == [(0.02, ["Betclic"])] * 2
+
+
+def test_track_loader_shows_a_failure_on_the_card(monkeypatch):
+    def broken(*args):
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(dashboard, "load_outcome_sources", lambda cache: {})
+    monkeypatch.setattr(dashboard, "list_sessions", lambda: [])
+    monkeypatch.setattr(dashboard, "track_record", broken)
+    loader = dashboard.TrackLoader({})
+
+    assert loader.request(0.02, ["Betclic"], wait=2) is None
+    assert loader.ready(0.02, ["Betclic"]) and loader.error == "OSError: disk gone"
+    assert "Could not work out the track record: OSError: disk gone" in dashboard.track_card(
+        None, 0.02, error=loader.error
+    )

@@ -1310,9 +1310,82 @@ def track_record(
     return record
 
 
-def track_cache() -> dict:
+# load_outcome_sources fills one shared cache, from the page and from TrackLoader's thread.
+SOURCES_LOCK = threading.Lock()
+# How long a full run waits for the track record before drawing a placeholder. A warm
+# one takes about 0.08 s on the VM, so only the first, cold one (about 25 s) shows it.
+TRACK_WAIT_SECONDS = 1.0
+
+
+class TrackLoader:
+    """Works out the track record in a thread, so the page never waits for the cold
+    read of every session. A full run asks for its minimum EV and books (request);
+    the header fragment checks whether it is there yet (ready). One per server."""
+
+    def __init__(self, sources_cache: dict) -> None:
+        self.sources_cache = sources_cache
+        self.cache: dict = {}  # session_flags and settled_outcomes, used by the thread only
+        self.results: dict[tuple, dict] = {}
+        self.error: str | None = None
+        self.wanted: tuple | None = None
+        self.finished: tuple | None = None
+        self.thread: threading.Thread | None = None
+        self.done = threading.Condition()
+
+    def request(self, min_ev: float, books: list[str], wait: float = 0.0) -> dict | None:
+        """Works the record out again (the sessions may have changed) and returns it
+        if that takes at most wait, else the last one for this choice, or None."""
+        key = (min_ev, tuple(books))
+
+        with self.done:
+            self.wanted = key
+            self.finished = None
+
+            if self.thread is None:
+                self.thread = threading.Thread(target=self.work, daemon=True)
+                self.thread.start()
+
+            self.done.wait_for(lambda: self.finished == key, timeout=wait)
+            return self.results.get(key)
+
+    def ready(self, min_ev: float, books: list[str]) -> bool:
+        with self.done:
+            return (min_ev, tuple(books)) in self.results or self.error is not None
+
+    def work(self) -> None:
+        while True:
+            with self.done:
+                key, self.wanted = self.wanted, None
+
+                if key is None:
+                    self.thread = None
+                    return
+
+            try:
+                with SOURCES_LOCK:
+                    sources = load_outcome_sources(self.sources_cache)
+
+                record = track_record(
+                    list_sessions(), self.cache, sources, key[0],
+                    datetime.now(timezone.utc), list(key[1]),
+                )
+                error = None
+            except Exception as exc:  # shown on the card; the page goes on
+                record, error = None, f"{type(exc).__name__}: {exc}"
+
+            with self.done:
+                if record is not None:
+                    self.results[key] = record
+                self.error = error
+                self.finished = key
+                self.done.notify_all()
+
+
+def track_loader() -> TrackLoader:
     """Held by st.cache_resource, so every tab and rerun shares one."""
-    return {}
+    import streamlit as st
+
+    return TrackLoader(st.cache_resource(show_spinner=False)(outcomes_cache)())
 
 
 def filter_records(
@@ -1935,15 +2008,26 @@ def overview_track(record: dict[str, dict]) -> str:
     return f'<div class="track-rows">{"".join(rows)}</div>'
 
 
-def track_card(record: dict[str, dict], min_ev: float, books: list[str] = BOOKS) -> str:
-    """The Track record card, for overview_html's last row."""
+def track_card(
+    record: dict[str, dict] | None,
+    min_ev: float,
+    books: list[str] = BOOKS,
+    error: str | None = None,
+) -> str:
+    """The Track record card, for overview_html's last row. None = still loading."""
     limit = f", Betclic odds ≥ {BETCLIC_MIN_ODDS:.2f}" if "Betclic" in books else ""
     heading = f"Track record (all sessions, first flag at EV ≥ {min_ev:.1%}{limit})"
-    body = (
-        overview_track(record)
-        if record
-        else '<div class="overview-empty">No match has reached this EV before its start yet.</div>'
-    )
+
+    if record:
+        body = overview_track(record)
+    else:
+        if record is not None:
+            text = "No match has reached this EV before its start yet."
+        elif error:
+            text = f"Could not work out the track record: {error}"
+        else:
+            text = "Loading: the first load after a restart reads every session (about 25 s)…"
+        body = f'<div class="overview-empty">{html.escape(text)}</div>'
 
     return (
         '<div class="overview-card">'
@@ -2922,30 +3006,32 @@ def main() -> None:
     if filters["all_sessions"]:
         ev_stats = positive_ev_stats(all_records, filters["min_ev"])
 
-    # The track record needs the results and closing prices on every page.
-    cache = st.cache_resource(show_spinner=False)(outcomes_cache)()
-    with st.spinner("Reading Pinnacle snapshots and match results..."):
-        sources = load_outcome_sources(cache)
-    outcomes = sources if show_clv or show_result else None
+    outcomes = None
+    if show_clv or show_result:
+        cache = st.cache_resource(show_spinner=False)(outcomes_cache)()
+        with st.spinner("Reading Pinnacle snapshots and match results..."), SOURCES_LOCK:
+            outcomes = load_outcome_sources(cache)
 
-    cache = st.cache_resource(show_spinner=False)(track_cache)()
-    with st.spinner("Reading every session for the track record..."):
-        record = track_record(
-            list_sessions(), cache, sources, filters["min_ev"], datetime.now(timezone.utc), books
-        )
-    track = track_card(record, filters["min_ev"], books)
+    # Worked out in a thread: until it is there the card says so and the header
+    # checks every second, then asks for the full run that draws it.
+    loader = st.cache_resource(show_spinner=False)(track_loader)()
+    record = loader.request(filters["min_ev"], books, wait=TRACK_WAIT_SECONDS)
+    track_loading = record is None and loader.error is None
+    track = track_card(record, filters["min_ev"], books, loader.error)
 
-    @st.fragment(run_every=REFRESH_SECONDS if running else IDLE_REFRESH_SECONDS)
+    @st.fragment(run_every=REFRESH_SECONDS if running or track_loading else IDLE_REFRESH_SECONDS)
     def live_header() -> None:
         """A fragment leaves the rest of the page alone, so only a full run redraws
         the table, and this asks for one when the file has changed. So does a run
-        starting or ending, because only a full run can change this fragment's pace."""
+        starting or ending, because only a full run can change this fragment's pace,
+        and the track record arriving."""
         header_session, newest_table = current_sessions(selected)
         fresh, signature = load_rows(st, newest_table) if newest_table else ([], None)
 
         still_running = bool(header_session) and is_running(header_session)
+        track_arrived = track_loading and loader.ready(filters["min_ev"], books)
 
-        if signature != drawn or still_running != running:
+        if signature != drawn or still_running != running or track_arrived:
             st.rerun(scope="app")
 
         if header_session:
