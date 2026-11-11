@@ -51,6 +51,7 @@ PINNAPI_KEY=your_key_here
 RAPIDAPI_KEY=your_rapidapi_key_here
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
+HEALTHCHECK_URL=
 ```
 
 Replace the placeholders with your actual API keys. Do not commit your `.env` file.
@@ -58,6 +59,8 @@ Replace the placeholders with your actual API keys. Do not commit your `.env` fi
 `RAPIDAPI_KEY` is optional: it fetches finished match results from the [Tennis API - ATP WTA ITF](https://rapidapi.com/jjrm365-kIFr3Nx_odV/api/tennis-api-atp-wta-itf) on RapidAPI (the free plan allows 50 requests a day). Without it, a run only skips that step.
 
 `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are optional: with them, each run sends a Telegram message for every new prematch bet at or above `--min-ev` (each match, book and side once; see `scripts/notify.py`). Create a bot with [@BotFather](https://t.me/BotFather), send it any message, then `python scripts/notify.py --chat-id` prints the chat ID and `python scripts/notify.py --test` checks the setup. `--no-notify` skips it for one run.
+
+`HEALTHCHECK_URL` is optional and used only by `scripts/scheduled_run.sh`: after every run it pings that URL with the run's exit code (`<url>/<code>`), so a dead man's switch service such as [healthchecks.io](https://healthchecks.io) can alert you when pings stop (machine down, cron broken) or a run fails. Keep it secret: anyone with it can send pings.
 
 ## 6. Add the Betclic integration
 

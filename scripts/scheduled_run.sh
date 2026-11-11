@@ -17,3 +17,11 @@ code=$?
 echo "exit code $code" >> data/logs/scheduled_run.log
 # Counts failed runs in a row and sends one Telegram alert after 3, at most once a day.
 .venv/bin/python scripts/notify.py --after-run "$code" --run-started "$started" >> data/logs/scheduled_run.log 2>&1
+# Heartbeat for an outside dead man's switch (e.g. healthchecks.io): pings
+# HEALTHCHECK_URL from .env with the exit code (0 = success, else failure).
+# The service alerts when pings stop, which this machine cannot report itself
+# (stopped or deleted VM, broken cron). One try, 10 s; the URL is never logged.
+hc_url=$(grep -m1 '^HEALTHCHECK_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d "\r\"' ")
+if [ -n "$hc_url" ]; then
+    curl -fs -m 10 -o /dev/null "$hc_url/$code" || echo "healthcheck ping failed (curl exit $?)" >> data/logs/scheduled_run.log
+fi
