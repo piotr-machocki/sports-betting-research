@@ -3,7 +3,7 @@
 import json
 import sys
 
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -107,13 +107,50 @@ def test_store_merges_by_id_and_later_fetch_wins(data_dir):
 # ---------- once a day ----------
 
 def test_no_request_while_yesterday_is_covered(data_dir, monkeypatch):
-    mr.write_state(date(2026, 11, 1))
+    write_state_at(date(2026, 11, 1), "2026-11-02T00:00:24+00:00")
     monkeypatch.setattr(mr.requests, "get", lambda *a, **k: pytest.fail("made a request"))
 
-    summary = mr.update(today=date(2026, 11, 2))
+    summary = mr.update(now=datetime(2026, 11, 2, 7, 0, tzinfo=timezone.utc))
 
     assert summary["status"] == "up to date"
     assert summary["requests"] == 0
+
+
+def write_state_at(covered: date, fetched_at: str) -> None:
+    mr.STATE_FILE.write_text(
+        json.dumps({"covered_through": covered.isoformat(), "last_fetch_at": fetched_at}),
+        encoding="utf-8",
+    )
+
+
+def test_rechecks_once_after_the_recheck_hour(data_dir, monkeypatch):
+    # Covered by the fetch just after midnight; late matches of yesterday may be missing.
+    write_state_at(date(2026, 11, 1), "2026-11-02T00:00:24+00:00")
+    get, calls = fake_get(FakeResponse({"data": [provider_row()], "hasNextPage": False}))
+    monkeypatch.setattr(mr.requests, "get", get)
+
+    before = mr.update(now=datetime(2026, 11, 2, 7, 45, tzinfo=timezone.utc))
+    assert before["requests"] == 0
+
+    after = mr.update(now=datetime(2026, 11, 2, 8, 0, 5, tzinfo=timezone.utc))
+    assert after["requests"] == 2
+    assert "2026-10-30/2026-11-01" in calls[0][0]
+    assert mr.read_covered_through() == date(2026, 11, 1)
+
+    # Rewritten past the hour: no third fetch that day.
+    write_state_at(date(2026, 11, 1), "2026-11-02T08:00:09+00:00")
+    monkeypatch.setattr(mr.requests, "get", lambda *a, **k: pytest.fail("made a request"))
+    late = mr.update(now=datetime(2026, 11, 2, 23, 0, tzinfo=timezone.utc))
+    assert late["status"] == "up to date"
+
+
+def test_recheck_due():
+    utc = timezone.utc
+    now = datetime(2026, 11, 2, 9, 0, tzinfo=utc)
+    assert mr.recheck_due(None, now)
+    assert mr.recheck_due(datetime(2026, 11, 2, 0, 0, tzinfo=utc), now)
+    assert not mr.recheck_due(datetime(2026, 11, 2, 8, 30, tzinfo=utc), now)
+    assert not mr.recheck_due(datetime(2026, 11, 2, 0, 0, tzinfo=utc), now.replace(hour=7))
 
 
 def test_catches_up_after_days_off_and_rechecks_recent_days(data_dir, monkeypatch):

@@ -5,10 +5,12 @@ Results live apart from the odds and are joined only when analysing:
     data/match_results/results.csv            - one clean row per match
     data/match_results/state.json             - last day fully fetched
 
-run_once.py calls update() after each session. It makes no request while
-yesterday (UTC) is already covered, so it fetches at most once a day. It fetches
-from the last covered day, and always the last RECHECK_DAYS, because late matches
-appear after midnight. A rate limit is reported, never retried.
+run_once.py calls update() after each session. It fetches once yesterday (UTC) is
+no longer covered, from the last covered day and always the last RECHECK_DAYS.
+That first fetch runs just after midnight UTC, before the provider has the evening's
+late matches, so the first run after RECHECK_HOUR_UTC fetches the last RECHECK_DAYS
+again. Otherwise it makes no request: about two fetches a day. A rate limit is
+reported, never retried.
 
 Usage:
     python scripts/match_results.py                     # same step as run_once.py
@@ -26,7 +28,7 @@ import re
 import unicodedata
 
 from collections import Counter
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
@@ -45,6 +47,11 @@ PAGE_SIZE = 500
 
 CHUNK_DAYS = 7
 RECHECK_DAYS = 3
+# A match that ends late in the evening (UTC) is missing from the midnight fetch:
+# Bidan-Nara (Naples, started 20:07 UTC on 10 Nov 2026) was not in a fetch at 00:00
+# on 11 Nov and came with the next one. So a second fetch of the last RECHECK_DAYS
+# runs once a day after this hour, a few requests out of the 50 a day.
+RECHECK_HOUR_UTC = 8
 MAX_REQUESTS_PER_RUN = 30  # the free plan allows 50 a day
 RESERVE_REQUESTS = 5  # stop when the daily quota gets this low
 
@@ -165,6 +172,20 @@ def read_covered_through() -> date | None:
     return date.fromisoformat(value) if value else None
 
 
+def read_last_fetch() -> datetime | None:
+    if not STATE_FILE.exists():
+        return None
+
+    value = json.loads(STATE_FILE.read_text(encoding="utf-8")).get("last_fetch_at")
+    return datetime.fromisoformat(value) if value else None
+
+
+def recheck_due(last_fetch: datetime | None, now: datetime) -> bool:
+    """True for the first run after RECHECK_HOUR_UTC whose day was not fetched since."""
+    mark = datetime.combine(now.date(), time(RECHECK_HOUR_UTC), tzinfo=timezone.utc)
+    return now >= mark and (last_fetch is None or last_fetch < mark)
+
+
 def write_state(covered: date | None) -> None:
     write_atomic(
         STATE_FILE,
@@ -274,14 +295,18 @@ def update(
     today: date | None = None,
     start: date | None = None,
     max_requests: int = MAX_REQUESTS_PER_RUN,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Fetch what is missing. Returns a summary; provider refusals do not raise."""
-    today = today or datetime.now(timezone.utc).date()
+    now = now or datetime.now(timezone.utc)
+    today = today or now.date()
     yesterday = today - timedelta(days=1)
     covered = read_covered_through()
 
     if start is None and covered is not None and covered >= yesterday:
-        return {"status": "up to date", "covered_through": covered, "requests": 0}
+        if not recheck_due(read_last_fetch(), now):
+            return {"status": "up to date", "covered_through": covered, "requests": 0}
+        start = yesterday - timedelta(days=RECHECK_DAYS - 1)
 
     api_key = os.getenv("RAPIDAPI_KEY")
     if not api_key:
