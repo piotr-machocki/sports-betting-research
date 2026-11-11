@@ -501,9 +501,17 @@ def poly_markets(types: tuple[str, ...], now: datetime) -> list[dict]:
 
 
 def fetch_polymarket(now: datetime, props: bool) -> list[dict]:
-    rows = parse_polymarket(poly_markets(POLY_MAIN, now))
+    """One query per market type: the API answered 422 to an offset past 2000
+    (12 Nov 2026), which all prop types together reached (~2100 markets)."""
+    rows = []
+    for kind in POLY_MAIN:
+        rows += parse_polymarket(poly_markets((kind,), now))
     if props:
-        rows += parse_polymarket(poly_markets(tuple(POLY_PROPS), now))
+        for kind in POLY_PROPS:
+            try:
+                rows += parse_polymarket(poly_markets((kind,), now))
+            except Exception as exc:  # keep the game lines if one prop type fails
+                print(f"polymarket: {kind} props skipped ({type(exc).__name__}: {exc})")
     return rows
 
 
