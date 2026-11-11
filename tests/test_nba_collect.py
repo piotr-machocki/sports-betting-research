@@ -148,3 +148,74 @@ def test_props_only_in_first_run_of_the_hour():
     assert nc.want_props("auto", NOW.replace(minute=7))
     assert not nc.want_props("auto", NOW.replace(minute=22))
     assert nc.want_props("always", NOW) and not nc.want_props("never", NOW.replace(minute=7))
+
+
+def _espn_item(type_name, athlete, value, decimal, open_value=None, open_decimal=None, target=None):
+    return {
+        "athlete": {"$ref": f"http://x/athletes/{athlete}?lang=en"},
+        "type": {"name": type_name},
+        "odds": {"decimal": {"value": str(decimal), "open": str(open_decimal or decimal)},
+                 "total": {"value": str(value), "open": str(open_value or value)}},
+        "current": {"target": {"value": target}},
+    }
+
+
+def test_espn_props_pairs_over_first_and_milestones():
+    items = [
+        _espn_item("Total Points", "7", 22.5, 1.84),
+        _espn_item("Total Points", "7", 22.5, 1.92, open_decimal=1.95),
+        _espn_item("Points Milestones", "7", "25+", 2.3, target=25.0),
+        _espn_item("Total Points", "8", 10.5, 1.9),  # unpaired: skipped
+        _espn_item("First Basket", "7", "", 9.0),
+    ]
+    rows = nc.parse_espn_props(items, {"7": "Anthony Davis", "8": "X"}, "WAS", "IND", None, "1")
+    got = {(r["book"], r["side"], r["line"]): r["price"] for r in rows}
+    assert got == {
+        ("DraftKings", "over", 22.5): 1.84, ("DraftKings", "under", 22.5): 1.92,
+        ("DraftKings", "over", 24.5): 2.3,
+        ("DraftKings open", "under", 22.5): 1.95,  # open kept only where it differs
+    }
+    assert {r["player"] for r in rows} == {"Anthony Davis"}
+
+
+SAO_LIST = (
+    '<a href="/prop-bets/408971/luka-doncic">Luka Doncic</a><br />'
+    ' <span class="bold small gray">LAL @ MIL</span>'
+)
+SAO_PAGE = """
+<table><thead><tr><th>x</th>
+<th class="book-logo"><img alt="draftkings"/></th><th class="book-logo"><img alt="fanduel"/></th>
+<th class="book-logo"><img alt="kalshi"/></th></tr></thead>
+<tbody data-key="odds-table--points-p-236739780">
+<tr data-name="luka doncic"><td>Luka</td>
+<td class="game-odds"><span class="data-value"> o34.5 </span><small class="data-odds">-117</small></td>
+<td class="game-odds"><span class="data-value"> o34.5 </span><small class="data-odds">even</small></td>
+<td class="game-odds"></td></tr>
+<tr data-name="luka doncic"><td>Luka</td>
+<td class="game-odds"><span class="data-value"> u34.5 </span><small class="data-odds">-109</small></td>
+<td class="game-odds"><span class="data-value"> u34.5 </span><small class="data-odds">-120</small></td>
+<td class="game-odds"></td></tr>
+</tbody></table>
+"""
+
+
+def test_scoresandodds_list_and_player_page():
+    assert nc.sao_players(SAO_LIST) == [("408971", "luka-doncic", "Luka Doncic", "LAL", "MIL")]
+    rows = nc.parse_sao_player(SAO_PAGE, "Luka Doncic", "LAL", "MIL", "408971")
+    got = {(r["book"], r["side"], r["line"]): r["price"] for r in rows}
+    assert got == {
+        ("DraftKings", "over", 34.5): round(1 + 100 / 117, 4), ("FanDuel", "over", 34.5): 2.0,
+        ("DraftKings", "under", 34.5): round(1 + 100 / 109, 4), ("FanDuel", "under", 34.5): round(1 + 100 / 120, 4),
+    }
+    assert {r["market"] for r in rows} == {"player_points"}
+
+
+def test_resolve_dates_uses_other_sources():
+    rows = [
+        {"away": "LAL", "home": "MIL", "game_date": "2026-11-12", "game_key": "2026-11-12_LAL@MIL"},
+        {"away": "LAL", "home": "MIL", "game_date": "", "game_key": "_LAL@MIL"},
+        {"away": "BOS", "home": "TOR", "game_date": "", "game_key": "_BOS@TOR"},
+    ]
+    nc.resolve_dates(rows, NOW)
+    assert rows[1]["game_key"] == "2026-11-12_LAL@MIL"
+    assert rows[2]["game_key"] == "2026-11-11_BOS@TOR"  # today's US date

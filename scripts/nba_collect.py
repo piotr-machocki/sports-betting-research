@@ -17,6 +17,14 @@ Sources (each optional; a failure only warns and is recorded in runs.jsonl):
   returned 403 from a Polish home IP (11 Nov 2026). One request per US date.
 - ``espn``: ESPN's scoreboard (DraftKings moneyline, open and current) and
   final scores, which go to ``data/nba/results/espn_results.csv``.
+- ``espn_props`` (props runs): DraftKings player props from ESPN's core API
+  (over/under and "N+" milestones, with opening prices); athlete names are
+  cached in ``data/nba/espn_athletes.json``.
+- ``scoresandodds`` (props runs): one page per player on scoresandodds.com
+  (about 80 a run, 0.3 s apart): over/under for points, rebounds, assists,
+  threes, combos, blocks and steals at bet365, BetMGM, DraftKings, Caesars,
+  FanDuel, Hard Rock, Fanatics and Kalshi, plus PrizePicks/Sleeper/Underdog
+  lines. Reachable from Poland and the VM (12 Nov 2026).
 - ``kalshi``: public market data (no key) for moneyline, spread, total and,
   in props runs, player points/rebounds/assists/threes/PRA ladders.
 - ``polymarket``: the Gamma API (no key): moneyline, spreads, totals and, in
@@ -41,6 +49,7 @@ from __future__ import annotations
 import argparse
 import csv
 import gzip
+import html
 import importlib.util
 import json
 import os
@@ -341,6 +350,225 @@ def save_results(results: list[dict]) -> None:
     tmp.replace(RESULTS_CSV)
 
 
+# ---------- ESPN player props (DraftKings) ----------
+
+ESPN_CORE = "https://sports.core.api.espn.com/v2/sports/basketball/leagues/nba"
+ATHLETE_CACHE = DATA_DIR / "espn_athletes.json"
+# ESPN's prop type name -> (market, kind). "ou" items come in pairs, over
+# first: on 11 Nov 2026 51 of 52 pairs that had a matching milestone ("23+"
+# at the over 22.5 price) put the over first. source_id keeps the position
+# (":0"/":1") so the analysis can recheck it.
+ESPN_PROP_TYPES = {
+    "Total Points": ("player_points", "ou"),
+    "Total Rebounds": ("player_rebounds", "ou"),
+    "Total Assists": ("player_assists", "ou"),
+    "Total 3-Point Field Goals": ("player_threes", "ou"),
+    "Total Points, Rebounds, and Assists": ("player_pra", "ou"),
+    "Total Points and Rebounds": ("player_pr", "ou"),
+    "Total Points and Assists": ("player_pa", "ou"),
+    "Total Assists and Rebounds": ("player_ra", "ou"),
+    "Total Steals": ("player_steals", "ou"),
+    "Points Milestones": ("player_points", "ladder"),
+    "Rebounds Milestones": ("player_rebounds", "ladder"),
+    "Assists Milestones": ("player_assists", "ladder"),
+    "3-Point Field Goals Milestones": ("player_threes", "ladder"),
+    "Points + Assists + Rebounds Milestones": ("player_pra", "ladder"),
+    "Points + Rebounds Milestones": ("player_pr", "ladder"),
+    "Points + Assists Milestones": ("player_pa", "ladder"),
+    "Steals Milestones": ("player_steals", "ladder"),
+    "Blocks Milestones": ("player_blocks", "ladder"),
+}
+
+
+def athlete_id(item: dict) -> str:
+    ref = (item.get("athlete") or {}).get("$ref", "")
+    m = re.search(r"/athletes/(\d+)", ref)
+    return m.group(1) if m else ""
+
+
+def parse_espn_props(items: list[dict], names: dict[str, str], away: str, home: str,
+                     starts: datetime | None, event_id: str) -> list[dict]:
+    rows = []
+    pairs: dict[tuple[str, str], list[dict]] = {}
+    for item in items:
+        kind = ESPN_PROP_TYPES.get((item.get("type") or {}).get("name", ""))
+        player = names.get(athlete_id(item), "")
+        if not kind or not player:
+            continue
+        if kind[1] == "ou":
+            pairs.setdefault((athlete_id(item), item["type"]["name"]), []).append(item)
+            continue
+        target = to_float(((item.get("current") or {}).get("target") or {}).get("value"))
+        price = to_float((((item.get("odds") or {}).get("decimal")) or {}).get("value"))
+        if target is None or not price:
+            continue
+        rows.append(make_row("espn", "DraftKings", away, home, starts, kind[0], "over",
+                             player=player, line=target - 0.5, price=price,
+                             source_id=f"{event_id}:ladder"))
+    for (aid, type_name), items_ in pairs.items():
+        if len(items_) != 2:
+            continue
+        market = ESPN_PROP_TYPES[type_name][0]
+        for pos, (item, side) in enumerate(zip(items_, ("over", "under"))):
+            odds = item.get("odds") or {}
+            line = to_float((odds.get("total") or {}).get("value"))
+            price = to_float((odds.get("decimal") or {}).get("value"))
+            open_price = to_float((odds.get("decimal") or {}).get("open"))
+            open_line = to_float((odds.get("total") or {}).get("open"))
+            if line is None or not price:
+                continue
+            base = dict(player=names[aid], source_id=f"{event_id}:{aid}:{pos}")
+            rows.append(make_row("espn", "DraftKings", away, home, starts, market, side,
+                                 line=line, price=price, **base))
+            if open_price and open_line is not None and (open_price, open_line) != (price, line):
+                rows.append(make_row("espn", "DraftKings open", away, home, starts, market,
+                                     side, line=open_line, price=open_price, **base))
+    return rows
+
+
+def athlete_names(ids: set[str]) -> dict[str, str]:
+    """Athlete id -> name, cached on disk (one request per new athlete)."""
+    names: dict[str, str] = {}
+    if ATHLETE_CACHE.exists():
+        names = json.loads(ATHLETE_CACHE.read_text(encoding="utf-8"))
+    missing = [i for i in ids if i and i not in names]
+    for aid in missing:
+        try:
+            data = get_json(f"{ESPN_CORE}/athletes/{aid}")
+            names[aid] = data.get("displayName") or data.get("fullName") or ""
+        except Exception as exc:
+            print(f"espn_props: athlete {aid} skipped ({exc})")
+    if missing:
+        ATHLETE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        ATHLETE_CACHE.write_text(json.dumps(names, indent=0), encoding="utf-8")
+    return names
+
+
+def fetch_espn_props(now: datetime, props: bool) -> list[dict]:
+    if not props:
+        raise SkipSource("props run only")
+    games = []
+    for date in us_dates(now, (0, 1)):
+        for event in get_json(ESPN_URL, {"dates": date}).get("events") or []:
+            if ((event.get("status") or {}).get("type") or {}).get("state") != "pre":
+                continue
+            comp = (event.get("competitions") or [{}])[0]
+            sides = {c.get("homeAway"): c for c in comp.get("competitors") or []}
+            home = team_code((sides.get("home") or {}).get("team", {}).get("abbreviation"))
+            away = team_code((sides.get("away") or {}).get("team", {}).get("abbreviation"))
+            starts = parse_time(event.get("date"))
+            if home and away and starts and starts <= now + timedelta(hours=36):
+                games.append((event["id"], away, home, starts))
+    rows = []
+    for event_id, away, home, starts in games:
+        url = f"{ESPN_CORE}/events/{event_id}/competitions/{event_id}/odds/100/propBets"
+        items, page, pages = [], 1, 1
+        try:
+            while page <= pages and page <= 10:
+                data = get_json(url, {"limit": 1000, "page": page})
+                items += data.get("items") or []
+                pages = data.get("pageCount") or 1
+                page += 1
+        except RuntimeError as exc:  # 404 = no props listed for that game yet
+            if "HTTP 404" not in str(exc):
+                raise
+        if not items:
+            continue
+        names = athlete_names({athlete_id(i) for i in items})
+        rows += parse_espn_props(items, names, away, home, starts, event_id)
+    return rows
+
+
+# ---------- scoresandodds.com player props (US books) ----------
+
+SAO_URL = "https://www.scoresandodds.com"
+SAO_PAUSE_S = 0.3
+SAO_MARKETS = {
+    "points": "player_points", "rebounds": "player_rebounds", "assists": "player_assists",
+    "3-pointers": "player_threes", "points,-rebounds,-&-assists": "player_pra",
+    "points-&-rebounds": "player_pr", "points-&-assists": "player_pa",
+    "rebounds-&-assists": "player_ra", "blocks": "player_blocks", "steals": "player_steals",
+}
+SAO_BOOKS = {
+    "bet365": "bet365", "betmgm": "BetMGM", "draftkings": "DraftKings", "caesars": "Caesars",
+    "fanduel": "FanDuel", "hardrock": "HardRock", "fanatics": "Fanatics", "kalshi": "Kalshi",
+    "prizepicks": "PrizePicks", "sleeper": "Sleeper", "underdog": "Underdog",
+}
+SAO_PLAYER = re.compile(
+    r'href="/prop-bets/(\d+)/([a-z0-9\-]+)">([^<]+)</a><br />\s*'
+    r'<span class="bold small gray">([A-Z]+) @ ([A-Z]+)</span>')
+SAO_VALUE = re.compile(r"^([ou])\s*(\d+(?:\.\d+)?)$")
+
+
+def get_text(url: str) -> str:
+    response = requests.get(url, timeout=TIMEOUT, headers={"User-Agent": USER_AGENT})
+    if response.status_code != 200:
+        raise RuntimeError(f"HTTP {response.status_code} from {url.split('?')[0]}")
+    return response.text
+
+
+def sao_players(page: str) -> list[tuple[str, str, str, str, str]]:
+    """(id, slug, name, away, home) for each player on the props list page."""
+    seen, players = set(), []
+    for pid, slug, name, away, home in SAO_PLAYER.findall(page):
+        away_code, home_code = team_code(away), team_code(home)
+        if pid not in seen and away_code and home_code:
+            seen.add(pid)
+            players.append((pid, slug, html.unescape(name).strip(), away_code, home_code))
+    return players
+
+
+def parse_sao_player(page: str, name: str, away: str, home: str, player_id: str) -> list[dict]:
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(page, "html.parser")
+    rows = []
+    for body in soup.select('tbody[data-key^="odds-table--"]'):
+        key = body["data-key"][len("odds-table--"):]
+        market = SAO_MARKETS.get(re.sub(r"-p-\d+$", "", key))
+        table = body.find_parent("table")
+        if not market or table is None:
+            continue
+        books = [img.get("alt", "") for img in table.select("th.book-logo img")]
+        for tr in body.find_all("tr"):
+            cells = tr.find_all("td", class_="game-odds")
+            if len(cells) != len(books):
+                continue
+            for book, cell in zip(books, cells):
+                value, odds = cell.select_one(".data-value"), cell.select_one(".data-odds")
+                if not value or not odds:
+                    continue
+                m = SAO_VALUE.match(value.get_text(strip=True).lower())
+                text = odds.get_text(strip=True).lower()
+                price = 2.0 if text in ("even", "ev") else american_to_decimal(text)
+                if not m or not price:
+                    continue
+                rows.append(make_row(
+                    "scoresandodds", SAO_BOOKS.get(book, book), away, home, None, market,
+                    "over" if m.group(1) == "o" else "under", date="",
+                    player=name, line=float(m.group(2)), price=price, source_id=player_id,
+                ))
+    return rows
+
+
+def fetch_scoresandodds(now: datetime, props: bool) -> list[dict]:
+    if not props:
+        raise SkipSource("props run only")
+    players = sao_players(get_text(f"{SAO_URL}/nba/props"))
+    rows, failed = [], 0
+    for pid, slug, name, away, home in players:
+        time.sleep(SAO_PAUSE_S)
+        try:
+            rows += parse_sao_player(get_text(f"{SAO_URL}/prop-bets/{pid}/{slug}"),
+                                     name, away, home, pid)
+        except Exception as exc:
+            failed += 1
+            if failed >= 5:  # the site is refusing us: stop, keep what we have
+                print(f"scoresandodds: stopped after 5 failures ({exc})")
+                break
+    return rows
+
+
 # ---------- Kalshi ----------
 
 KALSHI_URL = "https://api.elections.kalshi.com/trade-api/v2/markets"
@@ -538,10 +766,28 @@ SOURCES: dict[str, Callable[[datetime, bool], list[dict]]] = {
     "pinnacle": fetch_pinnacle,
     "actionnetwork": fetch_action,
     "espn": fetch_espn,
+    "espn_props": fetch_espn_props,
+    "scoresandodds": fetch_scoresandodds,
     "kalshi": fetch_kalshi,
     "polymarket": fetch_polymarket,
     "superbet": fetch_superbet,
 }
+
+
+def resolve_dates(rows: list[dict], now: datetime) -> None:
+    """Rows that only know their teams (scoresandodds) get the game_date of the
+    nearest game with those teams that another source lists from today on,
+    else today's US date."""
+    today = now.astimezone(US_EASTERN).strftime("%Y-%m-%d")
+    dates: dict[tuple[str, str], list[str]] = {}
+    for r in rows:
+        if r.get("game_date"):
+            dates.setdefault((r["away"], r["home"]), []).append(r["game_date"])
+    for r in rows:
+        if not r.get("game_date"):
+            later = sorted(d for d in dates.get((r["away"], r["home"]), []) if d >= today)
+            r["game_date"] = later[0] if later else today
+            r["game_key"] = game_key(r["game_date"], r["away"], r["home"])
 
 
 def fill_starts(rows: list[dict]) -> None:
@@ -614,6 +860,7 @@ def run(sources: list[str], props_mode: str, dry_run: bool) -> int:
 
     for r in all_rows:
         r["run_id"], r["captured_at"] = run_id, iso(now)
+    resolve_dates(all_rows, now)
     fill_starts(all_rows)
     kept = prematch_only(all_rows, now)
     report["rows"] = len(kept)

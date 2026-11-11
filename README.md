@@ -154,11 +154,13 @@ python scripts/results_store.py --all
 * Action Network's public odds JSON: US sportsbooks (DraftKings, FanDuel, BetMGM, Caesars, bet365, BetRivers, Fanatics, Unibet, theScore), their consensus and the opening line. It refused requests from a Polish home IP and answered from a server in Sweden.
 * ESPN's scoreboard: DraftKings' moneyline (opening and current) and final scores.
 * Kalshi and Polymarket public market data: moneyline, spreads, totals and player props, as bid/ask probabilities.
+* Player props of US books, in the hourly props run only: DraftKings from ESPN's API (over/under and milestones, with opening prices), and bet365, BetMGM, DraftKings, Caesars, FanDuel, Hard Rock, Fanatics and Kalshi (plus PrizePicks, Sleeper and Underdog lines) from scoresandodds.com, one page per player (about 80, 0.3 s apart).
 * Superbet, through a private collector (`src/betting/books/superbet_nba.py`), run only if that file exists.
 
 ```bash
 python scripts/nba_collect.py                       # every source; props in the first run of each hour
 python scripts/nba_collect.py --sources kalshi,espn --props never --dry-run
+python scripts/nba_collect.py --sources espn_props,scoresandodds --props always --dry-run
 bash scripts/nba_scheduled.sh                       # for cron, e.g. "7-59/15 * * * *"
 ```
 
@@ -167,3 +169,4 @@ Outputs under `data/nba/`:
 * `snapshots/<UTC date>/<run_id>.csv.gz`: one row per outcome. Columns: `source`, `book`, `game_key` (`<US Eastern date>_<AWAY>@<HOME>`), `starts_at`, `market` (moneyline, spread, total, player_points, ...), `side` (team code, over or under), `player`, `line` (the side's handicap, or the total), `price` (decimal; sportsbooks), and `bid`/`ask`/`last` (probabilities; exchanges). Kalshi props are one-way "N+" contracts, stored as over N - 0.5. Superbet prices are before its 12% tax. Games that have started are left out.
 * `results/espn_results.csv`: final scores by `game_key`.
 * `runs.jsonl`: rows, seconds and any error per source for each run.
+* `espn_athletes.json`: ESPN athlete IDs and names, so each player is looked up once.
