@@ -18,12 +18,23 @@ mkdir -p data/logs data/backup
 exec >> data/logs/backup.log 2>&1
 echo "===== $(date -u '+%F %T') UTC ====="
 
+# Heartbeat for an outside dead man's switch (e.g. healthchecks.io), optional:
+# HEALTHCHECK_BACKUP_URL in .env gets /start now and /0 or /fail at the end, so the
+# service also alerts when a backup hangs or cron stops running it.
+hc_url=$(grep -m1 '^HEALTHCHECK_BACKUP_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d "\r\"' ")
+hc_ping() {
+    [ -n "$hc_url" ] || return 0
+    curl -fs -m 10 -o /dev/null "$hc_url/$1" || echo "healthcheck ping failed (curl exit $?)"
+}
+hc_ping start
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 fail() {
     echo "ERROR: $1"
     .venv/bin/python scripts/notify.py --backup-failed "$1"
+    hc_ping fail
     exit 1
 }
 
@@ -55,3 +66,4 @@ else
 fi
 
 touch -r "$work/started" "$MARK"
+hc_ping 0

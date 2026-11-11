@@ -52,6 +52,7 @@ RAPIDAPI_KEY=your_rapidapi_key_here
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 HEALTHCHECK_URL=
+HEALTHCHECK_BACKUP_URL=
 ```
 
 Replace the placeholders with your actual API keys. Do not commit your `.env` file.
@@ -60,7 +61,7 @@ Replace the placeholders with your actual API keys. Do not commit your `.env` fi
 
 `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are optional: with them, each run sends a Telegram message for every new prematch bet at or above `--min-ev` (each match, book and side once; see `scripts/notify.py`). Create a bot with [@BotFather](https://t.me/BotFather), send it any message, then `python scripts/notify.py --chat-id` prints the chat ID and `python scripts/notify.py --test` checks the setup. `--no-notify` skips it for one run.
 
-`HEALTHCHECK_URL` is optional and used only by `scripts/scheduled_run.sh`: after every run it pings that URL with the run's exit code (`<url>/<code>`), so a dead man's switch service such as [healthchecks.io](https://healthchecks.io) can alert you when pings stop (machine down, cron broken) or a run fails. Keep it secret: anyone with it can send pings.
+`HEALTHCHECK_URL` is optional and used only by `scripts/scheduled_run.sh`: after every run it pings that URL with the run's exit code (`<url>/<code>`), so a dead man's switch service such as [healthchecks.io](https://healthchecks.io) can alert you when pings stop (machine down, cron broken) or a run fails. Keep it secret: anyone with it can send pings. `HEALTHCHECK_BACKUP_URL` does the same for `scripts/backup_data.sh` (`/start` when it begins, `/0` or `/fail` at the end, so a hung backup alerts too).
 
 ## 6. Add the Betclic integration
 
