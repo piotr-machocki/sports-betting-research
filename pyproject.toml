@@ -31,3 +31,7 @@ historical = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pyright]
+# Scripts import each other by bare name (they add src/ and scripts/ to sys.path).
+extraPaths = ["src", "scripts"]
