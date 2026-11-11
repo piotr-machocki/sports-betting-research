@@ -40,6 +40,8 @@ src/betting/books/superbet.py
 tests/test_superbet.py
 src/betting/books/superbet_results.py
 tests/test_superbet_results.py
+src/betting/books/superbet_ako.py
+tests/test_superbet_ako.py
 src/betting/books/betclic_feed.py
 tests/test_betclic_feed.py
 

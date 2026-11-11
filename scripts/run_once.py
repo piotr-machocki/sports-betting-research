@@ -13,7 +13,10 @@ Workflow:
        (data/results/reports/) of the session.
     9. Send a Telegram message for each new bet at or above --min-ev
        (scripts/notify.py; only with TELEGRAM_* in .env, skipped with --no-notify).
-    10. Fetch the results of bets alerted at --min-ev that have started
+    10. Log an accumulator coupon from the Superbet rows and send it if it is good
+       enough (src/betting/books/superbet_ako.py, if present; nothing is sent with
+       --no-notify).
+    11. Fetch the results of bets alerted at --min-ev that have started
        (src/betting/books/superbet_results.py, if present), then finished match
        results twice a day (scripts/match_results.py), unless the run was
        interrupted or --no-results is given.
@@ -70,6 +73,7 @@ BETCLIC_SCROLL_SCRIPT = SRC_DIR / "betting" / "books" / "betclic_scroll.py"
 BETCLIC_FEED_SCRIPT = SRC_DIR / "betting" / "books" / "betclic_feed.py"
 SUPERBET_SCRIPT = SRC_DIR / "betting" / "books" / "superbet.py"
 SIGNAL_RESULTS_SCRIPT = SRC_DIR / "betting" / "books" / "superbet_results.py"
+AKO_SCRIPT = SRC_DIR / "betting" / "books" / "superbet_ako.py"
 
 WORKER_SCRIPT = SCRIPTS_DIR / "process_live_odds.py"
 MONITOR_SCRIPT = SCRIPTS_DIR / "live_monitor.py"
@@ -373,6 +377,21 @@ def collect_signal_results(session_id: str, min_ev: float) -> None:
         )
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"WARNING: signal results failed: {exc}", flush=True)
+
+
+def build_ako(session_id: str, send: bool) -> None:
+    """Optional accumulator coupon from the Superbet rows. A failure never stops the run."""
+    if not AKO_SCRIPT.exists():
+        return
+
+    command = [sys.executable, str(AKO_SCRIPT), "--session-id", session_id]
+    if not send:
+        command.append("--no-send")
+
+    try:
+        subprocess.run(command, check=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"WARNING: AKO coupon failed: {exc}", flush=True)
 
 
 # --------------------------------------------------------------- Pinnacle ---
@@ -1061,6 +1080,9 @@ def main() -> None:
 
         if not args.no_notify and session_status != "interrupted":
             notify.run_step(session_id, args.min_ev)
+
+        if session_status != "interrupted":
+            build_ako(session_id, send=not args.no_notify)
 
         if not args.no_results and session_status != "interrupted":
             collect_signal_results(session_id, args.min_ev)
