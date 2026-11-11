@@ -766,9 +766,9 @@ def main() -> None:
     if not 0 <= args.min_ev:
         sys.exit("ERROR: --min-ev cannot be negative.")
 
-    if not os.environ.get("PINNAPI_KEY"):
+    if not (os.environ.get("PINNAPI_KEY_TENNIS") or os.environ.get("PINNAPI_KEY")):
         sys.exit(
-            "ERROR: PINNAPI_KEY is not set. "
+            "ERROR: PINNAPI_KEY_TENNIS is not set. "
             "Check your .env loading or environment variables."
         )
 

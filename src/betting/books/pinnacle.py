@@ -143,10 +143,15 @@ def parse_pinnacle_matches(data: dict[str, Any], captured_at: str) -> list[dict[
 
 # ---------- pipeline ----------
 
+def tennis_api_key() -> str | None:
+    """The tennis key. PINNAPI_KEY is its old name, still read as a fallback."""
+    return os.environ.get("PINNAPI_KEY_TENNIS") or os.environ.get("PINNAPI_KEY")
+
+
 def main() -> dict[str, Any]:
-    api_key = os.environ.get("PINNAPI_KEY")
+    api_key = tennis_api_key()
     if not api_key:
-        sys.exit("Set the PINNAPI_KEY environment variable.")
+        sys.exit("Set the PINNAPI_KEY_TENNIS environment variable.")
 
     BOOK_DATA_DIR.mkdir(parents=True, exist_ok=True)
     RAW_DIR.mkdir(parents=True, exist_ok=True)
