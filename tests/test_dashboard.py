@@ -1530,3 +1530,29 @@ def test_alerted_matches_name_the_first_alert():
     assert "<th" in page and ">Alerted</th>" in page and "🔔 Betclic 3.90" in page
     cards = dashboard.cards_html(dashboard.add_alerts(records, [alert("Bea Beta")]), 0.02, False)
     assert "🔔 Betclic 3.90" in cards
+
+
+def test_alerted_rows_get_a_provisional_clv_before_the_start():
+    from betting.margin import remove_margin
+
+    records = dashboard.table_records([row()])  # Bet on Bea Beta, starts 20:00 on 3 Nov
+    sources = outcome_sources()
+    before = datetime(2026, 11, 3, 19, 30, tzinfo=timezone.utc)
+    early = dashboard.add_outcomes(records, sources, before)
+    assert early[0]["CLV"] is None
+
+    alerts = [alert("Bea Beta", "Superbet", 3.0, hour=23), alert("Bea Beta", price=2.0, hour=22)]
+    [record] = dashboard.add_alert_clv(early, alerts, sources, before)
+    fair = remove_margin([2.5, 1.55], "power")[1]  # newest snapshot up to now: 19:00
+    assert record["CLV"] == pytest.approx(2.0 * fair - 1)  # first alert: Betclic
+    assert isinstance(record["CLV"], dashboard.ProvisionalCLV)
+    assert dashboard.format_clv(record["CLV"]).startswith("≈")
+    assert "0.5 h ago" in record["_title CLV"] and "after tax 2.64" in record["_title CLV"]
+    assert "≈" in dashboard.table_html([record], 0.02, False)
+
+    # Started: the real CLV stays; no CLV column or no alert: unchanged.
+    started = dashboard.add_outcomes(records, sources, AFTER_START)
+    assert dashboard.add_alert_clv(started, alerts, sources, AFTER_START) == started
+    assert dashboard.add_alert_clv(records, alerts, sources, before) == records
+    assert dashboard.add_alert_clv(early, [], sources, before) == early
+    assert not dashboard.format_clv(0.05).startswith("≈")

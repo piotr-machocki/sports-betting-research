@@ -1246,6 +1246,113 @@ def add_alerts(records: list[dict], alerts: list[dict]) -> list[dict]:
     return out
 
 
+# Superbet pays 0.88 x stake x odds; alerts keep its price as the app shows it.
+SUPERBET_TAX_FACTOR = 0.88
+
+
+class ProvisionalCLV(float):
+    """A CLV worked out before the start (alert_clv), shown with a leading ≈."""
+
+
+def format_clv(value: float) -> str:
+    text = format_ev(value)
+    return f"≈{text}" if isinstance(value, ProvisionalCLV) else text
+
+
+def fair_now(
+    player: str, sightings: list[dict], now: datetime
+) -> tuple[float | None, str, float | None]:
+    """(power-devigged probability of player, Pinnacle price, hours ago) at Pinnacle's
+    newest snapshot up to now, else (None, '', None)."""
+    import evaluate_ev
+    import match_results
+
+    from betting.margin import remove_margin
+
+    tokens = match_results.name_tokens(player)
+
+    for sighting in reversed(sightings):
+        seen = evaluate_ev.parse_time(sighting["captured_at"])
+        odds = [number(sighting.get("odds1")), number(sighting.get("odds2"))]
+        side = evaluate_ev.side_of(sighting["player1"], sighting["player2"], tokens)
+
+        if seen is None or seen > now or not side or not all(o and o > 1 for o in odds):
+            continue
+
+        fair = remove_margin(odds, REFERENCE_METHOD)
+        return fair[side - 1], f"{odds[side - 1]:.2f}", (now - seen).total_seconds() / 3600
+
+    return None, "", None
+
+
+def add_alert_clv(
+    records: list[dict], alerts: list[dict], sources: dict, now: datetime
+) -> list[dict]:
+    """Before the start, an alerted row's empty CLV becomes the alert's price (Superbet's
+    after tax) x Pinnacle's power-devigged probability now - 1: whether the bet placed
+    on the alert is still +EV. Not a closing line yet, hence ProvisionalCLV (≈)."""
+    import evaluate_ev
+
+    by_match: dict[tuple, list[dict]] = {}
+
+    for alert in alerts:
+        if alert["price"]:
+            key = frozenset((alert["player1"], alert["player2"])), alert["tournament"]
+            by_match.setdefault(key, []).append(alert)
+
+    out = []
+
+    for record in records:
+        found = by_match.get(match_key(record), [])
+
+        if "CLV" not in record or record["CLV"] is not None or not found:
+            out.append(record)
+            continue
+
+        key = evaluate_ev.match_key(record["Bet on"], record["Opponent"], record["Tournament"])
+        sightings = sources.get("sightings", {}).get(key, [])
+        start = known_start(record, sightings)
+
+        if start is not None and start <= now:
+            out.append(record)
+            continue
+
+        same = [alert for alert in found if alert["player"] == record["Bet on"]]
+        chosen = sorted(
+            same or found,
+            key=lambda alert: alert["at"] or datetime.max.replace(tzinfo=timezone.utc),
+        )
+        values, lines = [], []
+
+        for alert in chosen:
+            fair, pinnacle, hours = fair_now(alert["player"], sightings, now)
+
+            if fair is None:
+                continue
+
+            tax = SUPERBET_TAX_FACTOR if alert["book"] == "Superbet" else 1.0
+            value = alert["price"] * tax * fair - 1
+            values.append(value)
+            lines.append(
+                f"{alert['book']} {alert['price']:.2f}"
+                + (" (after tax {:.2f})".format(alert["price"] * tax) if tax != 1 else "")
+                + f" on {alert['player']}: {value:+.1%}"
+            )
+
+        if not values:
+            out.append(record)
+            continue
+
+        title = (
+            "Not a closing line yet: the alert's price x Pinnacle's fair probability now "
+            f"(Pinnacle {pinnacle}, seen {hours:.1f} h ago) - 1, so whether the bet placed "
+            "on the alert is still +EV. " + "; ".join(lines) + "."
+        )
+        out.append({**record, "CLV": ProvisionalCLV(values[0]), "_title CLV": title})
+
+    return out
+
+
 def load_alerts() -> list[dict]:
     """The Telegram alerts still in notify's memory (3 days); none if it cannot be read."""
     try:
@@ -1720,7 +1827,7 @@ CELL_FORMATS: dict[str, Callable[[Any], str]] = {
     "Margin Pinnacle": percent,
     "Fair prob": format_probability,
     "Starts": lambda start: start.strftime("%a %H:%M"),
-    "CLV": format_ev,
+    "CLV": format_clv,
 }
 
 
@@ -2351,7 +2458,9 @@ COLUMN_HELP = {
     "Starts": "Pinnacle's scheduled start in local time. It can move.",
     "CLV": "Closing line value: the price behind Best EV x Pinnacle's power-devigged "
     "probability at its last price before the start - 1. Only once the match has "
-    "started; hover a value for how close to the start that price was.",
+    "started; hover a value for how close to the start that price was. Before the "
+    "start, an alerted match shows ≈: the alert's price x Pinnacle's fair probability "
+    "now - 1, i.e. whether that bet is still +EV.",
     "Result": "Whether the Bet on player won (Matchstat results). Pending until the "
     "match is played and the results cover its day; retirements and walkovers are named.",
     "Alerted": "A Telegram alert was already sent for this match: the book, price "
@@ -2543,7 +2652,12 @@ def render_table(
             result=filters["show_result"],
         )
 
-    shown = add_alerts(shown, load_alerts())
+    alerts = load_alerts()
+    shown = add_alerts(shown, alerts)
+
+    if outcomes is not None and filters["show_clv"]:
+        shown = add_alert_clv(shown, alerts, outcomes, datetime.now(timezone.utc))
+
     betclic = "Betclic" in books
     box.html(
         table_html(shown, min_ev, superbet, betclic)
@@ -2947,6 +3061,8 @@ Pinnacle's price is fair, and it is measured against results as they come in
 * **Result**: Won or Lost for the Bet on side, once the match results include it.
 * **CLV** (closing line value): the price taken against Pinnacle's last fair price
   before the start. Consistently positive CLV is the usual sign that an edge is real.
+  Before the start, an alerted match shows **≈** and the alert's price against
+  Pinnacle's fair price now: whether the bet placed on the alert is still +EV.
 * **Alerted** (🔔): a Telegram alert was already sent for this match, with the
   first alert's book, price and time. On the Bet on side that is the bet already
   placed, so a later, smaller EV there is not a new bet; an alert on the other
