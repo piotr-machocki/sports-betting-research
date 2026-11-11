@@ -4,13 +4,17 @@ Results live apart from the odds and are joined only when analysing:
     data/match_results/raw/<date>_<tour>.json - provider rows per day (merged by id)
     data/match_results/results.csv            - one clean row per match
     data/match_results/state.json             - last day fully fetched
+    data/match_results/extra/*.csv            - results from optional private
+                                                collectors (same columns); merged
+                                                by load_results, this provider's
+                                                row wins for a match it has
 
 run_once.py calls update() after each session. It fetches once yesterday (UTC) is
 no longer covered, from the last covered day and always the last RECHECK_DAYS.
 That first fetch runs just after midnight UTC, before the provider has the evening's
-late matches, so the first run after RECHECK_HOUR_UTC fetches the last RECHECK_DAYS
-again. Otherwise it makes no request: about two fetches a day. A rate limit is
-reported, never retried.
+late matches, so the first run after RECHECK_HOUR_UTC (about noon in Poland) fetches
+the last RECHECK_DAYS again. Otherwise it makes no request: two fetches a day, about
+10 requests. A rate limit is reported, never retried.
 
 Usage:
     python scripts/match_results.py                     # same step as run_once.py
@@ -51,7 +55,7 @@ RECHECK_DAYS = 3
 # Bidan-Nara (Naples, started 20:07 UTC on 10 Nov 2026) was not in a fetch at 00:00
 # on 11 Nov and came with the next one. So a second fetch of the last RECHECK_DAYS
 # runs once a day after this hour, a few requests out of the 50 a day.
-RECHECK_HOUR_UTC = 8
+RECHECK_HOUR_UTC = 11
 MAX_REQUESTS_PER_RUN = 30  # the free plan allows 50 a day
 RESERVE_REQUESTS = 5  # stop when the daily quota gets this low
 
@@ -59,6 +63,7 @@ DATA_DIR = ROOT / "data" / "match_results"
 RAW_DIR = DATA_DIR / "raw"
 RESULTS_CSV = DATA_DIR / "results.csv"
 STATE_FILE = DATA_DIR / "state.json"
+EXTRA_DIR = DATA_DIR / "extra"
 
 PINNACLE_RAW_DIR = ROOT / "data" / "pinnacle" / "raw"
 PROCESSED_ODDS = ROOT / "data" / "results" / "processed_odds.csv"
@@ -493,9 +498,42 @@ def link_match(
     }
 
 
-def load_results() -> list[dict[str, str]]:
-    with RESULTS_CSV.open(newline="", encoding="utf-8-sig") as handle:
+def read_rows(path: Path) -> list[dict[str, str]]:
+    with path.open(newline="", encoding="utf-8-sig") as handle:
         return list(csv.DictReader(handle))
+
+
+def result_pair(row: dict[str, Any]) -> frozenset:
+    return frozenset((team_tokens(row.get("winner") or ""), team_tokens(row.get("loser") or "")))
+
+
+def load_results(include_extra: bool = True) -> list[dict[str, str]]:
+    """results.csv, plus rows from EXTRA_DIR for matches it does not have yet.
+
+    An extra row is dropped once this provider has the same pair within a day of
+    it: the provider says retired or walkover, an extra source may not.
+    """
+    rows = read_rows(RESULTS_CSV) if RESULTS_CSV.exists() else []
+
+    if not include_extra or not EXTRA_DIR.exists():
+        return rows
+
+    known: set[tuple[str, frozenset]] = {(row["date"], result_pair(row)) for row in rows}
+
+    for path in sorted(EXTRA_DIR.glob("*.csv")):
+        for row in read_rows(path):
+            day = date.fromisoformat(row["date"])
+            pair = result_pair(row)
+            nearby = ((day + timedelta(days=offset)).isoformat() for offset in (-1, 0, 1))
+
+            if not any((d, pair) in known for d in nearby):
+                rows.append(row)
+
+    return rows
+
+
+def extra_files() -> list[Path]:
+    return sorted(EXTRA_DIR.glob("*.csv")) if EXTRA_DIR.exists() else []
 
 
 # ---------- coverage report ----------
@@ -526,7 +564,7 @@ def unique_snapshot_matches() -> list[dict[str, str]]:
 
 def coverage_report() -> None:
     covered = read_covered_through()
-    by_day = index_results(load_results())
+    by_day = index_results(load_results(include_extra=False))
     print(f"Results: {sum(map(len, by_day.values()))}, covered through {covered}")
 
     totals: Counter[str] = Counter()

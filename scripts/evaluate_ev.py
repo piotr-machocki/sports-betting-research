@@ -493,7 +493,7 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-    results = mr.load_results() if mr.RESULTS_CSV.exists() else []
+    results = mr.load_results()
     covered = mr.read_covered_through()
 
     items, too_late = build_all(

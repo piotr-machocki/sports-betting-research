@@ -13,8 +13,10 @@ Workflow:
        (data/results/reports/) of the session.
     9. Send a Telegram message for each new bet at or above --min-ev
        (scripts/notify.py; only with TELEGRAM_* in .env, skipped with --no-notify).
-    10. Fetch finished match results, at most once a day
-       (scripts/match_results.py), unless the run was interrupted.
+    10. Fetch the results of bets alerted at --min-ev that have started
+       (src/betting/books/superbet_results.py, if present), then finished match
+       results twice a day (scripts/match_results.py), unless the run was
+       interrupted or --no-results is given.
 
 Usage:
     python scripts/run_once.py
@@ -67,6 +69,7 @@ BETCLIC_SCRIPT = SRC_DIR / "betting" / "books" / "betclic.py"
 BETCLIC_SCROLL_SCRIPT = SRC_DIR / "betting" / "books" / "betclic_scroll.py"
 BETCLIC_FEED_SCRIPT = SRC_DIR / "betting" / "books" / "betclic_feed.py"
 SUPERBET_SCRIPT = SRC_DIR / "betting" / "books" / "superbet.py"
+SIGNAL_RESULTS_SCRIPT = SRC_DIR / "betting" / "books" / "superbet_results.py"
 
 WORKER_SCRIPT = SCRIPTS_DIR / "process_live_odds.py"
 MONITOR_SCRIPT = SCRIPTS_DIR / "live_monitor.py"
@@ -294,7 +297,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-results",
         action="store_true",
-        help="Skip the daily fetch of finished match results.",
+        help="Skip fetching finished match results (signals and daily).",
     )
 
     parser.add_argument(
@@ -348,6 +351,28 @@ def collect_superbet(session_id: str, pinnacle_snapshot: Path) -> None:
         )
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"WARNING: Superbet collection failed: {exc}", flush=True)
+
+
+def collect_signal_results(session_id: str, min_ev: float) -> None:
+    """Optional; writes data/match_results/extra/. A failure never stops the run."""
+    if not SIGNAL_RESULTS_SCRIPT.exists():
+        return
+
+    try:
+        subprocess.run(
+            [
+                sys.executable,
+                str(SIGNAL_RESULTS_SCRIPT),
+                "--session-id",
+                session_id,
+                "--min-ev",
+                str(min_ev),
+            ],
+            check=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"WARNING: signal results failed: {exc}", flush=True)
 
 
 # --------------------------------------------------------------- Pinnacle ---
@@ -1038,6 +1063,7 @@ def main() -> None:
             notify.run_step(session_id, args.min_ev)
 
         if not args.no_results and session_status != "interrupted":
+            collect_signal_results(session_id, args.min_ev)
             match_results.run_step()
 
         if monitor is not None and not monitor_closed:

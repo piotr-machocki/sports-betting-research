@@ -46,6 +46,7 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(mr, "RAW_DIR", tmp_path / "raw")
     monkeypatch.setattr(mr, "RESULTS_CSV", tmp_path / "results.csv")
     monkeypatch.setattr(mr, "STATE_FILE", tmp_path / "state.json")
+    monkeypatch.setattr(mr, "EXTRA_DIR", tmp_path / "extra")
     monkeypatch.setattr(mr, "first_snapshot_date", lambda: None)
     monkeypatch.setenv("RAPIDAPI_KEY", "test-key")
     return tmp_path
@@ -110,7 +111,7 @@ def test_no_request_while_yesterday_is_covered(data_dir, monkeypatch):
     write_state_at(date(2026, 11, 1), "2026-11-02T00:00:24+00:00")
     monkeypatch.setattr(mr.requests, "get", lambda *a, **k: pytest.fail("made a request"))
 
-    summary = mr.update(now=datetime(2026, 11, 2, 7, 0, tzinfo=timezone.utc))
+    summary = mr.update(now=datetime(2026, 11, 2, 10, 0, tzinfo=timezone.utc))
 
     assert summary["status"] == "up to date"
     assert summary["requests"] == 0
@@ -129,16 +130,16 @@ def test_rechecks_once_after_the_recheck_hour(data_dir, monkeypatch):
     get, calls = fake_get(FakeResponse({"data": [provider_row()], "hasNextPage": False}))
     monkeypatch.setattr(mr.requests, "get", get)
 
-    before = mr.update(now=datetime(2026, 11, 2, 7, 45, tzinfo=timezone.utc))
+    before = mr.update(now=datetime(2026, 11, 2, 10, 45, tzinfo=timezone.utc))
     assert before["requests"] == 0
 
-    after = mr.update(now=datetime(2026, 11, 2, 8, 0, 5, tzinfo=timezone.utc))
+    after = mr.update(now=datetime(2026, 11, 2, 11, 0, 5, tzinfo=timezone.utc))
     assert after["requests"] == 2
     assert "2026-10-30/2026-11-01" in calls[0][0]
     assert mr.read_covered_through() == date(2026, 11, 1)
 
     # Rewritten past the hour: no third fetch that day.
-    write_state_at(date(2026, 11, 1), "2026-11-02T08:00:09+00:00")
+    write_state_at(date(2026, 11, 1), "2026-11-02T11:00:09+00:00")
     monkeypatch.setattr(mr.requests, "get", lambda *a, **k: pytest.fail("made a request"))
     late = mr.update(now=datetime(2026, 11, 2, 23, 0, tzinfo=timezone.utc))
     assert late["status"] == "up to date"
@@ -146,11 +147,11 @@ def test_rechecks_once_after_the_recheck_hour(data_dir, monkeypatch):
 
 def test_recheck_due():
     utc = timezone.utc
-    now = datetime(2026, 11, 2, 9, 0, tzinfo=utc)
+    now = datetime(2026, 11, 2, 12, 0, tzinfo=utc)
     assert mr.recheck_due(None, now)
     assert mr.recheck_due(datetime(2026, 11, 2, 0, 0, tzinfo=utc), now)
-    assert not mr.recheck_due(datetime(2026, 11, 2, 8, 30, tzinfo=utc), now)
-    assert not mr.recheck_due(datetime(2026, 11, 2, 0, 0, tzinfo=utc), now.replace(hour=7))
+    assert not mr.recheck_due(datetime(2026, 11, 2, 11, 30, tzinfo=utc), now)
+    assert not mr.recheck_due(datetime(2026, 11, 2, 0, 0, tzinfo=utc), now.replace(hour=10))
 
 
 def test_catches_up_after_days_off_and_rechecks_recent_days(data_dir, monkeypatch):
@@ -374,3 +375,45 @@ def test_linked_result_has_no_internal_fields():
     outcome = link("Aidan Mayo", "Duncan Chan", [result()])
 
     assert not [key for key in outcome["result"] if key.startswith("_")]
+
+
+# ---------- extra results ----------
+
+def write_csv(path, rows):
+    import csv as _csv
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8-sig") as handle:
+        writer = _csv.DictWriter(handle, fieldnames=mr.RESULT_FIELDS)
+        writer.writeheader()
+        writer.writerows({k: row.get(k, "") for k in mr.RESULT_FIELDS} for row in rows)
+
+
+def extra_result(winner, loser, day, **extra):
+    return {"match_id": f"{winner}-{day}", "date": day, "winner": winner, "loser": loser,
+            "result": "6-4 6-4", "result_type": "completed", **extra}
+
+
+def test_extra_results_fill_gaps_and_the_provider_wins(data_dir):
+    write_csv(mr.RESULTS_CSV, [extra_result("Fadi Bidan", "Koki Nara", "2026-11-10", result_type="retired")])
+    write_csv(mr.EXTRA_DIR / "other.csv", [
+        extra_result("Koki Nara", "Fadi Bidan", "2026-11-11"),  # same pair a day later: the provider has it
+        extra_result("Jan Kowalski", "Adam Nowak", "2026-11-10"),
+    ])
+
+    rows = mr.load_results()
+
+    assert [(r["winner"], r["result_type"]) for r in rows] == [
+        ("Fadi Bidan", "retired"),
+        ("Jan Kowalski", "completed"),
+    ]
+    assert len(mr.load_results(include_extra=False)) == 1
+
+
+def test_extra_results_without_the_provider_file(data_dir):
+    write_csv(mr.EXTRA_DIR / "other.csv", [extra_result("Jan Kowalski", "Adam Nowak", "2026-11-10")])
+
+    by_day = mr.index_results(mr.load_results())
+    linked = mr.link_match("Adam Nowak", "Jan Kowalski", by_day, starts_at="2026-11-10T20:00:00Z")
+
+    assert linked["linked"] and linked["winner_side"] == 2

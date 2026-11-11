@@ -166,6 +166,8 @@ MATCH_RESULTS_FILES = [
     ROOT / "data" / "match_results" / "results.csv",
     ROOT / "data" / "match_results" / "state.json",
 ]
+# Results from optional private collectors (match_results.EXTRA_DIR).
+MATCH_RESULTS_EXTRA_DIR = ROOT / "data" / "match_results" / "extra"
 
 # Only for the filters: the tournament text says Tour and Draw, and the EV
 # columns show Best EV.
@@ -1023,7 +1025,7 @@ def outcome_signature() -> tuple:
         snapshots = []
 
     files = []
-    for path in MATCH_RESULTS_FILES:
+    for path in [*MATCH_RESULTS_FILES, *sorted(MATCH_RESULTS_EXTRA_DIR.glob("*.csv"))]:
         try:
             stat = path.stat()
             files.append((stat.st_mtime_ns, stat.st_size))
@@ -1042,7 +1044,7 @@ def load_outcome_sources(cache: dict) -> dict:
         import evaluate_ev
         import match_results
 
-        results = match_results.load_results() if match_results.RESULTS_CSV.exists() else []
+        results = match_results.load_results()
         cache.update(
             signature=signature,
             sightings=evaluate_ev.load_sightings(),
