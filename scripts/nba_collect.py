@@ -31,6 +31,9 @@ Sources (each optional; a failure only warns and is recorded in runs.jsonl):
   props runs, player points/rebounds/assists/threes. Bid/ask in probability.
 - ``superbet``: private collector ``src/betting/books/superbet_nba.py`` (run
   only if the file exists). Prices as the app shows them, before the 12% tax.
+- ``betclic``: private collector ``src/betting/books/betclic_nba.py`` (run
+  only if the file exists): moneyline every run; in props runs also spreads,
+  totals and player props. Prices already include the 12% tax.
 
 Row conventions: ``price`` is a decimal price (sportsbooks); ``bid``/``ask``/
 ``last`` are probabilities (exchanges, for the outcome in ``side``). ``side``
@@ -74,7 +77,9 @@ DATA_DIR = ROOT / "data" / "nba"
 SNAPSHOT_DIR = DATA_DIR / "snapshots"
 RESULTS_CSV = DATA_DIR / "results" / "espn_results.csv"
 RUNS_LOG = DATA_DIR / "runs.jsonl"
-SUPERBET_NBA = ROOT / "src" / "betting" / "books" / "superbet_nba.py"
+BOOKS_DIR = ROOT / "src" / "betting" / "books"
+SUPERBET_NBA = BOOKS_DIR / "superbet_nba.py"
+BETCLIC_NBA = BOOKS_DIR / "betclic_nba.py"
 
 TIMEOUT = 30
 USER_AGENT = (
@@ -743,16 +748,25 @@ def fetch_polymarket(now: datetime, props: bool) -> list[dict]:
     return rows
 
 
-# ---------- Superbet (private) ----------
+# ---------- private bookmaker collectors (gitignored) ----------
 
 
-def fetch_superbet(now: datetime, props: bool) -> list[dict]:
-    if not SUPERBET_NBA.exists():
-        raise SkipSource(f"{SUPERBET_NBA.relative_to(ROOT)} not found")
-    spec = importlib.util.spec_from_file_location("superbet_nba", SUPERBET_NBA)
+def run_private(path: Path, now: datetime, props: bool) -> list[dict]:
+    """``collect(now, props)`` of a private collector; skipped if it is absent."""
+    if not path.exists():
+        raise SkipSource(f"{path.relative_to(ROOT)} not found")
+    spec = importlib.util.spec_from_file_location(path.stem, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module.collect(now, props)
+
+
+def fetch_superbet(now: datetime, props: bool) -> list[dict]:
+    return run_private(SUPERBET_NBA, now, props)
+
+
+def fetch_betclic(now: datetime, props: bool) -> list[dict]:
+    return run_private(BETCLIC_NBA, now, props)
 
 
 # ---------- run ----------
@@ -771,6 +785,7 @@ SOURCES: dict[str, Callable[[datetime, bool], list[dict]]] = {
     "kalshi": fetch_kalshi,
     "polymarket": fetch_polymarket,
     "superbet": fetch_superbet,
+    "betclic": fetch_betclic,
 }
 
 
@@ -793,7 +808,7 @@ def resolve_dates(rows: list[dict], now: datetime) -> None:
 def fill_starts(rows: list[dict]) -> None:
     """Give rows without a start time the one another source has for that game."""
     starts: dict[str, str] = {}
-    for source in ("pinnacle", "espn", "actionnetwork", "superbet", "polymarket", "kalshi"):
+    for source in ("pinnacle", "espn", "actionnetwork", "superbet", "betclic", "polymarket", "kalshi"):
         for r in rows:
             if r["source"] == source and r.get("starts_at"):
                 starts.setdefault(r["game_key"], r["starts_at"])

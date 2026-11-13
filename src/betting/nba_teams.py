@@ -35,7 +35,7 @@ TEAMS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "MIL": ("Milwaukee Bucks", "Milwaukee", ()),
     "MIN": ("Minnesota Timberwolves", "Minnesota", ()),
     "NOP": ("New Orleans Pelicans", "New Orleans", ("NO", "NOR")),
-    "NYK": ("New York Knicks", "New York", ("NY",)),
+    "NYK": ("New York Knicks", "New York", ("NY", "NY Knicks")),
     "OKC": ("Oklahoma City Thunder", "Oklahoma City", ()),
     "ORL": ("Orlando Magic", "Orlando", ()),
     "PHI": ("Philadelphia 76ers", "Philadelphia", ()),

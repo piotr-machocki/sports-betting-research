@@ -46,6 +46,8 @@ src/betting/books/betclic_feed.py
 tests/test_betclic_feed.py
 src/betting/books/superbet_nba.py
 tests/test_superbet_nba.py
+src/betting/books/betclic_nba.py
+tests/test_betclic_nba.py
 
 # Research
 research/
