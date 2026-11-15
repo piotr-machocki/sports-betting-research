@@ -110,20 +110,35 @@ def number(value) -> float | None:
     return live_monitor.number(value)
 
 
+# How long after Pinnacle's listed start a bet is still sent (user, 15 Nov 2026).
+# Errani/Paolini were +5.9% at Betclic at 22:20 and 22:25 UTC, but listed to start at
+# 22:20, so nothing was sent; Pinnacle later moved the start to 22:35. Starts slip
+# often: on 13-15 Nov, 70 of 156 matches seen past their start were still listed 20
+# minutes after it. PinnAPI lists every match as prematch, so Pinnacle cannot say
+# whether one has begun; each book's own live check is the guard (Betclic: the worker
+# calculates EV only for rows it does not mark live, and 27 of 242 such rows within
+# 30 minutes were; Superbet: a live match leaves its prematch feed).
+LATE_START_MINUTES = 30
+
+
 def candidates(rows: list[dict], min_ev: float, now: datetime) -> list[dict]:
     """One bet per match and book whose EV reaches min_ev, best EV first.
 
     The worker computes Betclic EV only for prematch FOUND rows; Superbet has EV
-    only for FOUND rows (VERIFY has prices but no EV). A start already passed is
-    skipped, since such a row may be live by now.
+    only for FOUND rows (VERIFY has prices but no EV). A start more than
+    LATE_START_MINUTES ago is skipped, since the match is most likely live; within
+    that, the bet carries started_minutes for the message's warning.
     """
     bets = []
 
     for row in live_monitor.latest_per_match(rows):
         start = live_monitor.parse_timestamp(row.get("pinnacle_starts_at"))
+        started_minutes = None
 
         if start is not None and start <= now:
-            continue
+            started_minutes = (now - start).total_seconds() / 60
+            if started_minutes > LATE_START_MINUTES:
+                continue
 
         for book, ev_prefix, price_field, net_field in (
             ("Betclic", "ev", "betclic_odds_for_pin_p{side}", "betclic_odds_for_pin_p{side}"),
@@ -131,7 +146,7 @@ def candidates(rows: list[dict], min_ev: float, now: datetime) -> list[dict]:
         ):
             evs = {side: number(row.get(f"{ev_prefix}{side}")) for side in (1, 2)}
 
-            if book == "Betclic" and row.get("status") != "FOUND":
+            if book == "Betclic" and (row.get("status") != "FOUND" or row.get("betclic_status") == "live"):
                 continue
 
             if book == "Superbet" and row.get("superbet_status") != "FOUND":
@@ -165,6 +180,7 @@ def candidates(rows: list[dict], min_ev: float, now: datetime) -> list[dict]:
                 "player2": row.get("pinnacle_player2", ""),
                 "tournament": row.get("pinnacle_tournament", ""),
                 "starts_at": start,
+                "started_minutes": started_minutes,
             })
 
     return sorted(bets, key=lambda bet: -bet["ev"])
@@ -204,11 +220,18 @@ def message(bet: dict) -> str:
         price += f" ({bet['net']:.2f} after tax)"
 
     fair = f" · Pinnacle fair {bet['fair']:.2f}" if bet["fair"] else ""
+    late = ""
+
+    if bet.get("started_minutes") is not None:
+        late = (
+            f"\n⚠️ Listed start passed {bet['started_minutes']:.0f} min ago and "
+            f"{bet['book']} still shows it before the match: check it has not started"
+        )
 
     return (
         f"🎾 EV {bet['ev']:+.1%} · {bet['book']} {price} on {bet['player']}\n"
         f"{bet['player1']} vs {bet['player2']}\n"
-        f"{bet['tournament']} · {local_time(bet['starts_at'])}{fair}"
+        f"{bet['tournament']} · {local_time(bet['starts_at'])}{fair}{late}"
     )
 
 

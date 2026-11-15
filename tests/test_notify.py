@@ -41,8 +41,28 @@ def test_picks_the_best_side_above_the_minimum():
 
 def test_skips_low_ev_started_and_unconfirmed():
     assert notify.candidates([row(ev2="0.01")], 0.02, NOW) == []
-    assert notify.candidates([row(pinnacle_starts_at="2026-11-07T17:00:00Z")], 0.02, NOW) == []
+    # Over LATE_START_MINUTES (30) past the listed start: most likely live.
+    assert notify.candidates([row(pinnacle_starts_at="2026-11-07T17:29:00Z")], 0.02, NOW) == []
     assert notify.candidates([row(status="VERIFY")], 0.02, NOW) == []
+
+
+def test_a_late_start_is_sent_with_a_warning():
+    # Errani/Paolini, 15 Nov 2026: listed for 22:20, +5.9% at Betclic at 22:20 and 22:25.
+    [bet] = notify.candidates([row(pinnacle_starts_at="2026-11-07T17:35:00Z")], 0.02, NOW)
+
+    assert bet["started_minutes"] == 25
+    text = notify.message(bet)
+    assert text.endswith(
+        "\n⚠️ Listed start passed 25 min ago and Betclic still shows it before the match: "
+        "check it has not started"
+    )
+
+    # Betclic marking it live stops it, even inside the window.
+    live = row(pinnacle_starts_at="2026-11-07T17:55:00Z", betclic_status="live")
+    assert notify.candidates([live], 0.02, NOW) == []
+
+    [ahead] = notify.candidates([row()], 0.02, NOW)
+    assert ahead["started_minutes"] is None and "⚠️" not in notify.message(ahead)
 
 
 def test_skips_betclic_prices_below_its_minimum():
