@@ -1474,7 +1474,12 @@ def test_track_card_shows_each_book_and_says_when_nothing_qualified():
     ])
     page = dashboard.track_card({"Betclic": stats}, 0.02)
 
-    assert "first flag at EV ≥ 2.0%, Betclic odds ≥ 1.14" in page
+    # No heading: the rules are in the Signals tip and a note under Betclic's tiles.
+    assert "Track record (" not in page and "overview-heading" not in page
+    assert '<div class="tip">First flag at EV ≥ 2.0%, each match once. 0 pending, 0 with no result.</div>' in page
+    assert page.endswith("<div></div><div class=\"track-note\">Odds ≥ 1.14 (Betclic's lowest single)</div></div></div>")
+    superbet_only = dashboard.track_card({"Superbet": stats}, 0.02, ["Superbet"])
+    assert "track-note" not in superbet_only and "EV ≥ 2.0%" in superbet_only
     assert '<div class="track-book">Betclic</div>' in page
     for text in (">1-1<", ">+2.0%<", ">50%<", "Win rate (exp. 52%)", "ROI ±139%", ">+0.00<"):
         assert text in page
@@ -1483,7 +1488,6 @@ def test_track_card_shows_each_book_and_says_when_nothing_qualified():
     assert dashboard.lifetime_text({"lasts": 30.0, "lasts_seen": 15.0}) == "15–30 min"
     assert dashboard.lifetime_text({}) == "--"
     assert dashboard.minutes_text(29.6) == "30 min" and dashboard.minutes_text(150) == "2.5 h"
-    assert "Betclic odds" not in dashboard.track_card({}, 0.02, ["Superbet"])
     assert "No match has reached this EV" in dashboard.track_card({}, 0.02)
 
     summary = dashboard.session_summary([row()], {"pinnacle": {"matches": 1}}, 0.02, NOW)
@@ -1751,5 +1755,5 @@ def test_lasts_tile_shows_its_share_on_hover_or_tap():
     ]))
     page = dashboard.track_card({"Betclic": stats}, 0.02)
 
-    assert '<div class="overview-tile has-tip" tabindex="0"><div class="value">&lt; 15 min</div>' in page
+    assert '<div class="overview-tile has-tip end" tabindex="0"><div class="value">&lt; 15 min</div>' in page
     assert '<div class="tip">67% of 3 signals were gone within 15 min, checked every 15 min.</div>' in page

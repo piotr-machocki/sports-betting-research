@@ -515,10 +515,10 @@ OVERVIEW_STYLE = """<style>
 .overview-tile.has-tip .label { text-decoration: underline dotted; text-underline-offset: 3px; }
 @media (max-width: 700px) {
     /* Over the page, not inside the tile. The Track record's tiles sit in a 3-column
-       grid with Lasts on the right, so its tip opens leftwards from the tile's right
-       edge and stays on screen. */
+       grid, so a tip in the right column (.end, Lasts) opens leftwards from the tile's
+       right edge and stays on screen. */
     .overview-tile .tip { max-width: 220px; }
-    .track-rows .overview-tile .tip { left: auto; right: 0; }
+    .track-rows .has-tip.end .tip { left: auto; right: 0; }
 }
 .overview-tile .label {
     font-size: 12px;
@@ -532,6 +532,10 @@ OVERVIEW_STYLE = """<style>
     gap: 6px 16px;
 }
 .track-book { font-weight: 600; }
+.track-note {
+    font-size: 12px;
+    color: color-mix(in srgb, currentColor 65%, transparent);
+}
 /* Phones (user, 11 Nov 2026: the wrapped tiles blended together): each book gets a
    header line over its own grid of boxed tiles, three a row, so every value keeps its label. */
 @media (max-width: 700px) {
@@ -543,6 +547,7 @@ OVERVIEW_STYLE = """<style>
         font-size: 14px;
     }
     .track-book:first-child { margin-top: 2px; }
+    .track-note { margin-top: 6px; }
     .track-rows .overview-tiles {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2459,13 +2464,14 @@ def lifetime_help(stats: dict) -> str:
     )
 
 
-def tip_tile(label: str, value: str, tip: str, value_class: str = "") -> str:
+def tip_tile(label: str, value: str, tip: str, value_class: str = "", end: bool = False) -> str:
     """A tile whose explanation shows on hover, or on a tap on phones (tabindex makes
-    it focusable; a tap elsewhere hides it)."""
+    it focusable; a tap elsewhere hides it). end: the tile is in the right column on
+    phones, so its tip opens leftwards."""
     css = f"value {value_class}".strip()
 
     return (
-        '<div class="overview-tile has-tip" tabindex="0">'
+        f'<div class="overview-tile has-tip{" end" if end else ""}" tabindex="0">'
         f'<div class="{css}">{html.escape(value)}</div>'
         f'<div class="label">{html.escape(label)}</div>'
         f'<div class="tip">{html.escape(tip)}</div></div>'
@@ -2479,9 +2485,11 @@ def minutes_text(minutes: float | None) -> str:
     return f"{minutes:.0f} min" if minutes < 90 else f"{minutes / 60:.1f} h"
 
 
-def overview_track(record: dict[str, dict]) -> str:
+def overview_track(record: dict[str, dict], min_ev: float = 0.02) -> str:
     """One row of tiles per book. CLV first: it settles in a day, while ROI needs
-    hundreds of bets before its range stops covering 0."""
+    hundreds of bets before its range stops covering 0. The rules (first flag at
+    min_ev, Betclic's minimum odds) are in the Signals tip and a note under Betclic
+    (user, 15 Nov 2026), not in a heading."""
 
     def pct(value: float | None, digits: int = 1, signed: bool = True) -> str:
         if value is None:
@@ -2499,10 +2507,10 @@ def overview_track(record: dict[str, dict]) -> str:
             open_text += f", {stats['other']} retired or walkover (not in W-L or ROI)"
 
         tiles = [
-            overview_tile(
+            tip_tile(
                 "Signals",
                 str(stats["signals"]),
-                f"Matches flagged, each once, at its first flag: {open_text}",
+                f"First flag at EV ≥ {min_ev:.1%}, each match once. {open_text}.",
             ),
             overview_tile(
                 "Avg CLV",
@@ -2547,12 +2555,19 @@ def overview_track(record: dict[str, dict]) -> str:
                 pct(stats["ev"]),
                 "Mean EV at the first flag, what the prices promised",
             ),
-            tip_tile("Lasts", lifetime_text(stats), lifetime_help(stats)),
+            tip_tile("Lasts", lifetime_text(stats), lifetime_help(stats), end=True),
         ]
         rows.append(
             f'<div class="track-book">{html.escape(book)}</div>'
             f'<div class="overview-tiles">{"".join(tiles)}</div>'
         )
+        if book == "Betclic":
+            # Under the tiles: an empty first column on desktop, its own line on phones.
+            rows.append(
+                '<div></div>'
+                f'<div class="track-note">Odds ≥ {BETCLIC_MIN_ODDS:.2f} '
+                "(Betclic's lowest single)</div>"
+            )
 
     return f'<div class="track-rows">{"".join(rows)}</div>'
 
@@ -2563,12 +2578,10 @@ def track_card(
     books: list[str] = BOOKS,
     error: str | None = None,
 ) -> str:
-    """The Track record card, for overview_html's last row. None = still loading."""
-    limit = f", Betclic odds ≥ {BETCLIC_MIN_ODDS:.2f}" if "Betclic" in books else ""
-    heading = f"Track record (all sessions, first flag at EV ≥ {min_ev:.1%}{limit})"
-
+    """The Track record card, for overview_html's last row, under its "Statistics
+    (all runs)" title and with no heading of its own. None = still loading."""
     if record:
-        body = overview_track(record)
+        body = overview_track(record, min_ev)
     else:
         if record is not None:
             text = "No match has reached this EV before its start yet."
@@ -2584,10 +2597,7 @@ def track_card(
             else f'<div class="overview-empty">{html.escape(text)}</div>'
         )
 
-    return (
-        '<div class="overview-card">'
-        f'<div class="overview-heading">{html.escape(heading)}</div>{body}</div>'
-    )
+    return f'<div class="overview-card">{body}</div>'
 
 
 def pinnacle_age_text(age: float) -> str:
