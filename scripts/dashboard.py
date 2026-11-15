@@ -1625,15 +1625,18 @@ def lifetime_stats(lifetimes: list[dict]) -> dict:
     if sum(life["ended"] for life in fast) >= MIN_FAST_SIGNALS:
         lifetimes = fast
 
-    ended = [life["minutes"] for life in lifetimes if life["ended"]]
-    seen = [life["seen"] for life in lifetimes if life["ended"]]
+    # The middle signal itself (the upper one of an even count), not a mean of two:
+    # with runs 15 minutes apart that would read "7–22 min", times no signal had.
+    finished = sorted((life for life in lifetimes if life["ended"]), key=lambda life: life["minutes"])
+    middle = finished[len(finished) // 2] if finished else None
+    ended = [life["minutes"] for life in finished]
     checked = [life["next_gone"] for life in lifetimes if life["next_gone"] is not None]
     gaps = [life["gap"] for life in lifetimes if life.get("gap") is not None]
-    lasts = statistics.median(ended) if ended else None
+    lasts = middle["minutes"] if middle else None
 
     return {
         "lasts": lasts,
-        "lasts_seen": statistics.median(seen) if seen else None,
+        "lasts_seen": middle["seen"] if middle else None,
         "lasts_ended": len(ended),
         "lasts_open": len(lifetimes) - len(ended),
         # Within the median rounded to a minute, as it is shown.

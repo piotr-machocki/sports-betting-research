@@ -1734,6 +1734,11 @@ def test_lasts_prefers_five_minute_runs_once_there_are_enough():
     assert dashboard.lifetime_help(stats) == "70% of 10 signals were gone within 5 min, checked every 5 min."
     assert dashboard.lifetime_help({}) == "No signal has ended yet"
 
+    # An even count: the upper middle signal, not a mean of two (Superbet, 15 Nov 2026).
+    even = [life(15, 15)] * 5 + [life(30, 15, seen=15)] * 3 + [life(45, 15, seen=30), life(75, 15, seen=60)]
+    stats = dashboard.lifetime_stats(even)
+    assert dashboard.lifetime_text(stats) == "15–30 min" and stats["lasts_within"] == 0.8
+
 
 def test_lasts_tile_shows_its_share_on_hover_or_tap():
     stats = dashboard.track_stats([
