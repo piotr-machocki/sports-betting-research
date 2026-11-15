@@ -400,8 +400,8 @@ OVERVIEW_STYLE = """<style>
 .session-title .overview-title { margin-bottom: 0; }
 .session-facts { display: flex; flex-wrap: wrap; gap: 4px 28px; margin-top: 8px; }
 .session-facts .value {
-    font-size: 15px;
-    line-height: 20px;
+    font-size: 20px;
+    line-height: 26px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
 }
