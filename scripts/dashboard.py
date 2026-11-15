@@ -531,6 +531,18 @@ OVERVIEW_STYLE = """<style>
     .track-rows .overview-tile .label { font-size: 11px; line-height: 14px; }
 }
 .overview-empty { color: color-mix(in srgb, currentColor 65%, transparent); }
+.overview-loading { display: flex; align-items: center; gap: 10px; }
+.spinner {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    box-sizing: border-box;
+    border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+    border-top-color: #2a78d6;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>"""
 
 # Installed once. Streamlit runs a script before inserting the HTML sent with it, and
@@ -2264,7 +2276,13 @@ def track_card(
             text = f"Could not work out the track record: {error}"
         else:
             text = "Loading: the first load after a restart reads every session (about 25 s)…"
-        body = f'<div class="overview-empty">{html.escape(text)}</div>'
+        loading = record is None and not error
+        body = (
+            '<div class="overview-empty overview-loading"><span class="spinner"></span>'
+            f"<span>{html.escape(text)}</span></div>"
+            if loading
+            else f'<div class="overview-empty">{html.escape(text)}</div>'
+        )
 
     return (
         '<div class="overview-card">'

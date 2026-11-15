@@ -1469,6 +1469,8 @@ def test_track_loader_draws_a_placeholder_until_the_thread_is_done(monkeypatch):
     assert loader.request(0.02, ["Betclic"], wait=0.05) is None  # cold: still loading
     assert not loader.ready(0.02, ["Betclic"])
     assert "Loading" in dashboard.track_card(None, 0.02)
+    assert 'class="spinner"' in dashboard.track_card(None, 0.02)
+    assert "spinner" not in dashboard.track_card({}, 0.02)
 
     gate.set()
     loader.thread.join(5)
