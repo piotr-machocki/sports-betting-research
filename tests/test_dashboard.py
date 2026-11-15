@@ -1393,6 +1393,63 @@ def test_track_record_skips_low_betclic_odds_late_flags_and_books_off(tmp_path, 
     assert list(only_betclic) == ["Betclic"]
 
 
+def at(hhmm: str, **overrides) -> dict:
+    return row(pinnacle_captured_at=f"2026-11-03T{hhmm}:00+00:00", **overrides)
+
+
+def test_signal_lasts_until_the_first_run_without_it(tmp_path, monkeypatch):
+    record = track_for(tmp_path, monkeypatch, {
+        "session_20261103_170000_aaaaaa": [at("17:00")],
+        "session_20261103_171500_bbbbbb": [at("17:15")],
+        # Still found, but below the minimum: the signal is over.
+        "session_20261103_173000_cccccc": [at("17:30", ev2="0.01")],
+        "session_20261103_174500_dddddd": [at("17:45")],
+    })["Betclic"]
+
+    assert record["lasts"] == pytest.approx(30.0)
+    assert (record["lasts_ended"], record["lasts_open"]) == (1, 0)
+    assert record["gone_next"] == 0.0 and record["gone_checked"] == 1
+
+
+def test_signal_gone_at_the_next_run_and_open_ones(tmp_path, monkeypatch):
+    other = dict(pinnacle_player1="Cy Gamma", pinnacle_player2="Di Delta")
+    record = track_for(tmp_path, monkeypatch, {
+        "session_20261103_170000_aaaaaa": [at("17:00"), at("17:00", **other)],
+        "session_20261103_171500_bbbbbb": [at("17:15", **other)],
+        # The newest run may still be collecting, so Cy Gamma's signal stays open.
+        "session_20261103_173000_cccccc": [],
+    })["Betclic"]
+
+    assert record["lasts"] == pytest.approx(15.0)
+    assert (record["lasts_ended"], record["lasts_open"]) == (1, 1)
+    assert record["gone_next"] == 0.5 and record["gone_checked"] == 2
+
+
+def test_signal_still_bettable_at_the_start_has_not_ended():
+    lifetimes = dashboard.signal_lifetimes(
+        ["session_20261103_190000_aaaaaa", "session_20261103_201500_bbbbbb", "session_20261103_203000_cccccc"],
+        [{"Betclic": dashboard.table_records([at("19:00")])}, {}, {}],
+        dashboard.table_records([at("19:00")]),
+        "Betclic",
+        0.02,
+        {},
+    )
+
+    assert lifetimes == []  # the next run came 75 minutes later
+
+    lifetimes = dashboard.signal_lifetimes(
+        ["session_20261103_194500_aaaaaa", "session_20261103_200000_bbbbbb"],
+        [{"Betclic": dashboard.table_records([at("19:45")])}, {}],
+        dashboard.table_records([at("19:45")]),
+        "Betclic",
+        0.02,
+        {},
+    )
+    # Still bettable at the last run before the 20:00 start.
+    assert lifetimes == [{"minutes": 0.0, "ended": False, "next_gone": None}]
+    assert dashboard.lifetime_stats(lifetimes)["lasts"] is None
+
+
 def test_track_stats_range_and_open_matches():
     def flag(result, price=2.0, fair=0.5, clv=None):
         return {"Result": result, "_price": price, "Fair prob": fair, "CLV": clv, "Best EV": 0.03}
@@ -1420,6 +1477,8 @@ def test_track_card_shows_each_book_and_says_when_nothing_qualified():
     assert '<div class="track-book">Betclic</div>' in page
     for text in (">1-1<", ">+2.0%<", ">50%<", "Win rate (exp. 52%)", "ROI ±139%", ">+0.00<"):
         assert text in page
+    assert "Lasts (median)" in page and "Gone next run" in page
+    assert dashboard.minutes_text(29.6) == "30 min" and dashboard.minutes_text(150) == "2.5 h"
     assert "Betclic odds" not in dashboard.track_card({}, 0.02, ["Superbet"])
     assert "No match has reached this EV" in dashboard.track_card({}, 0.02)
 

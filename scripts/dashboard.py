@@ -34,7 +34,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -1472,6 +1472,110 @@ def first_flags(
     return first
 
 
+def bettable(record: dict, book: str, min_ev: float) -> bool:
+    """A flag first_flags would count: EV at least min_ev at a price that can be bet."""
+    return (
+        record["Best EV"] >= min_ev
+        and bool(record["_price"])
+        and not (book == "Betclic" and record["_price"] < BETCLIC_MIN_ODDS)
+    )
+
+
+# A signal's lifetime is measured only if the run after its first flag came within
+# this: older sessions were hourly, which would show as lifetimes of an hour or more.
+MAX_RUN_GAP_MINUTES = 20
+
+
+def signal_lifetimes(
+    session_ids: list[str],
+    held: list[dict[str, list[dict]]],
+    first: list[dict],
+    book: str,
+    min_ev: float,
+    sightings: dict,
+) -> list[dict]:
+    """How long each first flag stayed bettable, run by run (sessions oldest first,
+    held = their session_flags). It ends at the first later run that no longer has the
+    same side at min_ev or more (gone, a lower price, or not found there): minutes =
+    that run's start - the first flag's capture, so an upper bound at run spacing.
+    Still bettable at the match's start, or at the newest run (which may still be
+    collecting), it has not ended: ended False, minutes up to its last bettable run.
+    next_gone: ended at the very next run; None with no later run before the start.
+    Left out when the next run came more than MAX_RUN_GAP_MINUTES after this one."""
+    import evaluate_ev
+
+    alive = [
+        {
+            (match_key(record), record["Bet on"]): record
+            for record in flags.get(book, [])
+            if bettable(record, book, min_ev)
+        }
+        for flags in held
+    ]
+    where: dict[tuple, int] = {}
+
+    for index, records in enumerate(alive):
+        for record in records.values():
+            where.setdefault((match_key(record), record["_captured_at"]), index)
+
+    lifetimes = []
+
+    for flag in first:
+        index = where.get((match_key(flag), flag["_captured_at"]))
+        flagged = evaluate_ev.parse_time(flag["_captured_at"])
+
+        if index is None or flagged is None:
+            continue
+
+        if index + 1 < len(alive):
+            this_run, next_run = session_started(session_ids[index]), session_started(session_ids[index + 1])
+            if this_run and next_run and next_run - this_run > timedelta(minutes=MAX_RUN_GAP_MINUTES):
+                continue
+
+        key = (match_key(flag), flag["Bet on"])
+        pair = evaluate_ev.match_key(flag["Bet on"], flag["Opponent"], flag["Tournament"])
+        start = known_start(flag, sightings.get(pair, []))
+        last, ended, checked = flagged, None, 0
+
+        for later in range(index + 1, len(alive)):
+            run_start = session_started(session_ids[later])
+
+            if run_start is None or (start and run_start >= start):
+                break
+
+            if key not in alive[later]:
+                if later < len(alive) - 1:
+                    ended = run_start
+                    checked += 1
+                break
+
+            checked += 1
+            last = evaluate_ev.parse_time(alive[later][key]["_captured_at"]) or last
+
+        lifetimes.append({
+            "minutes": ((ended or last) - flagged).total_seconds() / 60,
+            "ended": ended is not None,
+            "next_gone": None if not checked else ended is not None and checked == 1,
+        })
+
+    return lifetimes
+
+
+def lifetime_stats(lifetimes: list[dict]) -> dict:
+    """Median minutes of the signals that ended, and the share of those checked at a
+    later run that were gone by the very next one."""
+    ended = [life["minutes"] for life in lifetimes if life["ended"]]
+    checked = [life["next_gone"] for life in lifetimes if life["next_gone"] is not None]
+
+    return {
+        "lasts": statistics.median(ended) if ended else None,
+        "lasts_ended": len(ended),
+        "lasts_open": len(lifetimes) - len(ended),
+        "gone_next": sum(checked) / len(checked) if checked else None,
+        "gone_checked": len(checked),
+    }
+
+
 def track_stats(flags: list[dict]) -> dict:
     """One book's record of first flags with Result and CLV (add_outcomes). Profit
     counts completed matches only, stake 1 at the flagged price (Superbet's after
@@ -1542,7 +1646,8 @@ def track_record(
 ) -> dict[str, dict]:
     """Each book shown with at least one first flag -> track_stats. sessions are
     newest first, as list_sessions gives them."""
-    oldest_first = [session_flags(session_id, cache) for session_id in reversed(sessions)]
+    session_ids = list(reversed(sessions))
+    oldest_first = [session_flags(session_id, cache) for session_id in session_ids]
     record = {}
 
     for book in BOOKS:
@@ -1555,6 +1660,9 @@ def track_record(
         if flags:
             memo = cache.setdefault(("outcomes", book), {})
             record[book] = track_stats(settled_outcomes(flags, sources, now, memo))
+            record[book].update(lifetime_stats(signal_lifetimes(
+                session_ids, oldest_first, flags, book, min_ev, sources["sightings"]
+            )))
 
     return record
 
@@ -2196,6 +2304,13 @@ def signed_css(value: float | None) -> str:
     return EV_GREEN.split(";")[0] if value > 0 else EV_RED
 
 
+def minutes_text(minutes: float | None) -> str:
+    if minutes is None:
+        return "--"
+
+    return f"{minutes:.0f} min" if minutes < 90 else f"{minutes / 60:.1f} h"
+
+
 def overview_track(record: dict[str, dict]) -> str:
     """One row of tiles per book. CLV first: it settles in a day, while ROI needs
     hundreds of bets before its range stops covering 0."""
@@ -2263,6 +2378,25 @@ def overview_track(record: dict[str, dict]) -> str:
                 "Avg EV",
                 pct(stats["ev"]),
                 "Mean EV at the first flag, what the prices promised",
+            ),
+            overview_tile(
+                "Lasts (median)",
+                minutes_text(stats.get("lasts")),
+                f"Median time a signal stayed bettable at this EV, over the "
+                f"{stats.get('lasts_ended', 0)} that ended: from its first flag to the "
+                "first later run without it (gone, a lower price or not found), so an "
+                "upper bound in steps of a run (15 minutes). Only signals whose next "
+                f"run came within {MAX_RUN_GAP_MINUTES} minutes count (not the older "
+                f"hourly runs); {stats.get('lasts_open', 0)} more were still bettable "
+                "at the start or at the newest run and are left out.",
+            ),
+            overview_tile(
+                "Gone next run",
+                pct(stats.get("gone_next"), signed=False),
+                f"Share of the {stats.get('gone_checked', 0)} signals with a later run "
+                "before the start that were no longer bettable at the very next run "
+                "(15 minutes later): each lasted somewhere under 15 minutes, which "
+                "faster polling would measure and alert on sooner",
             ),
         ]
         rows.append(
