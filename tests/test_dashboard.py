@@ -1646,7 +1646,12 @@ def test_signals_card_says_none_when_every_count_is_zero():
     stats["Superbet EV(ref) > 0%"] = "1"
     tiles = dashboard.overview_positive(stats)
 
-    assert "None" not in tiles and "Betclic &gt; 0%" in tiles
+    # Only the book with a signal: Betclic's two zeros are left out.
+    assert "None" not in tiles and "Superbet &gt; 0%" in tiles and "Betclic" not in tiles
+
+    stats["EV(ref) > 0%"] = "2"
+    tiles = dashboard.overview_positive(stats)
+    assert "Betclic &gt; 0%" in tiles and "Superbet ≥ 2.00%" in tiles
 
 
 def test_compact_sightings_keeps_each_prices_first_and_last_and_the_close():

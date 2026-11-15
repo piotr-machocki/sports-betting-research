@@ -2478,7 +2478,8 @@ def overview_tile(
 
 
 def overview_positive(stats: dict, books: list[str] = BOOKS) -> str:
-    """Colours follow the table: amber above 0, green from the threshold up."""
+    """Colours follow the table: amber above 0, green from the threshold up. A book
+    whose counts are both 0 is left out (user, 15 Nov 2026); with none left, "None"."""
 
     def hit(value: str, css: str) -> str:
         return css.split(";")[0] if int(value) else ""
@@ -2486,10 +2487,8 @@ def overview_positive(stats: dict, books: list[str] = BOOKS) -> str:
     threshold = next(label for label in stats if label.startswith("EV(ref) >= "))
     limit = threshold.removeprefix("EV(ref) >= ")
     tiles = []
-    values = []
 
-    if "Betclic" in books:
-        values += [stats["EV(ref) > 0%"], stats[threshold]]
+    if "Betclic" in books and (int(stats["EV(ref) > 0%"]) or int(stats[threshold])):
         tiles += [
             overview_tile(
                 "Betclic > 0%",
@@ -2505,9 +2504,12 @@ def overview_positive(stats: dict, books: list[str] = BOOKS) -> str:
             ),
         ]
 
-    if "Superbet" in books and "Superbet EV(ref) > 0%" in stats:
-        superbet_threshold = stats[f"Superbet {threshold}"]
-        values += [stats["Superbet EV(ref) > 0%"], superbet_threshold]
+    superbet_threshold = stats.get(f"Superbet {threshold}", "0")
+    if (
+        "Superbet" in books
+        and "Superbet EV(ref) > 0%" in stats
+        and (int(stats["Superbet EV(ref) > 0%"]) or int(superbet_threshold))
+    ):
         tiles += [
             overview_tile(
                 "Superbet > 0%",
@@ -2525,7 +2527,7 @@ def overview_positive(stats: dict, books: list[str] = BOOKS) -> str:
 
     # Every count 0: one greyed "None" instead of a row of zeros. Its explanation is a
     # tooltip shown on hover, or on a tap on phones (tabindex makes it focusable).
-    if all(not int(value) for value in values):
+    if not tiles:
         tip = f"No match with EV ({REFERENCE_METHOD} method) > 0%"
         tiles = [
             '<div class="overview-tile has-tip" tabindex="0">'
