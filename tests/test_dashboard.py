@@ -373,7 +373,9 @@ def test_overview_puts_the_status_cards_in_the_first_row():
     first, second = dashboard.overview_html(summary).split('<div class="overview-cards">')[1:]
 
     assert "EV status" in first and 'donut-book">Betclic' in first and 'donut-book">Superbet' in first
-    assert "Signals" in second and "Data flow" in second
+    # The signals and Stale data share a card without a heading, beside Data flow.
+    assert "Betclic &gt; 0%" in second and "Stale data" in second and "Data flow" in second
+    assert second.index("Stale data") < second.index("Data flow")
 
 
 def test_overview_with_the_ev_filter_keeps_only_the_positive_ev_card():
@@ -670,17 +672,18 @@ def test_checks_card_says_whether_the_data_is_stale():
     at_limit = "2026-11-03T17:45:00+00:00"
     past_limit = "2026-11-03T17:44:59+00:00"
 
-    assert "No Stale (over 15 min)" in overview_text([row(pinnacle_captured_at=at_limit)])
-    assert "Yes Stale (over 15 min)" in overview_text(
-        [row(pinnacle_captured_at=past_limit)]
-    )
+    assert "No Stale data Pinnacle odds over 15 min old" in overview_text([row(pinnacle_captured_at=at_limit)])
+    assert "Yes Stale data" in overview_text([row(pinnacle_captured_at=past_limit)])
 
 
 def test_checks_card_without_prices():
     text = overview_text([])
 
     assert "Pinnacle -- Pinnacle data age -- Betclic -- Superbet" in text
-    assert "-- Stale (over 15 min)" in text
+    assert "-- Stale data" in text and "data-stale-flag" not in dashboard.stale_tile({"pinnacle_age": None})
+
+    # With no signal: "None" over "Signals", then Stale data beside it.
+    assert "None Signals No match with EV (power method) &gt; 0% -- Stale data" in text.replace(">", "&gt;")
 
 
 def test_overview_of_a_run_without_rows():

@@ -591,7 +591,7 @@ OVERVIEW_STYLE = """<style>
        grid, so a tip in the right column (.end, Lasts) opens leftwards from the tile's
        right edge and stays on screen. */
     .has-tip .tip { max-width: 220px; }
-    .track-rows .has-tip.end .tip { left: auto; right: 0; }
+    .has-tip.end .tip { left: auto; right: 0; }
 }
 .overview-tile .label {
     font-size: 12px;
@@ -2477,7 +2477,7 @@ def overview_tile(
     )
 
 
-def overview_positive(stats: dict, books: list[str] = BOOKS) -> str:
+def overview_positive(stats: dict, books: list[str] = BOOKS, extra: str = "") -> str:
     """Colours follow the table: amber above 0, green from the threshold up. A book
     whose counts are both 0 is left out (user, 15 Nov 2026); with none left, "None"."""
 
@@ -2529,13 +2529,10 @@ def overview_positive(stats: dict, books: list[str] = BOOKS) -> str:
     # tooltip shown on hover, or on a tap on phones (tabindex makes it focusable).
     if not tiles:
         tip = f"No match with EV ({REFERENCE_METHOD} method) > 0%"
-        tiles = [
-            '<div class="overview-tile has-tip" tabindex="0">'
-            '<div class="value overview-empty">None</div>'
-            f'<div class="tip">{html.escape(tip)}</div></div>'
-        ]
+        tiles = [tip_tile("Signals", "None", tip, "overview-empty")]
 
-    return f'<div class="overview-tiles">{"".join(tiles)}</div>'
+    # extra: the Stale data tile beside them (user, 15 Nov 2026).
+    return f'<div class="overview-tiles">{"".join(tiles)}{extra}</div>'
 
 
 def signed_css(value: float | None) -> str:
@@ -2772,36 +2769,38 @@ def overview_flow(summary: dict, books: list[str] = BOOKS) -> str:
     return f'<div class="flow">{"".join(steps)}</div>'
 
 
-def overview_checks(summary: dict, stats: dict, books: list[str] = BOOKS) -> str:
-    """The collection flow (overview_flow), then what needs attention: Stale, and
-    Errors in amber."""
-
-    def warning(label: str, value: str, count: int, help_text: str) -> str:
-        return overview_tile(label, value, help_text, EV_AMBER if count else "")
-
+def stale_tile(summary: dict) -> str:
+    """Whether the Pinnacle odds are past STALE_MINUTES: green No, red Yes; its limit
+    is in the tip, shown on hover or a tap (user, 15 Nov 2026). TABLE_SCRIPT flips it
+    between server ticks, like the age in the Data flow card."""
     age = summary["pinnacle_age"]
     stale = age is not None and age > STALE_MINUTES * 60
-    stale_text = "--" if age is None else "Yes" if stale else "No"
-    # Green while fresh, red once stale, like the age in the session bar. TABLE_SCRIPT
-    # flips both when the age passes the limit, between server ticks.
-    stale_tile = overview_tile(
-        f"Stale (over {STALE_MINUTES:g} min)",
-        stale_text,
-        f"Whether the Pinnacle odds are more than {STALE_MINUTES:g} minutes old right now",
-        attributes="" if age is None else ' data-stale-flag=""',
+    value = "--" if age is None else "Yes" if stale else "No"
+    css = "" if age is None else (" stale" if stale else " fresh")
+    flag = "" if age is None else ' data-stale-flag=""'
+
+    return (
+        '<div class="overview-tile has-tip" tabindex="0">'
+        f'<div class="value{css}"{flag}>{value}</div>'
+        '<div class="label">Stale data</div>'
+        f'<div class="tip">Pinnacle odds over {STALE_MINUTES:g} min old</div></div>'
     )
-    if age is not None:
-        stale_tile = stale_tile.replace(
-            'class="value"', f'class="value {"stale" if stale else "fresh"}"', 1
-        )
-    tiles = [stale_tile]
+
+
+def overview_checks(summary: dict, stats: dict, books: list[str] = BOOKS) -> str:
+    """The collection flow (overview_flow), then Errors in amber when there are any
+    (Stale data sits beside the signals)."""
+    flow = overview_flow(summary, books)
 
     # Only in the stats when it matters: see session_summary. They are Betclic's.
     if "Errors" in stats and "Betclic" in books:
         errors = stats["Errors"]
-        tiles.append(warning("Errors", errors, int(errors), "Matches that could not be checked"))
+        tile = overview_tile(
+            "Errors", errors, "Matches that could not be checked", EV_AMBER if int(errors) else ""
+        )
+        flow += f'<div class="overview-tiles">{tile}</div>'
 
-    return overview_flow(summary, books) + f'<div class="overview-tiles">{"".join(tiles)}</div>'
+    return flow
 
 
 def session_bar_html(summary: dict, session_id: str) -> str:
@@ -2858,10 +2857,8 @@ def overview_html(
     )
 
     def card(heading: str, body: str, size: str = "") -> str:
-        return (
-            f'<div class="overview-card {size}">'
-            f'<div class="overview-heading">{html.escape(heading)}</div>{body}</div>'
-        )
+        title = f'<div class="overview-heading">{html.escape(heading)}</div>' if heading else ""
+        return f'<div class="overview-card {size}">{title}{body}</div>'
 
     if ev_only:
         where = ev_stats is not None
@@ -2914,7 +2911,8 @@ def overview_html(
         )
 
     results = [
-        card("Signals", overview_positive(stats, books), "wide"),
+        # No heading: each tile says what it is ("Signals" under None).
+        card("", overview_positive(stats, books, stale_tile(summary)), "wide"),
         card("Data flow", overview_checks(summary, stats, books), "wide"),
     ]
 
@@ -3556,8 +3554,10 @@ Pinnacle's price is fair, and it is measured against results as they come in
 * **Session bar**: the run's status and when it started.
 * **Data flow**: the order the prices were collected in. The Pinnacle box shows how
   long ago its prices were captured (green, red once over 15 minutes); each arrow, how
-  much later the next bookmaker's prices were read. Below it, whether the Pinnacle
-  prices are stale (over 15 minutes old).
+  much later the next bookmaker's prices were read.
+* **Signals** and **Stale data** (beside each other): how many matches reached EV
+  above 0 and the minimum EV at each bookmaker (None when no match did), and whether
+  the Pinnacle prices are over 15 minutes old.
 * **Track record**: every match that reached the minimum EV before its start, counted
   once at its first flag and price (Betclic only from odds of 1.14, the lowest it takes
   for a single). Its average CLV and share above 0 say first whether the edge is real;
