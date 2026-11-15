@@ -1547,7 +1547,7 @@ def test_track_loader_draws_a_placeholder_until_the_thread_is_done(monkeypatch):
     gate = threading.Event()
     calls = []
 
-    def slow(sessions, cache, sources, min_ev, now, books):
+    def slow(sessions, cache, sources, min_ev, now, books, rechecks=None):
         calls.append((min_ev, books))
         gate.wait(5)
         return {"Betclic": {"signals": 1}}
@@ -1572,7 +1572,7 @@ def test_track_loader_draws_a_placeholder_until_the_thread_is_done(monkeypatch):
 
 
 def test_track_loader_shows_a_failure_on_the_card(monkeypatch):
-    def broken(*args):
+    def broken(*args, **kwargs):
         raise OSError("disk gone")
 
     monkeypatch.setattr(dashboard, "load_outcome_sources", lambda cache: {})
@@ -1750,6 +1750,31 @@ def test_track_flags_survive_a_server_restart(tmp_path, monkeypatch):
 
     cache_file.write_bytes(b"not a pickle")
     assert dashboard.load_flag_cache(cache_file) == {}
+
+
+def test_a_recheck_between_runs_ends_or_extends_a_signal():
+    sessions = ["session_20261103_170000_aaaaaa", "session_20261103_170500_bbbbbb", "session_20261103_171000_cccccc"]
+    flagged = dashboard.table_records([at("17:00")])
+    held = [{"Betclic": flagged}, {"Betclic": dashboard.table_records([at("17:05")])}, {}]
+
+    def check(hhmm, ev, price=2.2):
+        return {"book": "Betclic", "side": 2, "player1": "Ann Alpha", "player2": "Bea Beta",
+                "tournament": "WTA Chennai - R16", "checked_at": f"2026-11-03T{hhmm}:00+00:00",
+                "price": price, "ev": ev}
+
+    # Gone at the recheck 2 minutes after the flag: ended there, not at 17:05.
+    [life] = dashboard.signal_lifetimes(sessions, held, flagged, "Betclic", 0.02, {}, [check("17:02", -0.01)])
+    assert life["ended"] and life["minutes"] == pytest.approx(2.0) and life["next_gone"]
+    assert life["gap"] == pytest.approx(2.0)
+
+    # Still bettable at the recheck: it lasts to the run that has it no more.
+    [life] = dashboard.signal_lifetimes(sessions, held, flagged, "Betclic", 0.02, {}, [check("17:02", 0.05)])
+    assert life["seen"] == pytest.approx(5.0) and not life["next_gone"]
+
+    # Another book's recheck changes nothing.
+    other = {**check("17:02", -0.01), "book": "Superbet"}
+    [life] = dashboard.signal_lifetimes(sessions, held, flagged, "Betclic", 0.02, {}, [other])
+    assert life["gap"] == pytest.approx(5.0)
 
 
 def test_lasts_prefers_five_minute_runs_once_there_are_enough():

@@ -286,9 +286,14 @@ def save_sent(sent: dict[str, dict | str], now: datetime, path: Path = SENT_FILE
 
 def sent_alerts(path: Path = SENT_FILE) -> list[dict]:
     """Every alert still remembered, one dict per bet_key, for the dashboard."""
+    return sent_alerts_from(load_sent(path))
+
+
+def sent_alerts_from(sent: dict[str, dict | str]) -> list[dict]:
+    """sent_alerts for a sent memory already read (recheck_signals.py)."""
     alerts = []
 
-    for key, entry in load_sent(path).items():
+    for key, entry in sent.items():
         parts = key.split("|")
 
         if len(parts) != 5 or parts[4] not in ("1", "2"):
@@ -302,6 +307,7 @@ def sent_alerts(path: Path = SENT_FILE) -> list[dict]:
             "tournament": tournament,
             "book": book,
             "player": player1 if side == "1" else player2,
+            "side": int(side),
             "at": sent_at(entry),
             "price": number(details.get("price")),
             "ev": number(details.get("ev")),

@@ -25,3 +25,9 @@ hc_url=$(grep -m1 '^HEALTHCHECK_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d "\
 if [ -n "$hc_url" ]; then
     curl -fs -m 10 -o /dev/null "$hc_url/$code" || echo "healthcheck ping failed (curl exit $?)" >> data/logs/scheduled_run.log
 fi
+# If this run sent Telegram alerts, read those bets' prices again about 2 minutes after
+# them (scripts/recheck_signals.py; nothing without an alert). Still under the lock, so
+# the next run (5 minutes after this one started) cannot overlap it.
+if [ "$code" -eq 0 ]; then
+    .venv/bin/python scripts/recheck_signals.py >> data/logs/scheduled_run.log 2>&1
+fi

@@ -1626,6 +1626,7 @@ def signal_lifetimes(
     book: str,
     min_ev: float,
     sightings: dict,
+    rechecks: list[dict] | None = None,
 ) -> list[dict]:
     """How long each first flag stayed bettable, run by run (sessions oldest first,
     held = their session_flags). It ends at the first later run that no longer has the
@@ -1634,8 +1635,29 @@ def signal_lifetimes(
     Still bettable at the match's start, or at the newest run (which may still be
     collecting), it has not ended: ended False, minutes up to its last bettable run.
     next_gone: ended at the very next run; None with no later run before the start.
-    Left out when the next run came more than MAX_RUN_GAP_MINUTES after this one."""
+    Left out when the next run came more than MAX_RUN_GAP_MINUTES after this one.
+    rechecks (recheck_signals.py, alerted bets about 2 minutes after the alert) are
+    observations between the runs: one where the side is no longer bettable at min_ev
+    ends the signal there."""
     import evaluate_ev
+
+    observed: dict[tuple, list[tuple[datetime, bool]]] = {}
+
+    for check in rechecks or []:
+        side = check.get("side")
+        checked_at = evaluate_ev.parse_time(check.get("checked_at"))
+
+        if check.get("book") != book or side not in (1, 2) or checked_at is None:
+            continue
+
+        bet_on, opponent = check[f"player{side}"], check[f"player{3 - side}"]
+        key = (match_key({"Bet on": bet_on, "Opponent": opponent, "Tournament": check["tournament"]}), bet_on)
+        price, ev = check.get("price"), check.get("ev")
+        ok = (
+            ev is not None and ev >= min_ev and bool(price)
+            and not (book == "Betclic" and price < BETCLIC_MIN_ODDS)
+        )
+        observed.setdefault(key, []).append((checked_at, ok))
 
     alive = [
         {
@@ -1673,20 +1695,35 @@ def signal_lifetimes(
         start = known_start(flag, sightings.get(pair, []))
         last, ended, checked = flagged, None, 0
 
+        # Later runs and rechecks, in time order.
+        events: list[tuple[datetime, int | None, bool]] = []
         for later in range(index + 1, len(alive)):
             run_start = session_started(session_ids[later])
+            if run_start is None:
+                break
+            events.append((run_start, later, key in alive[later]))
+        events += [(at, None, ok) for at, ok in observed.get(key, []) if at > flagged]
+        events.sort(key=lambda event: event[0])
 
-            if run_start is None or (start and run_start >= start):
+        if events and events[0][1] is None:
+            gap = (events[0][0] - flagged).total_seconds() / 60
+
+        for at, later, present in events:
+            if start and at >= start:
                 break
 
-            if key not in alive[later]:
-                if later < len(alive) - 1:
-                    ended = run_start
+            if not present:
+                # The newest run may still be collecting: not a sign it is gone.
+                if later is None or later < len(alive) - 1:
+                    ended = at
                     checked += 1
                 break
 
             checked += 1
-            last = evaluate_ev.parse_time(alive[later][key]["_captured_at"]) or last
+            if later is None:
+                last = at
+            else:
+                last = evaluate_ev.parse_time(alive[later][key]["_captured_at"]) or last
 
         lifetimes.append({
             "minutes": ((ended or last) - flagged).total_seconds() / 60,
@@ -1804,6 +1841,7 @@ def track_record(
     min_ev: float,
     now: datetime,
     books: list[str] = BOOKS,
+    rechecks: list[dict] | None = None,
 ) -> dict[str, dict]:
     """Each book shown with at least one first flag -> track_stats. sessions are
     newest first, as list_sessions gives them."""
@@ -1822,7 +1860,7 @@ def track_record(
             memo = cache.setdefault(("outcomes", book), {})
             record[book] = track_stats(settled_outcomes(flags, sources, now, memo))
             record[book].update(lifetime_stats(signal_lifetimes(
-                session_ids, oldest_first, flags, book, min_ev, sources["sightings"]
+                session_ids, oldest_first, flags, book, min_ev, sources["sightings"], rechecks
             )))
 
     return record
@@ -1919,9 +1957,12 @@ class TrackLoader:
                     sources = load_outcome_sources(self.sources_cache)
 
                 held = flag_signatures(self.cache)
+                import recheck_signals
+
                 record = track_record(
                     list_sessions(), self.cache, sources, key[0],
                     datetime.now(timezone.utc), list(key[1]),
+                    rechecks=recheck_signals.load_rechecks(),
                 )
                 error = None
 
