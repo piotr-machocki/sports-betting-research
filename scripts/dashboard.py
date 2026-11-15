@@ -427,12 +427,21 @@ OVERVIEW_STYLE = """<style>
 .flow {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
+    align-items: stretch;
     gap: 6px 0;
     margin: 2px 0 10px;
 }
+/* Boxes of one size (user, 15 Nov 2026), the name centred in each. */
 .flow-node {
-    padding: 4px 10px;
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 150px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    text-align: center;
+    white-space: nowrap;
+    padding: 6px 8px;
     border: 1px solid rgba(128, 128, 128, 0.35);
     border-radius: 6px;
     background-color: rgba(128, 128, 128, 0.08);
@@ -440,6 +449,8 @@ OVERVIEW_STYLE = """<style>
 .flow-name { font-weight: 600; }
 .flow-sub { font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 600; }
 .flow-arrow {
+    flex: none;
+    align-self: center;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -466,7 +477,7 @@ OVERVIEW_STYLE = """<style>
 /* One line on a phone (user, 10 Nov 2026): no "Run on" label or year, tighter gaps. */
 @media (max-width: 700px) {
     /* The flow on one line down to about 360 px wide. */
-    .flow-node { padding: 3px 6px; font-size: 13px; }
+    .flow-node { max-width: none; padding: 6px 4px; font-size: 14px; }
     .flow-sub, .flow-gap { font-size: 11px; }
     .flow-arrow { min-width: 38px; padding: 0 3px; }
     .session-bar { gap: 4px 12px; font-size: 13px; }
@@ -546,8 +557,8 @@ OVERVIEW_STYLE = """<style>
 .overview-note { color: color-mix(in srgb, currentColor 65%, transparent); }
 .overview-tiles { display: flex; flex-wrap: wrap; gap: 4px 18px; }
 .overview-tile .value { font-size: 22px; line-height: 28px; font-weight: 600; }
-.overview-tile.has-tip { position: relative; cursor: help; outline: none; }
-.overview-tile .tip {
+.has-tip { position: relative; cursor: help; outline: none; }
+.has-tip .tip {
     display: none;
     position: absolute;
     left: 0;
@@ -562,13 +573,13 @@ OVERVIEW_STYLE = """<style>
     color: #fff;
     background: #333;
 }
-.overview-tile.has-tip:hover .tip, .overview-tile.has-tip:focus .tip { display: block; }
-.overview-tile.has-tip .label { text-decoration: underline dotted; text-underline-offset: 3px; }
+.has-tip:hover .tip, .has-tip:focus .tip { display: block; }
+.has-tip .label, .has-tip .flow-name { text-decoration: underline dotted; text-underline-offset: 3px; }
 @media (max-width: 700px) {
     /* Over the page, not inside the tile. The Track record's tiles sit in a 3-column
        grid, so a tip in the right column (.end, Lasts) opens leftwards from the tile's
        right edge and stays on screen. */
-    .overview-tile .tip { max-width: 220px; }
+    .has-tip .tip { max-width: 220px; }
     .track-rows .has-tip.end .tip { left: auto; right: 0; }
 }
 .overview-tile .label {
@@ -769,7 +780,7 @@ TABLE_SCRIPT = """<script>
 
         if (age.firstChild.nodeValue !== shown) age.firstChild.nodeValue = shown;
 
-        // Green while fresh, red once stale: the age and the Performance card's flag.
+        // Green while fresh, red once stale: the age and the Data flow card's flag.
         const flag = document.querySelector(".overview-tile [data-stale-flag]");
         [age.parentElement, flag].forEach(element => {
             if (!element || element.classList.contains("stale") === stale) return;
@@ -2722,10 +2733,11 @@ def overview_flow(summary: dict, books: list[str] = BOOKS) -> str:
             f' data-stale-after="{STALE_MINUTES * 60:g}">{pinnacle_age_text(age)}</span> ago</span>'
         )
 
+    # Tap or hover for what the age is (has-tip, like the tiles).
     steps = [
-        '<div class="flow-node" title="Time since the Pinnacle odds were captured, up to now: '
-        'the oldest prices in the run">'
-        f'<div class="flow-name">Pinnacle</div><div class="flow-sub">{age_html}</div></div>'
+        '<div class="flow-node has-tip" tabindex="0">'
+        f'<div class="flow-name">Pinnacle</div><div class="flow-sub">{age_html}</div>'
+        '<div class="tip">Pinnacle data age</div></div>'
     ]
     gaps = [(summary.get(f"{book.lower()}_gap"), book) for book in BOOKS if book in books]
     gaps.sort(key=lambda pair: (pair[0] is None, pair[0] or 0))
@@ -2781,7 +2793,7 @@ def overview_checks(summary: dict, stats: dict, books: list[str] = BOOKS) -> str
 
 def session_bar_html(summary: dict, session_id: str) -> str:
     """The session's state above the overview: status and start (to the minute). The
-    age of its Pinnacle prices moved to the Performance card's flow (15 Nov 2026)."""
+    age of its Pinnacle prices moved to the Data flow card (15 Nov 2026)."""
     colour = STATUS_COLOURS.get(summary["status"], OVERVIEW_BLUE)
     started = session_started(session_id)
     # Phones hide the year (and the label), so the whole bar fits on one line.
@@ -2890,7 +2902,7 @@ def overview_html(
 
     results = [
         card("Signals", overview_positive(stats, books), "wide"),
-        card("Performance", overview_checks(summary, stats, books), "wide"),
+        card("Data flow", overview_checks(summary, stats, books), "wide"),
     ]
 
     return (
@@ -3528,10 +3540,11 @@ Pinnacle's price is fair, and it is measured against results as they come in
   first alert's book, price and time. On the Bet on side that is the bet already
   placed, so a later, smaller EV there is not a new bet; an alert on the other
   player is shown greyed out.
-* **Session bar**: the run's status, when it started and how long ago
-  its oldest Pinnacle prices were captured (green, red once over 15 minutes).
-* **Performance**: how long after the Pinnacle prices each bookmaker's prices were
-  read, and whether the Pinnacle prices are stale (over 15 minutes old).
+* **Session bar**: the run's status and when it started.
+* **Data flow**: the order the prices were collected in. The Pinnacle box shows how
+  long ago its prices were captured (green, red once over 15 minutes); each arrow, how
+  much later the next bookmaker's prices were read. Below it, whether the Pinnacle
+  prices are stale (over 15 minutes old).
 * **Track record**: every match that reached the minimum EV before its start, counted
   once at its first flag and price (Betclic only from odds of 1.14, the lowest it takes
   for a single). Its average CLV and share above 0 say first whether the edge is real;

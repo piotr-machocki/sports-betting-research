@@ -373,7 +373,7 @@ def test_overview_puts_the_status_cards_in_the_first_row():
     first, second = dashboard.overview_html(summary).split('<div class="overview-cards">')[1:]
 
     assert "EV status" in first and 'donut-book">Betclic' in first and 'donut-book">Superbet' in first
-    assert "Signals" in second and "Performance" in second
+    assert "Signals" in second and "Data flow" in second
 
 
 def test_overview_with_the_ev_filter_keeps_only_the_positive_ev_card():
@@ -383,7 +383,7 @@ def test_overview_with_the_ev_filter_keeps_only_the_positive_ev_card():
 
     assert page.count('<div class="overview-cards">') == 1
     assert "Signals" in page
-    assert "Performance" not in page and "EV status" not in page
+    assert "Data flow" not in page and "EV status" not in page
     assert 'class="overview-card fit"' in page
 
 
@@ -611,17 +611,23 @@ def test_checks_card_shows_the_gap_of_each_book_to_pinnacle():
     text = overview_text(rows)
 
     # In the order the prices came, each arrow the time since the box before it.
-    assert "Pinnacle 10 min 00 s ago +2.0 s Superbet +11.0 s Betclic" in text
+    assert "Pinnacle 10 min 00 s ago Pinnacle data age +2.0 s Superbet +11.0 s Betclic" in text
 
 
 def test_flow_puts_a_book_without_data_last():
-    assert "Pinnacle 10 min 00 s ago +10.0 s Betclic -- Superbet" in overview_text([row()])
+    assert "Pinnacle 10 min 00 s ago Pinnacle data age +10.0 s Betclic -- Superbet" in overview_text([row()])
 
 
 def test_flow_shows_the_gap_in_minutes_past_a_minute():
     rows = [row(betclic_captured_at="2026-11-03T17:51:05+00:00")]
 
     assert "+1m05s Betclic" in overview_text(rows)
+
+
+def test_flow_pinnacle_box_says_what_its_age_is_on_tap():
+    flow = dashboard.overview_flow({"pinnacle_age": 60.0, "pinnacle_captured": 1.0, "betclic_gap": 5.0})
+    assert '<div class="flow-node has-tip" tabindex="0"><div class="flow-name">Pinnacle</div>' in flow
+    assert '<div class="tip">Pinnacle data age</div>' in flow
 
 
 def test_flow_arrows_give_the_total_since_pinnacle_on_hover():
@@ -673,7 +679,7 @@ def test_checks_card_says_whether_the_data_is_stale():
 def test_checks_card_without_prices():
     text = overview_text([])
 
-    assert "Pinnacle -- -- Betclic -- Superbet" in text
+    assert "Pinnacle -- Pinnacle data age -- Betclic -- Superbet" in text
     assert "-- Stale (over 15 min)" in text
 
 
