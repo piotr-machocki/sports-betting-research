@@ -1447,7 +1447,7 @@ def test_signal_still_bettable_at_the_start_has_not_ended():
         {},
     )
     # Still bettable at the last run before the 20:00 start.
-    assert lifetimes == [{"minutes": 0.0, "seen": 0.0, "ended": False, "next_gone": None}]
+    assert lifetimes == [{"minutes": 0.0, "seen": 0.0, "ended": False, "next_gone": None, "gap": 15.0}]
     assert dashboard.lifetime_stats(lifetimes)["lasts"] is None
 
 
@@ -1717,3 +1717,34 @@ def test_track_flags_survive_a_server_restart(tmp_path, monkeypatch):
 
     cache_file.write_bytes(b"not a pickle")
     assert dashboard.load_flag_cache(cache_file) == {}
+
+
+def test_lasts_prefers_five_minute_runs_once_there_are_enough():
+    def life(minutes, gap, seen=0.0):
+        return {"minutes": minutes, "seen": seen, "ended": True, "next_gone": seen == 0, "gap": gap}
+
+    slow = [life(15, 15)] * 20
+    stats = dashboard.lifetime_stats(slow + [life(5, 5)] * 9)
+    assert dashboard.lifetime_text(stats) == "< 15 min" and stats["lasts_spacing"] == 15
+
+    fast = [life(5, 5)] * 7 + [life(10, 5, seen=5)] * 3
+    stats = dashboard.lifetime_stats(slow + fast)
+    assert dashboard.lifetime_text(stats) == "< 5 min" and stats["lasts_ended"] == 10
+    assert stats["lasts_within"] == 0.7
+    assert dashboard.lifetime_help(stats) == "70% of 10 signals were gone within 5 min, checked every 5 min."
+    assert dashboard.lifetime_help({}) == "No signal has ended yet"
+
+
+def test_lasts_tile_shows_its_share_on_hover_or_tap():
+    stats = dashboard.track_stats([
+        {"Result": "Won", "_price": 2.0, "Fair prob": 0.5, "CLV": 0.05, "Best EV": 0.03},
+    ])
+    stats.update(dashboard.lifetime_stats([
+        {"minutes": 14.9, "seen": 0.0, "ended": True, "next_gone": True, "gap": 15.0},
+        {"minutes": 29.9, "seen": 15.0, "ended": True, "next_gone": False, "gap": 15.0},
+        {"minutes": 14.8, "seen": 0.0, "ended": True, "next_gone": True, "gap": 15.0},
+    ]))
+    page = dashboard.track_card({"Betclic": stats}, 0.02)
+
+    assert '<div class="overview-tile has-tip" tabindex="0"><div class="value">&lt; 15 min</div>' in page
+    assert '<div class="tip">67% of 3 signals were gone within 15 min, checked every 15 min.</div>' in page

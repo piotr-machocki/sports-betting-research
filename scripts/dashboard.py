@@ -502,7 +502,8 @@ OVERVIEW_STYLE = """<style>
     left: 0;
     top: calc(100% + 4px);
     z-index: 5;
-    white-space: nowrap;
+    width: max-content;
+    max-width: 260px;
     padding: 4px 8px;
     border-radius: 6px;
     font-size: 12px;
@@ -511,6 +512,11 @@ OVERVIEW_STYLE = """<style>
     background: #333;
 }
 .overview-tile.has-tip:hover .tip, .overview-tile.has-tip:focus .tip { display: block; }
+.overview-tile.has-tip .label { text-decoration: underline dotted; text-underline-offset: 3px; }
+@media (max-width: 700px) {
+    /* In the tile's flow, so a tile at the right edge cannot push it off screen. */
+    .overview-tile .tip { position: static; margin-top: 4px; max-width: none; width: auto; }
+}
 .overview-tile .label {
     font-size: 12px;
     line-height: 16px;
@@ -1566,10 +1572,13 @@ def signal_lifetimes(
         if index is None or flagged is None:
             continue
 
+        gap = None
         if index + 1 < len(alive):
             this_run, next_run = session_started(session_ids[index]), session_started(session_ids[index + 1])
-            if this_run and next_run and next_run - this_run > timedelta(minutes=MAX_RUN_GAP_MINUTES):
-                continue
+            if this_run and next_run:
+                gap = (next_run - this_run).total_seconds() / 60
+                if gap > MAX_RUN_GAP_MINUTES:
+                    continue
 
         key = (match_key(flag), flag["Bet on"])
         pair = evaluate_ev.match_key(flag["Bet on"], flag["Opponent"], flag["Tournament"])
@@ -1596,23 +1605,42 @@ def signal_lifetimes(
             "seen": (last - flagged).total_seconds() / 60,
             "ended": ended is not None,
             "next_gone": None if not checked else ended is not None and checked == 1,
+            "gap": gap,
         })
 
     return lifetimes
 
 
+# Runs every 5 minutes since 15 Nov 2026: once this many ended signals were measured
+# at that spacing, only they count, as the 15-minute ones can never read below 15 min.
+FAST_RUN_GAP_MINUTES = 7
+MIN_FAST_SIGNALS = 10
+
+
 def lifetime_stats(lifetimes: list[dict]) -> dict:
-    """Median minutes of the signals that ended, and the share of those checked at a
-    later run that were gone by the very next one."""
+    """Median minutes of the signals that ended, the share of them gone within that
+    median, and the share of those checked at a later run that were gone by the very
+    next one. Measured at 5-minute spacing only, once there are MIN_FAST_SIGNALS."""
+    fast = [life for life in lifetimes if life.get("gap") is not None and life["gap"] <= FAST_RUN_GAP_MINUTES]
+    if sum(life["ended"] for life in fast) >= MIN_FAST_SIGNALS:
+        lifetimes = fast
+
     ended = [life["minutes"] for life in lifetimes if life["ended"]]
     seen = [life["seen"] for life in lifetimes if life["ended"]]
     checked = [life["next_gone"] for life in lifetimes if life["next_gone"] is not None]
+    gaps = [life["gap"] for life in lifetimes if life.get("gap") is not None]
+    lasts = statistics.median(ended) if ended else None
 
     return {
-        "lasts": statistics.median(ended) if ended else None,
+        "lasts": lasts,
         "lasts_seen": statistics.median(seen) if seen else None,
         "lasts_ended": len(ended),
         "lasts_open": len(lifetimes) - len(ended),
+        # Within the median rounded to a minute, as it is shown.
+        "lasts_within": (
+            sum(minutes <= round(lasts) + 0.5 for minutes in ended) / len(ended) if ended else None
+        ),
+        "lasts_spacing": round(statistics.median(gaps)) if gaps else None,
         "gone_next": sum(checked) / len(checked) if checked else None,
         "gone_checked": len(checked),
     }
@@ -2404,21 +2432,37 @@ def lifetime_text(stats: dict) -> str:
 
 
 def lifetime_help(stats: dict) -> str:
-    gone = stats.get("gone_next")
-    gone_text = (
-        f"{gone:.0%} of {stats['gone_checked']} were gone by the very next run. "
-        if gone is not None
+    """The Lasts tile's tip, shown on hover or a tap: how many were gone within the
+    shown time, and how often they were checked."""
+    within, lasts = stats.get("lasts_within"), stats.get("lasts")
+
+    if within is None or lasts is None:
+        return "No signal has ended yet"
+
+    spacing = stats.get("lasts_spacing")
+    checked = f", checked every {spacing} min" if spacing else ""
+    open_text = (
+        f" {stats['lasts_open']} still bettable at the start are left out."
+        if stats.get("lasts_open")
         else ""
     )
 
     return (
-        f"How long a signal stays bettable at this EV, median of the "
-        f"{stats.get('lasts_ended', 0)} that ended: between the last run that still had "
-        "it and the first that did not (gone, a lower price or not found). "
-        + gone_text
-        + f"Only signals whose next run came within {MAX_RUN_GAP_MINUTES} minutes count "
-        f"(not the older hourly runs); {stats.get('lasts_open', 0)} more were still "
-        "bettable at the start or at the newest run and are left out."
+        f"{within:.0%} of {stats['lasts_ended']} signals were gone within "
+        f"{minutes_text(lasts)}{checked}.{open_text}"
+    )
+
+
+def tip_tile(label: str, value: str, tip: str, value_class: str = "") -> str:
+    """A tile whose explanation shows on hover, or on a tap on phones (tabindex makes
+    it focusable; a tap elsewhere hides it)."""
+    css = f"value {value_class}".strip()
+
+    return (
+        '<div class="overview-tile has-tip" tabindex="0">'
+        f'<div class="{css}">{html.escape(value)}</div>'
+        f'<div class="label">{html.escape(label)}</div>'
+        f'<div class="tip">{html.escape(tip)}</div></div>'
     )
 
 
@@ -2497,11 +2541,7 @@ def overview_track(record: dict[str, dict]) -> str:
                 pct(stats["ev"]),
                 "Mean EV at the first flag, what the prices promised",
             ),
-            overview_tile(
-                "Lasts",
-                lifetime_text(stats),
-                lifetime_help(stats),
-            ),
+            tip_tile("Lasts", lifetime_text(stats), lifetime_help(stats)),
         ]
         rows.append(
             f'<div class="track-book">{html.escape(book)}</div>'
