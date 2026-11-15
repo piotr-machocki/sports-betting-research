@@ -2332,7 +2332,6 @@ def overview_meters(stats: dict, total: int, books: list[str] = BOOKS) -> str:
 # The EV status donuts (user, 15 Nov 2026: two side by side fit a phone's width where
 # the two split-bar cards took a full row each). CSS only: st.html's sanitizer removes
 # SVG, so the ring is a conic-gradient with its middle masked out (.donut-ring).
-DONUT_GAP_PERCENT = 0.8  # about 2 px of the ring between two segments
 DONUT_MIN_SHARE = 0.04  # one match of 41 still shows as a visible segment
 
 
@@ -2351,18 +2350,15 @@ def donut_lengths(counts: list[int], circumference: float) -> list[float]:
 
 
 def donut_gradient(drawn: list[tuple[str, int, str, str]]) -> str:
-    """conic-gradient stops: each segment in its colour, then a transparent gap."""
+    """conic-gradient stops: the segments edge to edge (user, 15 Nov 2026: no gaps)."""
     if not drawn:
         return OVERVIEW_WAITING
 
-    gap = DONUT_GAP_PERCENT if len(drawn) > 1 else 0
     stops, start = [], 0.0
 
     for (_, _, color, _), length in zip(drawn, donut_lengths([part[1] for part in drawn], 100.0)):
         end = start + length
-        stops.append(f"{color} {start:.2f}% {end - gap:.2f}%")
-        if gap:
-            stops.append(f"transparent {end - gap:.2f}% {end:.2f}%")
+        stops.append(f"{color} {start:.2f}% {end:.2f}%")
         start = end
 
     return f"conic-gradient({', '.join(stops)})"

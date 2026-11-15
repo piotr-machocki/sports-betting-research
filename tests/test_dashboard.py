@@ -1759,7 +1759,7 @@ def test_lasts_tile_shows_its_share_on_hover_or_tap():
     assert '<div class="tip">67% of 3 signals were gone within 15 min, checked every 15 min.</div>' in page
 
 
-def test_donut_keeps_one_match_visible_and_leaves_gaps():
+def test_donut_keeps_one_match_visible():
     lengths = dashboard.donut_lengths([38, 1, 2], 100.0)
     assert sum(lengths) == pytest.approx(100.0)
     # 1 of 41 (2.4%) is lifted to 4%; 2 of 41 (4.9%) is not, and gives up its share.
@@ -1767,7 +1767,7 @@ def test_donut_keeps_one_match_visible_and_leaves_gaps():
     assert lengths[2] == pytest.approx(2 / 40 * 96)
 
     donut = dashboard.overview_donut("Betclic", 38, 1, "live 1", 41, 41)
-    assert "conic-gradient(#2a78d6 0.00% " in donut and donut.count("transparent ") == 3
+    assert "conic-gradient(#2a78d6 0.00% " in donut and "transparent" not in donut
     assert 'title="EV calculated 38 of 41 (93%), No EV 1 of 41 (2%), Not matched 2 of 41 (5%)"' in donut
     assert '38<span class="donut-whole">/41</span>' in donut
     assert "(live 1)" in donut and "Waiting" not in donut
