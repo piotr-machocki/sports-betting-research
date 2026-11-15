@@ -2502,15 +2502,12 @@ def overview_track(record: dict[str, dict], min_ev: float = 0.02) -> str:
     for book, stats in record.items():
         expected = stats["expected"]
         margin = stats["roi_margin"]
-        open_text = f"{stats['pending']} pending, {stats['no_result']} with no result"
-        if stats["other"]:
-            open_text += f", {stats['other']} retired or walkover (not in W-L or ROI)"
 
         tiles = [
             tip_tile(
                 "Signals",
                 str(stats["signals"]),
-                f"First flag at EV ≥ {min_ev:.1%}, each match once. {open_text}.",
+                f"First flag at EV ≥ {min_ev:.1%}",
             ),
             overview_tile(
                 "Avg CLV",
@@ -2565,8 +2562,7 @@ def overview_track(record: dict[str, dict], min_ev: float = 0.02) -> str:
             # Under the tiles: an empty first column on desktop, its own line on phones.
             rows.append(
                 '<div></div>'
-                f'<div class="track-note">Odds ≥ {BETCLIC_MIN_ODDS:.2f} '
-                "(Betclic's lowest single)</div>"
+                f'<div class="track-note">Odds ≥ {BETCLIC_MIN_ODDS:.2f}</div>'
             )
 
     return f'<div class="track-rows">{"".join(rows)}</div>'
