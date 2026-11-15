@@ -2529,7 +2529,7 @@ def track_card(
         elif error:
             text = f"Could not work out the track record: {error}"
         else:
-            text = "Loading (about 20 s)…"
+            text = "Loading (under a minute)…"
         loading = record is None and not error
         body = (
             '<div class="overview-empty overview-loading"><span class="spinner"></span>'
