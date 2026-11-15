@@ -454,32 +454,38 @@ OVERVIEW_STYLE = """<style>
     display: flex;
     flex-direction: column;
     align-items: center;
-    min-width: 52px;
-    padding: 0 4px;
+    min-width: 62px;
+    padding: 0 6px;
 }
-.flow-gap { font-size: 12px; font-variant-numeric: tabular-nums; }
-/* A line with an arrowhead, in the muted text colour. */
+/* An empty line under the arrow as tall as the number over it, so the arrow itself
+   sits at the boxes' middle. */
+.flow-arrow::after { content: ""; height: 18px; }
+.flow-gap { font-size: 14px; line-height: 18px; font-variant-numeric: tabular-nums; }
+/* A line with an arrowhead, in the muted text colour; the head is inside the line's
+   box, so the number is centred over the whole arrow. */
 .flow-line {
     position: relative;
     align-self: stretch;
     height: 2px;
-    margin-right: 5px;
-    background-color: color-mix(in srgb, currentColor 45%, transparent);
+    margin: 3px 8px 3px 0;
+    background-color: color-mix(in srgb, currentColor 50%, transparent);
 }
 .flow-line::after {
     content: "";
     position: absolute;
-    right: -6px;
-    top: -4px;
-    border: 5px solid transparent;
-    border-left: 6px solid color-mix(in srgb, currentColor 45%, transparent);
+    right: -8px;
+    top: -5px;
+    border: 6px solid transparent;
+    border-left: 8px solid color-mix(in srgb, currentColor 50%, transparent);
+    border-right: 0;
 }
 /* One line on a phone (user, 10 Nov 2026): no "Run on" label or year, tighter gaps. */
 @media (max-width: 700px) {
     /* The flow on one line down to about 360 px wide. */
     .flow-node { max-width: none; padding: 6px 4px; font-size: 14px; }
-    .flow-sub, .flow-gap { font-size: 11px; }
-    .flow-arrow { min-width: 38px; padding: 0 3px; }
+    .flow-sub { font-size: 11px; }
+    .flow-gap { font-size: 13px; }
+    .flow-arrow { min-width: 46px; padding: 0 4px; }
     .session-bar { gap: 4px 12px; font-size: 13px; }
     .session-status { padding: 0 9px; }
     .session-fact .label, .session-fact .year { display: none; }
@@ -574,7 +580,12 @@ OVERVIEW_STYLE = """<style>
     background: #333;
 }
 .has-tip:hover .tip, .has-tip:focus .tip { display: block; }
-.has-tip .label, .has-tip .flow-name { text-decoration: underline dotted; text-underline-offset: 3px; }
+/* Dotted and grey (user, 15 Nov 2026): a hint that a tap explains it, quieter than the text. */
+.has-tip .label, .has-tip .flow-name {
+    text-decoration: underline dotted;
+    text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+    text-underline-offset: 3px;
+}
 @media (max-width: 700px) {
     /* Over the page, not inside the tile. The Track record's tiles sit in a 3-column
        grid, so a tip in the right column (.end, Lasts) opens leftwards from the tile's
