@@ -456,7 +456,6 @@ OVERVIEW_STYLE = """<style>
 .overview-card.wide { flex: 2 1 220px; }
 .overview-card.fit { flex: 0 1 auto; }
 /* Holds the third column, so the second row lines up with the first; no height when it wraps. */
-.overview-card.spacer { height: 0; padding: 0; border: 0; }
 .overview-heading {
     margin-bottom: 4px;
     font-size: 12px;
@@ -476,15 +475,30 @@ OVERVIEW_STYLE = """<style>
     background-color: rgba(42, 120, 214, 0.2);
 }
 .overview-meter > div { height: 100%; border-radius: 4px; }
-.overview-split {
-    display: flex;
-    height: 8px;
-    margin: 6px 0;
-    border-radius: 4px;
-    overflow: hidden;
+.donut-pair { display: flex; flex-wrap: wrap; gap: 10px 24px; }
+.donut-block { flex: 1 1 0; min-width: 0; }
+.donut-book { font-weight: 600; margin-bottom: 4px; }
+/* Ring and counts side by side; on a narrow card the counts wrap under the ring. */
+.donut-body { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.donut { position: relative; width: 92px; height: 92px; flex: none; }
+.donut-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 12.5px), #000 calc(100% - 12px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 12.5px), #000 calc(100% - 12px));
 }
-.overview-split > div { min-width: 4px; }
-.overview-legend { display: flex; flex-wrap: wrap; gap: 0 14px; }
+.donut-value {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 19px;
+    font-weight: 600;
+}
+.donut-whole { font-size: 13px; font-weight: 400; opacity: 0.65; }
+.donut-legend { line-height: 1.5; white-space: nowrap; }
 .overview-swatch {
     display: inline-block;
     width: 9px;
@@ -2315,8 +2329,50 @@ def overview_meters(stats: dict, total: int, books: list[str] = BOOKS) -> str:
     return f'<div class="overview-meters">{"".join(cells)}</div>'
 
 
-def overview_split(calculated: int, no_ev: int, reasons: str, matches: int, total: int) -> str:
-    """Where every Pinnacle match ended up at one book. VERIFY, AMBIGUOUS and ERROR count
+# The EV status donuts (user, 15 Nov 2026: two side by side fit a phone's width where
+# the two split-bar cards took a full row each). CSS only: st.html's sanitizer removes
+# SVG, so the ring is a conic-gradient with its middle masked out (.donut-ring).
+DONUT_GAP_PERCENT = 0.8  # about 2 px of the ring between two segments
+DONUT_MIN_SHARE = 0.04  # one match of 41 still shows as a visible segment
+
+
+def donut_lengths(counts: list[int], circumference: float) -> list[float]:
+    """Each count's arc, at least DONUT_MIN_SHARE of the ring; the larger parts give
+    up what the small ones gain, in proportion."""
+    whole = sum(counts)
+    floor = DONUT_MIN_SHARE * circumference
+    raw = [circumference * count / whole for count in counts]
+    small = [length < floor for length in raw]
+    lifted = floor * sum(small)
+    rest = sum(length for length, is_small in zip(raw, small) if not is_small)
+    scale = (circumference - lifted) / rest if rest else 0
+
+    return [floor if is_small else length * scale for length, is_small in zip(raw, small)]
+
+
+def donut_gradient(drawn: list[tuple[str, int, str, str]]) -> str:
+    """conic-gradient stops: each segment in its colour, then a transparent gap."""
+    if not drawn:
+        return OVERVIEW_WAITING
+
+    gap = DONUT_GAP_PERCENT if len(drawn) > 1 else 0
+    stops, start = [], 0.0
+
+    for (_, _, color, _), length in zip(drawn, donut_lengths([part[1] for part in drawn], 100.0)):
+        end = start + length
+        stops.append(f"{color} {start:.2f}% {end - gap:.2f}%")
+        if gap:
+            stops.append(f"transparent {end - gap:.2f}% {end:.2f}%")
+        start = end
+
+    return f"conic-gradient({', '.join(stops)})"
+
+
+def overview_donut(
+    book: str, calculated: int, no_ev: int, reasons: str, matches: int, total: int
+) -> str:
+    """Where every Pinnacle match ended up at one book, as a ring with the matches that
+    got an EV in its centre and the counts beside it. VERIFY, AMBIGUOUS and ERROR count
     as not matched, because EV is calculated for FOUND only."""
     parts = [
         ("EV calculated", calculated, OVERVIEW_BLUE, ""),
@@ -2327,24 +2383,29 @@ def overview_split(calculated: int, no_ev: int, reasons: str, matches: int, tota
     # A part at zero draws nothing. Waiting only means something during a run.
     drawn = [part for part in parts if part[1]]
     whole = sum(count for _, count, _, _ in drawn)
-    blocks = "".join(
-        f'<div style="flex: {count} 0 0; background-color: {color}" '
-        f'title="{label}: {count} of {whole} ({share(count, whole)})"></div>'
-        for label, count, color, _ in drawn
+    title = ", ".join(
+        f"{label} {count} of {whole} ({share(count, whole)})" for label, count, _, _ in drawn
     )
     legend = "".join(
-        f'<span><span class="overview-swatch" style="background-color: {color}"></span>'
+        f'<div><span class="overview-swatch" style="background-color: {color}"></span>'
         f"{label} <b>{count}</b>"
         + (f' <span class="overview-note">({html.escape(note)})</span>' if note else "")
-        + "</span>"
+        + "</div>"
         for label, count, color, note in parts
         if count or label != "Waiting"
     )
-    names = ", ".join(f"{label} {count}" for label, count, _, _ in drawn)
 
     return (
-        f'<div class="overview-split" role="img" aria-label="{html.escape(names)}">'
-        f'{blocks}</div><div class="overview-legend">{legend}</div>'
+        '<div class="donut-block">'
+        f'<div class="donut-book">{html.escape(book)}</div>'
+        '<div class="donut-body">'
+        f'<div class="donut" role="img" aria-label="{html.escape(book)}: {html.escape(title)}" '
+        f'title="{html.escape(title)}">'
+        f'<div class="donut-ring" style="background: {donut_gradient(drawn)}"></div>'
+        f'<div class="donut-value">{calculated}<span class="donut-whole">/{total}</span></div>'
+        "</div>"
+        f'<div class="donut-legend">{legend}</div>'
+        "</div></div>"
     )
 
 
@@ -2707,8 +2768,10 @@ def overview_html(
     track: str = "",
 ) -> str:
     """The stats of session_summary as two rows of cards, then track (track_card,
-    over all sessions) on its own row when given. Bars, not pies: the counts are
-    often close together (99 and 105 of 110), which pie slices do not show. ev_only
+    over all sessions) on its own row when given. Coverage stays as bars, since its
+    counts are often close together (99 and 105 of 110), which slices do not show; the
+    EV status split is one donut per book (overview_donut), with its counts beside it,
+    because the two fit one row on a phone. ev_only
     (the EV filter is on) keeps only the Signals card, as narrow as its tiles,
     counted over ev_stats (all sessions) when given."""
     stats = dict(summary["stats"])
@@ -2744,42 +2807,41 @@ def overview_html(
         card("Matches covered", overview_meters(stats, total, books), "wide")
     ]
 
+    donuts = []
+
     if "Betclic" in books:
-        coverage.append(
-            card(
-                "Betclic EV status",
-                overview_split(
-                    overview_counts(stats["EV calculated"])[0],
-                    int(stats["FOUND but no EV"]),
-                    betclic_reasons,
-                    matches,
-                    total,
-                ),
-                "wide",
+        donuts.append(
+            overview_donut(
+                "Betclic",
+                overview_counts(stats["EV calculated"])[0],
+                int(stats["FOUND but no EV"]),
+                betclic_reasons,
+                matches,
+                total,
             )
         )
 
     if "Superbet" in books and "Found on Superbet" in stats:
-        coverage.append(
-            card(
-                "Superbet EV status",
-                overview_split(
-                    overview_counts(stats["Found on Superbet"])[0],
-                    int(stats[SUPERBET_NO_EV_LABEL]),
-                    "",
-                    matches,
-                    total,
-                ),
-                "wide",
+        donuts.append(
+            overview_donut(
+                "Superbet",
+                overview_counts(stats["Found on Superbet"])[0],
+                int(stats[SUPERBET_NO_EV_LABEL]),
+                "",
+                matches,
+                total,
             )
+        )
+
+    if donuts:
+        coverage.append(
+            card("EV status", f'<div class="donut-pair">{"".join(donuts)}</div>', "wide")
         )
 
     results = [
         card("Signals", overview_positive(stats, books), "wide"),
         card("Performance", overview_checks(summary, stats, books), "wide"),
     ]
-    if len(coverage) > len(results):
-        results.append('<div class="overview-card wide spacer"></div>')
 
     return (
         '<section class="overview"><div class="overview-title">Run overview</div>'

@@ -360,10 +360,11 @@ def test_overview_splits_superbet_like_betclic():
         row(pinnacle_player1="Ed Eps"),
     ]
     text = overview_text(rows, {"pinnacle": {"matches": 5}})
-    superbet = text[text.index("Superbet EV status") :]
+    status = text[text.index("EV status") :]
+    betclic, superbet = status[: status.index("Superbet")], status[status.index("Superbet") :]
 
     assert "EV calculated 1 No EV 1 Not matched 2 Waiting 1" in superbet
-    assert "Betclic EV status EV calculated 4" in text
+    assert "EV calculated 4 No EV 0 Not matched 0 Waiting 1" in betclic
 
 
 def test_overview_puts_the_status_cards_in_the_first_row():
@@ -371,7 +372,7 @@ def test_overview_puts_the_status_cards_in_the_first_row():
     summary = dashboard.session_summary(rows, {"pinnacle": {"matches": 2}}, 0.02, NOW)
     first, second = dashboard.overview_html(summary).split('<div class="overview-cards">')[1:]
 
-    assert "Betclic EV status" in first and "Superbet EV status" in first
+    assert "EV status" in first and 'donut-book">Betclic' in first and 'donut-book">Superbet' in first
     assert "Signals" in second and "Performance" in second
 
 
@@ -382,7 +383,7 @@ def test_overview_with_the_ev_filter_keeps_only_the_positive_ev_card():
 
     assert page.count('<div class="overview-cards">') == 1
     assert "Signals" in page
-    assert "Performance" not in page and "EV status" not in page and "spacer" not in page
+    assert "Performance" not in page and "EV status" not in page
     assert 'class="overview-card fit"' in page
 
 
@@ -587,7 +588,8 @@ def test_empty_ev_filter_names_the_best_ev():
 
 def test_overview_rows_have_the_same_columns():
     with_superbet = [row(superbet_odds1="1.80", superbet_best_ev="0.01")]
-    for rows, columns in ((with_superbet, 3), ([row()], 2)):
+    # Both books share one EV status card, so two columns either way.
+    for rows, columns in ((with_superbet, 2), ([row()], 2)):
         summary = dashboard.session_summary(rows, {"pinnacle": {"matches": 2}}, 0.02, NOW)
         first, second = dashboard.overview_html(summary).split('<div class="overview-cards">')[1:]
 
@@ -1248,20 +1250,18 @@ def test_overview_with_superbet_off_is_betclic_only():
     page = overview_for([row(**BOTH_BOOKS)], ["Betclic"])
 
     assert "Superbet" not in page
-    assert "Betclic EV status" in page and "Betclic gap" in page
-    assert "spacer" not in page
+    assert 'donut-book">Betclic' in page and "Betclic gap" in page
 
 
 def test_overview_with_betclic_off_is_superbet_only():
     page = overview_for([row(**BOTH_BOOKS, status="ERROR")], ["Superbet"])
 
     assert "Betclic" not in page
-    assert "Superbet EV status" in page and "Superbet gap" in page
+    assert 'donut-book">Superbet' in page and "Superbet gap" in page
     assert "Superbet &gt; 0%" in page or "Superbet > 0%" in page
     assert ">Errors<" not in page
     first, second = page.split('<div class="overview-cards">')[1:]
-    assert "Matches covered" in first and "Superbet EV status" in first
-    assert "spacer" not in page
+    assert "Matches covered" in first and "EV status" in first
 
 
 def test_overview_ev_card_with_one_book():
@@ -1757,3 +1757,23 @@ def test_lasts_tile_shows_its_share_on_hover_or_tap():
 
     assert '<div class="overview-tile has-tip end" tabindex="0"><div class="value">&lt; 15 min</div>' in page
     assert '<div class="tip">67% of 3 signals were gone within 15 min, checked every 15 min.</div>' in page
+
+
+def test_donut_keeps_one_match_visible_and_leaves_gaps():
+    lengths = dashboard.donut_lengths([38, 1, 2], 100.0)
+    assert sum(lengths) == pytest.approx(100.0)
+    # 1 of 41 (2.4%) is lifted to 4%; 2 of 41 (4.9%) is not, and gives up its share.
+    assert lengths[1] == pytest.approx(4.0)
+    assert lengths[2] == pytest.approx(2 / 40 * 96)
+
+    donut = dashboard.overview_donut("Betclic", 38, 1, "live 1", 41, 41)
+    assert "conic-gradient(#2a78d6 0.00% " in donut and donut.count("transparent ") == 3
+    assert 'title="EV calculated 38 of 41 (93%), No EV 1 of 41 (2%), Not matched 2 of 41 (5%)"' in donut
+    assert '38<span class="donut-whole">/41</span>' in donut
+    assert "(live 1)" in donut and "Waiting" not in donut
+
+    whole = dashboard.overview_donut("Superbet", 5, 0, "", 5, 5)
+    assert "conic-gradient(#2a78d6 0.00% 100.00%)" in whole and "transparent" not in whole
+
+    empty = dashboard.overview_donut("Superbet", 0, 0, "", 0, 0)
+    assert "conic-gradient" not in empty and "Waiting" not in empty
