@@ -324,7 +324,7 @@ def test_overview_hides_waiting_and_superbet_when_they_do_not_apply():
 
     assert "Waiting" not in text
     assert "Superbet" not in text.replace("-- Superbet gap", "")
-    assert "Processed 1 / 1" in text
+    assert "Pinnacle 1 / 1" in text
 
 
 def test_overview_shows_superbet_and_the_threshold():
@@ -1259,7 +1259,7 @@ def test_overview_with_betclic_off_is_superbet_only():
     assert "Superbet &gt; 0%" in page or "Superbet > 0%" in page
     assert ">Errors<" not in page
     first, second = page.split('<div class="overview-cards">')[1:]
-    assert "Pinnacle matches covered" in first and "Superbet EV status" in first
+    assert "Matches covered" in first and "Superbet EV status" in first
     assert "spacer" not in page
 
 

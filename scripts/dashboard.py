@@ -2031,7 +2031,7 @@ def overview_counts(value: str) -> tuple[int, int | None]:
 
 def overview_meters(stats: dict, total: int, books: list[str] = BOOKS) -> str:
     rows = [
-        ("Processed", "Pinnacle matches processed"),
+        ("Pinnacle", "Pinnacle matches processed"),
         *((book, f"Found on {book}") for book in BOOKS if book in books),
     ]
     cells = []
@@ -2392,7 +2392,7 @@ def overview_html(
         )
 
     coverage = [
-        card("Pinnacle matches covered", overview_meters(stats, total, books), "wide")
+        card("Matches covered", overview_meters(stats, total, books), "wide")
     ]
 
     if "Betclic" in books:
