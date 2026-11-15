@@ -28,6 +28,7 @@ from __future__ import annotations
 import calendar
 import html
 import os
+import pickle
 import re
 import statistics
 import subprocess
@@ -1047,12 +1048,8 @@ def positive_ev_stats(records: list[dict], min_ev: float) -> dict:
 
 
 def outcome_signature() -> tuple:
-    """Changes when a Pinnacle snapshot is added or the results are updated."""
-    try:
-        snapshots = [path.stat().st_mtime_ns for path in PINNACLE_RAW_DIR.glob("*.csv")]
-    except OSError:
-        snapshots = []
-
+    """Changes when the results are updated. New Pinnacle snapshots are added to the
+    sightings one file at a time instead (load_outcome_sources)."""
     files = []
     for path in [*MATCH_RESULTS_FILES, *sorted(MATCH_RESULTS_EXTRA_DIR.glob("*.csv"))]:
         try:
@@ -1061,22 +1058,64 @@ def outcome_signature() -> tuple:
         except OSError:
             files.append(None)
 
-    return len(snapshots), max(snapshots, default=0), tuple(files)
+    return tuple(files)
+
+
+# A snapshot file younger than this may still be being written, so it waits for the
+# next call (snapshots are written once and never changed).
+SNAPSHOT_SETTLE_SECONDS = 5
+SNAPSHOT_CHUNK = 200
 
 
 def load_outcome_sources(cache: dict) -> dict:
-    """Pinnacle's snapshots by match and the finished matches, read again only when
-    outcome_signature changes (about 2 s for 250 snapshots and 11k results)."""
+    """Pinnacle's snapshots by match (compact_sightings: 79 MB for every sighting on 15
+    Nov 2026, growing by about 25 MB a day with runs every 5 minutes) and the finished
+    matches. Snapshots are read once each, as they arrive: rereading all of them took
+    13.5 s for 1800 files on the VM, and a new one now comes every 5 minutes. The
+    results are read again only when outcome_signature changes."""
+    import evaluate_ev
+
+    known = cache.setdefault("sighting_files", set())
+    settled = time.time() - SNAPSHOT_SETTLE_SECONDS
+    new = []
+
+    for path in sorted(PINNACLE_RAW_DIR.glob("*.csv")):
+        if path.name in known:
+            continue
+        try:
+            if path.stat().st_mtime > settled:
+                continue
+        except OSError:
+            continue
+        new.append(path)
+
+    if new or "sightings" not in cache:
+        # A new dict, so a reader holding the old one never sees it change.
+        sightings = dict(cache.get("sightings", {}))
+
+        # In chunks, so the first load never holds every snapshot row at once.
+        for chunk in range(0, len(new), SNAPSHOT_CHUNK):
+            groups: dict = {}
+            touched = evaluate_ev.add_sightings(groups, new[chunk : chunk + SNAPSHOT_CHUNK])
+
+            for key in touched:
+                for row in sightings.get(key, []):
+                    groups[key].setdefault(row["captured_at"], row)
+                sightings[key] = evaluate_ev.compact_sightings(
+                    evaluate_ev.sorted_sightings(groups[key])
+                )
+
+        known.update(path.name for path in new)
+        cache["sightings"] = sightings
+
     signature = outcome_signature()
 
     if cache.get("signature") != signature:
-        import evaluate_ev
         import match_results
 
         results = match_results.load_results()
         cache.update(
             signature=signature,
-            sightings=evaluate_ev.load_sightings(),
             by_day=match_results.index_results(results),
             covered=match_results.read_covered_through(),
         )
@@ -1670,6 +1709,39 @@ def track_record(
     return record
 
 
+# TrackLoader's session_flags, kept between server starts: reading every session
+# took 44 s for 888 sessions on the VM (15 Nov 2026), the file loads in 0.04 s. A
+# cache only (each entry is checked against its session file's size and time), so
+# backup_data.sh leaves data/cache out.
+TRACK_CACHE_FILE = ROOT / "data" / "cache" / "track_flags.pkl"
+
+
+def load_flag_cache(path: Path = TRACK_CACHE_FILE) -> dict:
+    try:
+        with open(path, "rb") as handle:
+            held = pickle.load(handle)
+    except Exception:  # missing, cut short or from older code: read the sessions again
+        return {}
+
+    return held if isinstance(held, dict) else {}
+
+
+def save_flag_cache(cache: dict, path: Path = TRACK_CACHE_FILE) -> None:
+    """The session_flags entries (str keys), written to a temporary file first so a
+    reader never sees half of one."""
+    held = {key: value for key, value in cache.items() if isinstance(key, str)}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_suffix(".tmp")
+
+    with open(partial, "wb") as handle:
+        pickle.dump(held, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    os.replace(partial, path)
+
+
+def flag_signatures(cache: dict) -> dict:
+    return {key: value[0] for key, value in cache.items() if isinstance(key, str)}
+
+
 # load_outcome_sources fills one shared cache, from the page and from TrackLoader's thread.
 SOURCES_LOCK = threading.Lock()
 # How long a full run waits for the track record before drawing a placeholder. A warm
@@ -1682,9 +1754,11 @@ class TrackLoader:
     read of every session. A full run asks for its minimum EV and books (request);
     the header fragment checks whether it is there yet (ready). One per server."""
 
-    def __init__(self, sources_cache: dict) -> None:
+    def __init__(self, sources_cache: dict, cache_file: Path | None = TRACK_CACHE_FILE) -> None:
         self.sources_cache = sources_cache
-        self.cache: dict = {}  # session_flags and settled_outcomes, used by the thread only
+        self.cache_file = cache_file
+        # session_flags and settled_outcomes, used by the thread only
+        self.cache: dict = load_flag_cache(cache_file) if cache_file else {}
         self.results: dict[tuple, dict] = {}
         self.error: str | None = None
         self.wanted: tuple | None = None
@@ -1725,11 +1799,18 @@ class TrackLoader:
                 with SOURCES_LOCK:
                     sources = load_outcome_sources(self.sources_cache)
 
+                held = flag_signatures(self.cache)
                 record = track_record(
                     list_sessions(), self.cache, sources, key[0],
                     datetime.now(timezone.utc), list(key[1]),
                 )
                 error = None
+
+                if self.cache_file and flag_signatures(self.cache) != held:
+                    try:
+                        save_flag_cache(self.cache, self.cache_file)
+                    except OSError:
+                        pass  # only the next server start gets slower
             except Exception as exc:  # shown on the card; the page goes on
                 record, error = None, f"{type(exc).__name__}: {exc}"
 
@@ -2448,7 +2529,7 @@ def track_card(
         elif error:
             text = f"Could not work out the track record: {error}"
         else:
-            text = "Loading (up to a minute)…"
+            text = "Loading (about 20 s)…"
         loading = record is None and not error
         body = (
             '<div class="overview-empty overview-loading"><span class="spinner"></span>'
@@ -3375,8 +3456,10 @@ def main() -> None:
             help="Every appearance of this player in every session, one row per "
             "session, newest first. The other filters still apply.",
         )
-        st.fragment(render_session_picker)(st)
-        selected = state[SESSION_KEY]
+        # The session picker (render_session_picker) is off since runs every 5 minutes
+        # put 288 sessions in a day (user, 15 Nov 2026): the page follows the newest
+        # run. Its code stays, to bring it back once it scales.
+        selected = state[SESSION_KEY] = LATEST
 
         resets = state.get(RESET_KEY, 0)
         if resets != state.get("settings_reset_sent", 0):

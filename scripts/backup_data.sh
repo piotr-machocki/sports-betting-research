@@ -45,7 +45,7 @@ newer=()
 [ -f "$MARK" ] && newer=(-newer "$MARK")
 
 find data -type f "${newer[@]}" \
-    ! -path 'data/backup/*' ! -name '*.lock' ! -name 'backup.log' > "$work/files" \
+    ! -path 'data/backup/*' ! -path 'data/cache/*' ! -name '*.lock' ! -name 'backup.log' > "$work/files" \
     || fail "listing files failed"
 count=$(wc -l < "$work/files")
 

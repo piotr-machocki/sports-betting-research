@@ -109,21 +109,59 @@ def load_observations() -> dict[tuple, list[dict[str, str]]]:
     return groups
 
 
-def load_sightings() -> dict[tuple, list[dict[str, str]]]:
-    """Every Pinnacle snapshot row by match, oldest first. A session's request is
-    stored in two files, so the same capture is kept once."""
-    groups: dict[tuple, dict[str, dict[str, str]]] = {}
+def add_sightings(groups: dict[tuple, dict[str, dict[str, str]]], paths: list[Path]) -> set:
+    """Adds the snapshot files' rows to groups (match -> capture time -> row) and returns
+    the matches it touched. A session's request is stored in two files, so the same
+    capture is kept once."""
+    touched = set()
 
-    for path in sorted(mr.PINNACLE_RAW_DIR.glob("*.csv")):
+    for path in paths:
         for row in read_csv(path):
             if parse_time(row.get("captured_at")) and row.get("player1") and row.get("player2"):
                 key = match_key(row["player1"], row["player2"], row.get("tournament"))
                 groups.setdefault(key, {})[row["captured_at"]] = row
+                touched.add(key)
 
-    return {
-        key: sorted(rows.values(), key=lambda r: parse_time(r["captured_at"]))
-        for key, rows in groups.items()
-    }
+    return touched
+
+
+def sorted_sightings(rows: dict[str, dict[str, str]]) -> list[dict[str, str]]:
+    return sorted(rows.values(), key=lambda r: parse_time(r["captured_at"]))
+
+
+def sighting_state(row: dict[str, str]) -> tuple:
+    """What a sighting says: the prices, in which player order, the listed start, and
+    whether it was captured before that start."""
+    start = parse_time(row.get("starts_at"))
+    captured = parse_time(row.get("captured_at"))
+    after = bool(start and captured and captured >= start)
+
+    return row.get("player1"), row.get("odds1"), row.get("odds2"), row.get("starts_at"), after
+
+
+def compact_sightings(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """rows oldest first, with each run of sightings that say the same (sighting_state)
+    cut to its first and last row: 82% of 94,556 sightings repeated the one before
+    (VM, 15 Nov 2026). The newest sighting, the latest listed start and the last price
+    before the start are unchanged, since a run never spans its start; only a price's
+    middle sightings go, so it is still first and last seen at the same times."""
+    kept: list[dict[str, str]] = []
+
+    for row in rows:
+        if len(kept) >= 2 and sighting_state(kept[-2]) == sighting_state(kept[-1]) == sighting_state(row):
+            kept[-1] = row
+        else:
+            kept.append(row)
+
+    return kept
+
+
+def load_sightings() -> dict[tuple, list[dict[str, str]]]:
+    """Every Pinnacle snapshot row by match, oldest first."""
+    groups: dict[tuple, dict[str, dict[str, str]]] = {}
+    add_sightings(groups, sorted(mr.PINNACLE_RAW_DIR.glob("*.csv")))
+
+    return {key: sorted_sightings(rows) for key, rows in groups.items()}
 
 
 def latest_start(rows: list[dict[str, str]], sightings: list[dict[str, str]]) -> datetime | None:

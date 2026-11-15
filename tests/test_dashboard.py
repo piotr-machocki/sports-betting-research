@@ -1,5 +1,6 @@
 """The dashboard's data layer (scripts/dashboard.py). No Streamlit, no network."""
 
+import os
 import sys
 from types import SimpleNamespace
 from datetime import date, datetime, timedelta, timezone
@@ -1526,7 +1527,7 @@ def test_track_loader_draws_a_placeholder_until_the_thread_is_done(monkeypatch):
     monkeypatch.setattr(dashboard, "load_outcome_sources", lambda cache: {})
     monkeypatch.setattr(dashboard, "list_sessions", lambda: [])
     monkeypatch.setattr(dashboard, "track_record", slow)
-    loader = dashboard.TrackLoader({})
+    loader = dashboard.TrackLoader({}, cache_file=None)
 
     assert loader.request(0.02, ["Betclic"], wait=0.05) is None  # cold: still loading
     assert not loader.ready(0.02, ["Betclic"])
@@ -1549,7 +1550,7 @@ def test_track_loader_shows_a_failure_on_the_card(monkeypatch):
     monkeypatch.setattr(dashboard, "load_outcome_sources", lambda cache: {})
     monkeypatch.setattr(dashboard, "list_sessions", lambda: [])
     monkeypatch.setattr(dashboard, "track_record", broken)
-    loader = dashboard.TrackLoader({})
+    loader = dashboard.TrackLoader({}, cache_file=None)
 
     assert loader.request(0.02, ["Betclic"], wait=2) is None
     assert loader.ready(0.02, ["Betclic"]) and loader.error == "OSError: disk gone"
@@ -1641,3 +1642,78 @@ def test_signals_card_says_none_when_every_count_is_zero():
     tiles = dashboard.overview_positive(stats)
 
     assert "None" not in tiles and "Betclic &gt; 0%" in tiles
+
+
+def test_compact_sightings_keeps_each_prices_first_and_last_and_the_close():
+    import evaluate_ev
+
+    def seen(hhmm, odds1="2.0", starts="2026-11-03T20:00:00Z", player1="Ann Alpha"):
+        return {"captured_at": f"2026-11-03T{hhmm}:00+00:00", "player1": player1,
+                "odds1": odds1, "odds2": "1.9", "starts_at": starts}
+
+    rows = [seen("17:00"), seen("17:05"), seen("17:10"), seen("17:15"), seen("17:20", "2.1"),
+            seen("19:55", "2.1"), seen("20:00", "2.1"), seen("20:05", "2.1"), seen("20:10", "2.1")]
+    kept = [row["captured_at"][11:16] for row in evaluate_ev.compact_sightings(rows)]
+
+    # 17:05 and 17:10 go; the last price before the 20:00 start (19:55) stays.
+    assert kept == ["17:00", "17:15", "17:20", "19:55", "20:00", "20:10"]
+    flipped = [seen("17:00"), seen("17:05", player1="Bea Beta"), seen("17:10")]
+    assert evaluate_ev.compact_sightings(flipped) == flipped
+
+
+def test_outcome_sources_read_each_new_snapshot_once(tmp_path, monkeypatch):
+    import match_results
+
+    import evaluate_ev
+
+    header = "captured_at,player1,player2,tournament,starts_at,odds1,odds2\n"
+
+    def snapshot(name, hhmm, odds1):
+        path = tmp_path / name
+        path.write_text(header + f"2026-11-03T{hhmm}:00+00:00,Ann Alpha,Bea Beta,WTA Chennai - R16,"
+                        f"2026-11-03T20:00:00Z,{odds1},1.9\n")
+        os.utime(path, (1, 1))
+
+    monkeypatch.setattr(dashboard, "PINNACLE_RAW_DIR", tmp_path)
+    monkeypatch.setattr(dashboard, "outcome_signature", lambda: ("results",))
+    monkeypatch.setattr(match_results, "load_results", lambda: [])
+    monkeypatch.setattr(match_results, "read_covered_through", lambda: None)
+    reads = []
+    real = evaluate_ev.add_sightings
+    monkeypatch.setattr(evaluate_ev, "add_sightings", lambda groups, paths: reads.extend(p.name for p in paths) or real(groups, paths))
+
+    for name, hhmm in (("odds_1.csv", "17:00"), ("odds_2.csv", "17:05"), ("odds_3.csv", "17:10")):
+        snapshot(name, hhmm, "2.0")
+    cache = {}
+    sources = dashboard.load_outcome_sources(cache)
+    (key,) = sources["sightings"]
+    assert [row["captured_at"][11:16] for row in sources["sightings"][key]] == ["17:00", "17:10"]
+
+    snapshot("odds_4.csv", "17:15", "2.2")
+    old = sources["sightings"]
+    sources = dashboard.load_outcome_sources(cache)
+    assert reads == ["odds_1.csv", "odds_2.csv", "odds_3.csv", "odds_4.csv"]
+    assert [row["odds1"] for row in sources["sightings"][key]] == ["2.0", "2.0", "2.2"]
+    assert len(old[key]) == 2  # a reader holding the old dict never sees it change
+
+
+def test_track_flags_survive_a_server_restart(tmp_path, monkeypatch):
+    sessions = {"session_20261103_170000_aaaaaa": [row()]}
+    monkeypatch.setattr(dashboard, "SESSIONS_DIR", tmp_path)
+    (tmp_path / "session_20261103_170000_aaaaaa.csv").write_text("x")
+    reads = []
+    monkeypatch.setattr(dashboard, "read_session_rows", lambda path: reads.append(path.stem) or sessions[path.stem])
+    monkeypatch.setattr(dashboard, "list_sessions", lambda: list(sessions))
+    monkeypatch.setattr(dashboard, "load_outcome_sources", lambda cache: outcome_sources())
+    cache_file = tmp_path / "cache" / "track_flags.pkl"
+
+    first = dashboard.TrackLoader({}, cache_file=cache_file)
+    assert first.request(0.02, ["Betclic"], wait=10)["Betclic"]["signals"] == 1
+    assert reads == ["session_20261103_170000_aaaaaa"] and cache_file.exists()
+
+    second = dashboard.TrackLoader({}, cache_file=cache_file)
+    assert second.request(0.02, ["Betclic"], wait=10)["Betclic"]["signals"] == 1
+    assert reads == ["session_20261103_170000_aaaaaa"]  # read from the file, not the session
+
+    cache_file.write_bytes(b"not a pickle")
+    assert dashboard.load_flag_cache(cache_file) == {}
