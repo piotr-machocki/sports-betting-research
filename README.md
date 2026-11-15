@@ -58,6 +58,8 @@ PINNAPI_KEY_NBA=
 
 Replace the placeholders with your actual API keys. Do not commit your `.env` file. (`PINNAPI_KEY_TENNIS` was called `PINNAPI_KEY` before 12 Nov 2026; the old name is still read.)
 
+Each PinnAPI account allows 100 requests a day, one per run. To run more often, set several tennis keys (from separate accounts) as `PINNAPI_KEY_TENNIS_1`, `PINNAPI_KEY_TENNIS_2`, ... instead of `PINNAPI_KEY_TENNIS`: the runs take turns by 5-minute slot of the UTC day. With runs every 5 minutes, 3 keys give each one run in 15 minutes, 96 requests a day.
+
 `RAPIDAPI_KEY` is optional: it fetches finished match results from the [Tennis API - ATP WTA ITF](https://rapidapi.com/jjrm365-kIFr3Nx_odV/api/tennis-api-atp-wta-itf) on RapidAPI (the free plan allows 50 requests a day). Without it, a run only skips that step.
 
 `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are optional: with them, each run sends a Telegram message for every new prematch bet at or above `--min-ev` (each match, book and side once; see `scripts/notify.py`). Create a bot with [@BotFather](https://t.me/BotFather), send it any message, then `python scripts/notify.py --chat-id` prints the chat ID and `python scripts/notify.py --test` checks the setup. `--no-notify` skips it for one run.

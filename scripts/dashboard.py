@@ -1554,6 +1554,7 @@ def signal_lifetimes(
 
         lifetimes.append({
             "minutes": ((ended or last) - flagged).total_seconds() / 60,
+            "seen": (last - flagged).total_seconds() / 60,
             "ended": ended is not None,
             "next_gone": None if not checked else ended is not None and checked == 1,
         })
@@ -1565,10 +1566,12 @@ def lifetime_stats(lifetimes: list[dict]) -> dict:
     """Median minutes of the signals that ended, and the share of those checked at a
     later run that were gone by the very next one."""
     ended = [life["minutes"] for life in lifetimes if life["ended"]]
+    seen = [life["seen"] for life in lifetimes if life["ended"]]
     checked = [life["next_gone"] for life in lifetimes if life["next_gone"] is not None]
 
     return {
         "lasts": statistics.median(ended) if ended else None,
+        "lasts_seen": statistics.median(seen) if seen else None,
         "lasts_ended": len(ended),
         "lasts_open": len(lifetimes) - len(ended),
         "gone_next": sum(checked) / len(checked) if checked else None,
@@ -2304,6 +2307,40 @@ def signed_css(value: float | None) -> str:
     return EV_GREEN.split(";")[0] if value > 0 else EV_RED
 
 
+def lifetime_text(stats: dict) -> str:
+    """Roughly how long a signal stays: the median signal was last seen at one run and
+    gone at a later one, so it lasted between the two. Gone by the very next run reads
+    "< 15 min" (or "< 5 min" with runs 5 minutes apart)."""
+    upper, lower = stats.get("lasts"), stats.get("lasts_seen")
+
+    if upper is None:
+        return "--"
+
+    if lower is None or lower < 1:
+        return f"< {minutes_text(upper)}"
+
+    return f"{minutes_text(lower).removesuffix(' min')}–{minutes_text(upper)}"
+
+
+def lifetime_help(stats: dict) -> str:
+    gone = stats.get("gone_next")
+    gone_text = (
+        f"{gone:.0%} of {stats['gone_checked']} were gone by the very next run. "
+        if gone is not None
+        else ""
+    )
+
+    return (
+        f"How long a signal stays bettable at this EV, median of the "
+        f"{stats.get('lasts_ended', 0)} that ended: between the last run that still had "
+        "it and the first that did not (gone, a lower price or not found). "
+        + gone_text
+        + f"Only signals whose next run came within {MAX_RUN_GAP_MINUTES} minutes count "
+        f"(not the older hourly runs); {stats.get('lasts_open', 0)} more were still "
+        "bettable at the start or at the newest run and are left out."
+    )
+
+
 def minutes_text(minutes: float | None) -> str:
     if minutes is None:
         return "--"
@@ -2380,23 +2417,9 @@ def overview_track(record: dict[str, dict]) -> str:
                 "Mean EV at the first flag, what the prices promised",
             ),
             overview_tile(
-                "Lasts (median)",
-                minutes_text(stats.get("lasts")),
-                f"Median time a signal stayed bettable at this EV, over the "
-                f"{stats.get('lasts_ended', 0)} that ended: from its first flag to the "
-                "first later run without it (gone, a lower price or not found), so an "
-                "upper bound in steps of a run (15 minutes). Only signals whose next "
-                f"run came within {MAX_RUN_GAP_MINUTES} minutes count (not the older "
-                f"hourly runs); {stats.get('lasts_open', 0)} more were still bettable "
-                "at the start or at the newest run and are left out.",
-            ),
-            overview_tile(
-                "Gone next run",
-                pct(stats.get("gone_next"), signed=False),
-                f"Share of the {stats.get('gone_checked', 0)} signals with a later run "
-                "before the start that were no longer bettable at the very next run "
-                "(15 minutes later): each lasted somewhere under 15 minutes, which "
-                "faster polling would measure and alert on sooner",
+                "Lasts",
+                lifetime_text(stats),
+                lifetime_help(stats),
             ),
         ]
         rows.append(
@@ -2425,7 +2448,7 @@ def track_card(
         elif error:
             text = f"Could not work out the track record: {error}"
         else:
-            text = "Loading (about 25 s)…"
+            text = "Loading (up to a minute)…"
         loading = record is None and not error
         body = (
             '<div class="overview-empty overview-loading"><span class="spinner"></span>'

@@ -1446,7 +1446,7 @@ def test_signal_still_bettable_at_the_start_has_not_ended():
         {},
     )
     # Still bettable at the last run before the 20:00 start.
-    assert lifetimes == [{"minutes": 0.0, "ended": False, "next_gone": None}]
+    assert lifetimes == [{"minutes": 0.0, "seen": 0.0, "ended": False, "next_gone": None}]
     assert dashboard.lifetime_stats(lifetimes)["lasts"] is None
 
 
@@ -1477,7 +1477,10 @@ def test_track_card_shows_each_book_and_says_when_nothing_qualified():
     assert '<div class="track-book">Betclic</div>' in page
     for text in (">1-1<", ">+2.0%<", ">50%<", "Win rate (exp. 52%)", "ROI ±139%", ">+0.00<"):
         assert text in page
-    assert "Lasts (median)" in page and "Gone next run" in page
+    assert ">Lasts<" in page and "Gone next run" not in page
+    assert dashboard.lifetime_text({"lasts": 14.9, "lasts_seen": 0.0}) == "< 15 min"
+    assert dashboard.lifetime_text({"lasts": 30.0, "lasts_seen": 15.0}) == "15–30 min"
+    assert dashboard.lifetime_text({}) == "--"
     assert dashboard.minutes_text(29.6) == "30 min" and dashboard.minutes_text(150) == "2.5 h"
     assert "Betclic odds" not in dashboard.track_card({}, 0.02, ["Superbet"])
     assert "No match has reached this EV" in dashboard.track_card({}, 0.02)

@@ -143,15 +143,47 @@ def parse_pinnacle_matches(data: dict[str, Any], captured_at: str) -> list[dict[
 
 # ---------- pipeline ----------
 
-def tennis_api_key() -> str | None:
-    """The tennis key. PINNAPI_KEY is its old name, still read as a fallback."""
-    return os.environ.get("PINNAPI_KEY_TENNIS") or os.environ.get("PINNAPI_KEY")
+# Each PinnAPI account allows 100 requests a day. With N tennis keys (PINNAPI_KEY_TENNIS_1,
+# _2, ...) the runs take turns by 5-minute slot of the UTC day, so with runs every 5 minutes
+# and 3 keys each key gets one run in 15 minutes: 96 a day, leaving 4 for runs by hand.
+KEY_SLOT_MINUTES = 5
+
+
+def tennis_api_keys() -> list[str]:
+    """PINNAPI_KEY_TENNIS_1, _2, ... in order, else the single PINNAPI_KEY_TENNIS
+    (PINNAPI_KEY is its old name, still read as a fallback)."""
+    keys = []
+
+    while key := os.environ.get(f"PINNAPI_KEY_TENNIS_{len(keys) + 1}"):
+        keys.append(key)
+
+    single = os.environ.get("PINNAPI_KEY_TENNIS") or os.environ.get("PINNAPI_KEY")
+
+    return keys or ([single] if single else [])
+
+
+def tennis_key_slot(count: int, now: datetime | None = None) -> int:
+    """Which of count keys this run uses: its 5-minute slot of the UTC day, in turn."""
+    now = now or datetime.now(timezone.utc)
+
+    return (now.hour * 60 + now.minute) // KEY_SLOT_MINUTES % count
+
+
+def tennis_api_key(now: datetime | None = None) -> str | None:
+    keys = tennis_api_keys()
+
+    return keys[tennis_key_slot(len(keys), now)] if keys else None
 
 
 def main() -> dict[str, Any]:
-    api_key = tennis_api_key()
-    if not api_key:
+    keys = tennis_api_keys()
+    if not keys:
         sys.exit("Set the PINNAPI_KEY_TENNIS environment variable.")
+
+    slot = tennis_key_slot(len(keys))
+    api_key = keys[slot]
+    if len(keys) > 1:
+        print(f"PinnAPI tennis key {slot + 1} of {len(keys)}")
 
     BOOK_DATA_DIR.mkdir(parents=True, exist_ok=True)
     RAW_DIR.mkdir(parents=True, exist_ok=True)

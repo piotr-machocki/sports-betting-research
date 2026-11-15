@@ -766,7 +766,7 @@ def main() -> None:
     if not 0 <= args.min_ev:
         sys.exit("ERROR: --min-ev cannot be negative.")
 
-    if not (os.environ.get("PINNAPI_KEY_TENNIS") or os.environ.get("PINNAPI_KEY")):
+    if not pinnacle.tennis_api_keys():
         sys.exit(
             "ERROR: PINNAPI_KEY_TENNIS is not set. "
             "Check your .env loading or environment variables."
