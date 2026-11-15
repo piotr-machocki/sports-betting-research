@@ -2388,7 +2388,8 @@ def overview_donut(
         + (f' <span class="overview-note">({html.escape(note)})</span>' if note else "")
         + "</div>"
         for label, count, color, note in parts
-        if count or label != "Waiting"
+        # Only what the ring shows (user, 15 Nov 2026), and always the EV count.
+        if count or label == "EV calculated"
     )
 
     return (

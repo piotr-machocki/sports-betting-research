@@ -364,7 +364,7 @@ def test_overview_splits_superbet_like_betclic():
     betclic, superbet = status[: status.index("Superbet")], status[status.index("Superbet") :]
 
     assert "EV calculated 1 No EV 1 Not matched 2 Waiting 1" in superbet
-    assert "EV calculated 4 No EV 0 Not matched 0 Waiting 1" in betclic
+    assert "EV calculated 4 Waiting 1" in betclic and "No EV" not in betclic
 
 
 def test_overview_puts_the_status_cards_in_the_first_row():
@@ -1777,3 +1777,4 @@ def test_donut_keeps_one_match_visible():
 
     empty = dashboard.overview_donut("Superbet", 0, 0, "", 0, 0)
     assert "conic-gradient" not in empty and "Waiting" not in empty
+    assert "EV calculated <b>0</b>" in empty and "No EV" not in empty
