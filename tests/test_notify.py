@@ -51,11 +51,17 @@ def test_a_late_start_is_sent_with_a_warning():
     [bet] = notify.candidates([row(pinnacle_starts_at="2026-11-07T17:35:00Z")], 0.02, NOW)
 
     assert bet["started_minutes"] == 25
-    text = notify.message(bet)
-    assert text.endswith(
-        "\n⚠️ Listed start passed 25 min ago and Betclic still shows it before the match: "
+    assert notify.message(bet).endswith(
+        "\n⚠️ Listed start passed 25 min ago; only Betclic still lists it before the match: "
         "check it has not started"
     )
+
+    # Superbet's prematch feed has it too (it drops live matches): a cross-check.
+    [bet] = notify.candidates(
+        [row(pinnacle_starts_at="2026-11-07T17:35:00Z", superbet_status="FOUND")], 0.02, NOW
+    )
+    assert bet["prematch_at"] == ["Betclic", "Superbet"]
+    assert "; Betclic and Superbet both still list it before the match: " in notify.message(bet)
 
     # Betclic marking it live stops it, even inside the window.
     live = row(pinnacle_starts_at="2026-11-07T17:55:00Z", betclic_status="live")

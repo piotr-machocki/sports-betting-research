@@ -140,6 +140,18 @@ def candidates(rows: list[dict], min_ev: float, now: datetime) -> list[dict]:
             if started_minutes > LATE_START_MINUTES:
                 continue
 
+        # The books that still list the match before it (a cross-check for a late
+        # start, no extra request): Betclic when found and not marked live, Superbet
+        # when found in its prematch feed, which drops a match once it is live.
+        prematch_at = [
+            book
+            for book, listed in (
+                ("Betclic", row.get("status") == "FOUND" and row.get("betclic_status") != "live"),
+                ("Superbet", row.get("superbet_status") == "FOUND"),
+            )
+            if listed
+        ]
+
         for book, ev_prefix, price_field, net_field in (
             ("Betclic", "ev", "betclic_odds_for_pin_p{side}", "betclic_odds_for_pin_p{side}"),
             ("Superbet", "superbet_ev", "superbet_price{side}", "superbet_odds{side}"),
@@ -181,6 +193,7 @@ def candidates(rows: list[dict], min_ev: float, now: datetime) -> list[dict]:
                 "tournament": row.get("pinnacle_tournament", ""),
                 "starts_at": start,
                 "started_minutes": started_minutes,
+                "prematch_at": prematch_at,
             })
 
     return sorted(bets, key=lambda bet: -bet["ev"])
@@ -223,9 +236,15 @@ def message(bet: dict) -> str:
     late = ""
 
     if bet.get("started_minutes") is not None:
+        books = bet.get("prematch_at") or [bet["book"]]
+        listed = (
+            f"{books[0]} and {books[1]} both still list it before the match"
+            if len(books) > 1
+            else f"only {books[0]} still lists it before the match"
+        )
         late = (
-            f"\n⚠️ Listed start passed {bet['started_minutes']:.0f} min ago and "
-            f"{bet['book']} still shows it before the match: check it has not started"
+            f"\n⚠️ Listed start passed {bet['started_minutes']:.0f} min ago; {listed}: "
+            "check it has not started"
         )
 
     return (
