@@ -419,6 +419,8 @@ OVERVIEW_STYLE = """<style>
     background-color: currentColor;
 }
 .session-fact { font-variant-numeric: tabular-nums; font-weight: 600; }
+.session-stale { font-weight: 600; }
+.session-stale .label { margin-right: 6px; font-weight: 400; }
 .session-fact .label {
     margin-right: 6px;
     font-weight: 400;
@@ -792,7 +794,7 @@ TABLE_SCRIPT = """<script>
         if (age.firstChild.nodeValue !== shown) age.firstChild.nodeValue = shown;
 
         // Green while fresh, red once stale: the age and the Data flow card's flag.
-        const flag = document.querySelector(".overview-tile [data-stale-flag]");
+        const flag = document.querySelector("[data-stale-flag]");
         [age.parentElement, flag].forEach(element => {
             if (!element || element.classList.contains("stale") === stale) return;
             element.classList.toggle("stale", stale);
@@ -2477,9 +2479,9 @@ def overview_tile(
     )
 
 
-def overview_positive(stats: dict, books: list[str] = BOOKS, extra: str = "") -> str:
+def signal_tiles(stats: dict, books: list[str] = BOOKS) -> list[str]:
     """Colours follow the table: amber above 0, green from the threshold up. A book
-    whose counts are both 0 is left out (user, 15 Nov 2026); with none left, "None"."""
+    whose counts are both 0 is left out (user, 15 Nov 2026), so no signal = []."""
 
     def hit(value: str, css: str) -> str:
         return css.split(";")[0] if int(value) else ""
@@ -2527,12 +2529,19 @@ def overview_positive(stats: dict, books: list[str] = BOOKS, extra: str = "") ->
 
     # Every count 0: one greyed "None" instead of a row of zeros. Its explanation is a
     # tooltip shown on hover, or on a tap on phones (tabindex makes it focusable).
+    return tiles
+
+
+def overview_positive(stats: dict, books: list[str] = BOOKS) -> str:
+    """The signal tiles, or with none a greyed "None" over a "Signals" label (the card
+    then has no heading of its own; user, 15 Nov 2026)."""
+    tiles = signal_tiles(stats, books)
+
     if not tiles:
         tip = f"No match with EV ({REFERENCE_METHOD} method) > 0%"
         tiles = [tip_tile("Signals", "None", tip, "overview-empty")]
 
-    # extra: the Stale data tile beside them (user, 15 Nov 2026).
-    return f'<div class="overview-tiles">{"".join(tiles)}{extra}</div>'
+    return f'<div class="overview-tiles">{"".join(tiles)}</div>'
 
 
 def signed_css(value: float | None) -> str:
@@ -2769,27 +2778,27 @@ def overview_flow(summary: dict, books: list[str] = BOOKS) -> str:
     return f'<div class="flow">{"".join(steps)}</div>'
 
 
-def stale_tile(summary: dict) -> str:
-    """Whether the Pinnacle odds are past STALE_MINUTES: green No, red Yes; its limit
-    is in the tip, shown on hover or a tap (user, 15 Nov 2026). TABLE_SCRIPT flips it
-    between server ticks, like the age in the Data flow card."""
-    age = summary["pinnacle_age"]
+def stale_fact(summary: dict) -> str:
+    """Whether the Pinnacle odds are past STALE_MINUTES, in the session bar beside the
+    run time (user, 15 Nov 2026): green No, red Yes, its limit in a tip shown on hover
+    or a tap. TABLE_SCRIPT flips it between server ticks, like the Data flow age."""
+    age = summary.get("pinnacle_age")
     stale = age is not None and age > STALE_MINUTES * 60
     value = "--" if age is None else "Yes" if stale else "No"
     css = "" if age is None else (" stale" if stale else " fresh")
     flag = "" if age is None else ' data-stale-flag=""'
 
     return (
-        '<div class="overview-tile has-tip" tabindex="0">'
-        f'<div class="value{css}"{flag}>{value}</div>'
-        '<div class="label">Stale data</div>'
-        f'<div class="tip">Pinnacle odds over {STALE_MINUTES:g} min old</div></div>'
+        '<span class="session-stale has-tip end" tabindex="0">'
+        '<span class="label">Stale data</span>'
+        f'<span class="value{css}"{flag}>{value}</span>'
+        f'<span class="tip">Pinnacle odds over {STALE_MINUTES:g} min old</span></span>'
     )
 
 
 def overview_checks(summary: dict, stats: dict, books: list[str] = BOOKS) -> str:
     """The collection flow (overview_flow), then Errors in amber when there are any
-    (Stale data sits beside the signals)."""
+    (Stale data is in the session bar)."""
     flow = overview_flow(summary, books)
 
     # Only in the stats when it matters: see session_summary. They are Betclic's.
@@ -2804,8 +2813,8 @@ def overview_checks(summary: dict, stats: dict, books: list[str] = BOOKS) -> str
 
 
 def session_bar_html(summary: dict, session_id: str) -> str:
-    """The session's state above the overview: status and start (to the minute). The
-    age of its Pinnacle prices moved to the Data flow card (15 Nov 2026)."""
+    """The session's state above the overview: status, start (to the minute) and
+    whether its Pinnacle prices are stale. Their age is in the Data flow card."""
     colour = STATUS_COLOURS.get(summary["status"], OVERVIEW_BLUE)
     started = session_started(session_id)
     # Phones hide the year (and the label), so the whole bar fits on one line.
@@ -2819,7 +2828,7 @@ def session_bar_html(summary: dict, session_id: str) -> str:
         f'<span class="session-status" style="--status: {colour}">'
         f"{html.escape(summary['status'].capitalize())}</span>"
         '<span class="session-fact"><span class="label">Run on</span>'
-        f'<span class="value">{run_on}</span></span></div>'
+        f'<span class="value">{run_on}</span></span>{stale_fact(summary)}</div>'
     )
 
 
@@ -2911,8 +2920,8 @@ def overview_html(
         )
 
     results = [
-        # No heading: each tile says what it is ("Signals" under None).
-        card("", overview_positive(stats, books, stale_tile(summary)), "wide"),
+        # "Signals" as the heading over the tiles, or as None's own label.
+        card("Signals" if signal_tiles(stats, books) else "", overview_positive(stats, books), "wide"),
         card("Data flow", overview_checks(summary, stats, books), "wide"),
     ]
 
@@ -3551,13 +3560,13 @@ Pinnacle's price is fair, and it is measured against results as they come in
   first alert's book, price and time. On the Bet on side that is the bet already
   placed, so a later, smaller EV there is not a new bet; an alert on the other
   player is shown greyed out.
-* **Session bar**: the run's status and when it started.
+* **Session bar**: the run's status, when it started and whether its Pinnacle prices
+  are stale (Stale data: Yes once they are over 15 minutes old).
 * **Data flow**: the order the prices were collected in. The Pinnacle box shows how
   long ago its prices were captured (green, red once over 15 minutes); each arrow, how
   much later the next bookmaker's prices were read.
-* **Signals** and **Stale data** (beside each other): how many matches reached EV
-  above 0 and the minimum EV at each bookmaker (None when no match did), and whether
-  the Pinnacle prices are over 15 minutes old.
+* **Signals**: how many matches reached EV above 0 and the minimum EV at each
+  bookmaker (None when no match did).
 * **Track record**: every match that reached the minimum EV before its start, counted
   once at its first flag and price (Betclic only from odds of 1.14, the lowest it takes
   for a single). Its average CLV and share above 0 say first whether the edge is real;

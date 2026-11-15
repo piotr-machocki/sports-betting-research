@@ -373,9 +373,9 @@ def test_overview_puts_the_status_cards_in_the_first_row():
     first, second = dashboard.overview_html(summary).split('<div class="overview-cards">')[1:]
 
     assert "EV status" in first and 'donut-book">Betclic' in first and 'donut-book">Superbet' in first
-    # The signals and Stale data share a card without a heading, beside Data flow.
-    assert "Betclic &gt; 0%" in second and "Stale data" in second and "Data flow" in second
-    assert second.index("Stale data") < second.index("Data flow")
+    # With signals the card has its Signals heading again; Stale data is in the bar.
+    assert 'overview-heading">Signals<' in second and "Betclic &gt; 0%" in second
+    assert "Data flow" in second and "Stale data" not in second
 
 
 def test_overview_with_the_ev_filter_keeps_only_the_positive_ev_card():
@@ -672,18 +672,28 @@ def test_checks_card_says_whether_the_data_is_stale():
     at_limit = "2026-11-03T17:45:00+00:00"
     past_limit = "2026-11-03T17:44:59+00:00"
 
-    assert "No Stale data Pinnacle odds over 15 min old" in overview_text([row(pinnacle_captured_at=at_limit)])
-    assert "Yes Stale data" in overview_text([row(pinnacle_captured_at=past_limit)])
+    def bar(captured_at):
+        summary = dashboard.session_summary([row(pinnacle_captured_at=captured_at)], {}, 0.02, NOW)
+        summary["status"] = "finished"
+        return dashboard.session_bar_html(summary, "session_20261105_151211_abcdef")
+
+    assert '<span class="label">Stale data</span><span class="value fresh" data-stale-flag="">No</span>' in bar(at_limit)
+    assert '<span class="value stale" data-stale-flag="">Yes</span>' in bar(past_limit)
+    assert '<span class="tip">Pinnacle odds over 15 min old</span>' in bar(at_limit)
 
 
 def test_checks_card_without_prices():
     text = overview_text([])
 
     assert "Pinnacle -- Pinnacle data age -- Betclic -- Superbet" in text
-    assert "-- Stale data" in text and "data-stale-flag" not in dashboard.stale_tile({"pinnacle_age": None})
+    assert "Stale data" not in text
+    no_age = dashboard.stale_fact({"pinnacle_age": None})
+    assert ">--<" in no_age and "data-stale-flag" not in no_age
 
-    # With no signal: "None" over "Signals", then Stale data beside it.
-    assert "None Signals No match with EV (power method) &gt; 0% -- Stale data" in text.replace(">", "&gt;")
+    # With no signal: no heading, "None" over a "Signals" label.
+    page = dashboard.overview_html(dashboard.session_summary([], {}, 0.02, NOW))
+    assert 'overview-heading">Signals<' not in page
+    assert '<div class="value overview-empty">None</div><div class="label">Signals</div>' in page
 
 
 def test_overview_of_a_run_without_rows():
@@ -1327,9 +1337,10 @@ def test_pinnacle_age_and_stale_flag_are_green_while_fresh_and_red_once_stale(
     summary = dashboard.session_summary([row(pinnacle_captured_at=captured_at)], {}, 0.02, NOW)
     summary["status"] = "finished"
     overview = dashboard.overview_html(summary)
+    bar = dashboard.session_bar_html(summary, "session_20261105_151211_abcdef")
 
     assert f'class="flow-age {freshness}"' in overview
-    assert f'class="value {freshness}" data-stale-flag=""' in overview
+    assert f'class="value {freshness}" data-stale-flag=""' in bar
 
 
 def test_calendar_shows_each_days_session_count_in_its_month_only():
