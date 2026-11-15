@@ -514,8 +514,11 @@ OVERVIEW_STYLE = """<style>
 .overview-tile.has-tip:hover .tip, .overview-tile.has-tip:focus .tip { display: block; }
 .overview-tile.has-tip .label { text-decoration: underline dotted; text-underline-offset: 3px; }
 @media (max-width: 700px) {
-    /* In the tile's flow, so a tile at the right edge cannot push it off screen. */
-    .overview-tile .tip { position: static; margin-top: 4px; max-width: none; width: auto; }
+    /* Over the page, not inside the tile. The Track record's tiles sit in a 3-column
+       grid with Lasts on the right, so its tip opens leftwards from the tile's right
+       edge and stays on screen. */
+    .overview-tile .tip { max-width: 220px; }
+    .track-rows .overview-tile .tip { left: auto; right: 0; }
 }
 .overview-tile .label {
     font-size: 12px;
