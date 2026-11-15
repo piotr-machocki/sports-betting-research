@@ -441,6 +441,7 @@ OVERVIEW_STYLE = """<style>
 .overview-title { font-weight: 600; margin-bottom: 6px; }
 .overview-cards { display: flex; flex-wrap: wrap; gap: 10px; }
 .overview-cards + .overview-cards { margin-top: 10px; }
+.overview-cards + .overview-title { margin-top: 14px; }
 .overview-card {
     box-sizing: border-box;
     flex: 1 1 200px;
@@ -2363,6 +2364,17 @@ def session_bar_html(summary: dict, session_id: str) -> str:
     )
 
 
+def track_section(track: str) -> str:
+    """The Track record card under its own title: it counts every run, not this one."""
+    if not track:
+        return ""
+
+    return (
+        '<div class="overview-title">Statistics (all runs)</div>'
+        f'<div class="overview-cards">{track}</div>'
+    )
+
+
 def overview_html(
     summary: dict,
     ev_only: bool = False,
@@ -2398,9 +2410,9 @@ def overview_html(
         )
 
         return (
-            '<section class="overview"><div class="overview-title">Overview</div>'
+            '<section class="overview"><div class="overview-title">Run overview</div>'
             f'<div class="overview-cards">{positive}</div>'
-            + (f'<div class="overview-cards">{track}</div>' if track else "")
+            + track_section(track)
             + "</section>"
         )
 
@@ -2446,10 +2458,10 @@ def overview_html(
         results.append('<div class="overview-card wide spacer"></div>')
 
     return (
-        '<section class="overview"><div class="overview-title">Overview</div>'
+        '<section class="overview"><div class="overview-title">Run overview</div>'
         f'<div class="overview-cards">{"".join(coverage)}</div>'
         f'<div class="overview-cards">{"".join(results)}</div>'
-        + (f'<div class="overview-cards">{track}</div>' if track else "")
+        + track_section(track)
         + "</section>"
     )
 

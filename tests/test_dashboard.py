@@ -310,7 +310,7 @@ def test_overview_splits_every_match_by_what_happened_to_it():
     ]
     text = overview_text(rows, {"pinnacle": {"matches": 6}})
 
-    assert "Overview" in text
+    assert "Run overview" in text
     assert "EV calculated 1" in text
     assert "No EV 1" in text
     assert "Found, no EV" not in text
@@ -1426,7 +1426,10 @@ def test_track_card_shows_each_book_and_says_when_nothing_qualified():
     summary = dashboard.session_summary([row()], {"pinnacle": {"matches": 1}}, 0.02, NOW)
     for ev_only in (False, True):
         overview = dashboard.overview_html(summary, ev_only, track="<p>TRACK</p>")
-        assert overview.endswith('<div class="overview-cards"><p>TRACK</p></div></section>')
+        assert overview.endswith(
+            '<div class="overview-title">Statistics (all runs)</div>'
+            '<div class="overview-cards"><p>TRACK</p></div></section>'
+        )
 
 
 def test_settled_outcomes_are_kept_until_the_sources_change(monkeypatch):
