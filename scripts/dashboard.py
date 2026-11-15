@@ -400,8 +400,8 @@ OVERVIEW_STYLE = """<style>
 .session-title .overview-title { margin-bottom: 0; }
 .session-facts { display: flex; flex-wrap: wrap; gap: 4px 28px; margin-top: 8px; }
 .session-facts .value {
-    font-size: 20px;
-    line-height: 26px;
+    font-size: 17px;
+    line-height: 22px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
 }
@@ -497,7 +497,8 @@ OVERVIEW_STYLE = """<style>
 .fresh { color: #1f9d55; }
 .stale { color: #d64545; }
 .overview { margin-bottom: 4px; }
-.overview-title { font-weight: 600; margin-bottom: 6px; }
+/* Section headings: Last run overview, Statistics (all runs). */
+.overview-title { font-weight: 600; font-size: 20px; line-height: 28px; margin-bottom: 6px; }
 .overview-cards { display: flex; flex-wrap: wrap; gap: 10px; }
 .overview-cards + .overview-cards { margin-top: 10px; }
 .overview-cards + .overview-title { margin-top: 14px; }
