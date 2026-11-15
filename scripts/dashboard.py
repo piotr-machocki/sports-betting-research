@@ -992,7 +992,7 @@ def table_candidates(
 
 
 def positive_ev_stats(records: list[dict], min_ev: float) -> dict:
-    """The Positive EV card's counts over many sessions, each match counted once."""
+    """The Signals card's counts over many sessions, each match counted once."""
 
     def count(column: str, low: float, strict: bool) -> str:
         keys = {
@@ -2109,8 +2109,10 @@ def overview_positive(stats: dict, books: list[str] = BOOKS) -> str:
     threshold = next(label for label in stats if label.startswith("EV(ref) >= "))
     limit = threshold.removeprefix("EV(ref) >= ")
     tiles = []
+    values = []
 
     if "Betclic" in books:
+        values += [stats["EV(ref) > 0%"], stats[threshold]]
         tiles += [
             overview_tile(
                 "Betclic > 0%",
@@ -2128,6 +2130,7 @@ def overview_positive(stats: dict, books: list[str] = BOOKS) -> str:
 
     if "Superbet" in books and "Superbet EV(ref) > 0%" in stats:
         superbet_threshold = stats[f"Superbet {threshold}"]
+        values += [stats["Superbet EV(ref) > 0%"], superbet_threshold]
         tiles += [
             overview_tile(
                 "Superbet > 0%",
@@ -2141,6 +2144,16 @@ def overview_positive(stats: dict, books: list[str] = BOOKS) -> str:
                 "Superbet matches with EV at or above the threshold set in the sidebar, after tax",
                 hit(superbet_threshold, EV_GREEN),
             ),
+        ]
+
+    # Every count 0: one greyed tile instead of a row of zeros.
+    if all(not int(value) for value in values):
+        tiles = [
+            overview_tile(
+                "No match with EV above 0",
+                "None",
+                "No match reached EV above 0 at any book shown",
+            ).replace('class="value"', 'class="value overview-empty"', 1)
         ]
 
     return f'<div class="overview-tiles">{"".join(tiles)}</div>'
@@ -2360,7 +2373,7 @@ def overview_html(
     """The stats of session_summary as two rows of cards, then track (track_card,
     over all sessions) on its own row when given. Bars, not pies: the counts are
     often close together (99 and 105 of 110), which pie slices do not show. ev_only
-    (the EV filter is on) keeps only the Positive EV card, as narrow as its tiles,
+    (the EV filter is on) keeps only the Signals card, as narrow as its tiles,
     counted over ev_stats (all sessions) when given."""
     stats = dict(summary["stats"])
     matches, total = summary["matches"], summary["total"]
@@ -2377,9 +2390,9 @@ def overview_html(
         )
 
     if ev_only:
-        where = "" if ev_stats is None else ", all sessions"
+        where = ev_stats is not None
         positive = card(
-            f"Positive EV ({REFERENCE_METHOD}{where})",
+            f"Signals{' (all sessions)' if where else ''}",
             overview_positive(stats if ev_stats is None else ev_stats, books),
             "fit",
         )
@@ -2426,7 +2439,7 @@ def overview_html(
         )
 
     results = [
-        card(f"Positive EV ({REFERENCE_METHOD})", overview_positive(stats, books), "wide"),
+        card("Signals", overview_positive(stats, books), "wide"),
         card("Performance", overview_checks(summary, stats, books), "wide"),
     ]
     if len(coverage) > len(results):
@@ -3172,7 +3185,7 @@ def main() -> None:
                 "Show all matches with EV",
                 key="with_ev",
                 help="Only matches whose best EV is at least the minimum below. "
-                "The overview then keeps only its Positive EV and Track record cards.",
+                "The overview then keeps only its Signals and Track record cards.",
             )
             scope = st.radio(
                 "Sessions",

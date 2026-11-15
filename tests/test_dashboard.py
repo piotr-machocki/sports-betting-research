@@ -371,7 +371,7 @@ def test_overview_puts_the_status_cards_in_the_first_row():
     first, second = dashboard.overview_html(summary).split('<div class="overview-cards">')[1:]
 
     assert "Betclic EV status" in first and "Superbet EV status" in first
-    assert "Positive EV" in second and "Performance" in second
+    assert "Signals" in second and "Performance" in second
 
 
 def test_overview_with_the_ev_filter_keeps_only_the_positive_ev_card():
@@ -380,7 +380,7 @@ def test_overview_with_the_ev_filter_keeps_only_the_positive_ev_card():
     page = dashboard.overview_html(summary, ev_only=True)
 
     assert page.count('<div class="overview-cards">') == 1
-    assert "Positive EV" in page
+    assert "Signals" in page
     assert "Performance" not in page and "EV status" not in page and "spacer" not in page
     assert 'class="overview-card fit"' in page
 
@@ -1556,3 +1556,20 @@ def test_alerted_rows_get_a_provisional_clv_before_the_start():
     assert dashboard.add_alert_clv(records, alerts, sources, before) == records
     assert dashboard.add_alert_clv(early, [], sources, before) == early
     assert not dashboard.format_clv(0.05).startswith("≈")
+
+
+def test_signals_card_says_none_when_every_count_is_zero():
+    stats = {
+        "EV(ref) > 0%": "0",
+        "EV(ref) >= 2.00%": "0",
+        "Superbet EV(ref) > 0%": "0",
+        "Superbet EV(ref) >= 2.00%": "0",
+    }
+    tiles = dashboard.overview_positive(stats)
+
+    assert "None" in tiles and "Betclic" not in tiles
+
+    stats["Superbet EV(ref) > 0%"] = "1"
+    tiles = dashboard.overview_positive(stats)
+
+    assert "None" not in tiles and "Betclic &gt; 0%" in tiles
