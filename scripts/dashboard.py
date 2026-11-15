@@ -494,6 +494,22 @@ OVERVIEW_STYLE = """<style>
 .overview-note { color: color-mix(in srgb, currentColor 65%, transparent); }
 .overview-tiles { display: flex; flex-wrap: wrap; gap: 4px 18px; }
 .overview-tile .value { font-size: 22px; line-height: 28px; font-weight: 600; }
+.overview-tile.has-tip { position: relative; cursor: help; outline: none; }
+.overview-tile .tip {
+    display: none;
+    position: absolute;
+    left: 0;
+    top: calc(100% + 4px);
+    z-index: 5;
+    white-space: nowrap;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 16px;
+    color: #fff;
+    background: #333;
+}
+.overview-tile.has-tip:hover .tip, .overview-tile.has-tip:focus .tip { display: block; }
 .overview-tile .label {
     font-size: 12px;
     line-height: 16px;
@@ -2159,14 +2175,14 @@ def overview_positive(stats: dict, books: list[str] = BOOKS) -> str:
             ),
         ]
 
-    # Every count 0: one greyed tile instead of a row of zeros.
+    # Every count 0: one greyed "None" instead of a row of zeros. Its explanation is a
+    # tooltip shown on hover, or on a tap on phones (tabindex makes it focusable).
     if all(not int(value) for value in values):
+        tip = f"No match with EV ({REFERENCE_METHOD} method) > 0%"
         tiles = [
-            overview_tile(
-                "No match with EV above 0",
-                "None",
-                "No match reached EV above 0 at any book shown",
-            ).replace('class="value"', 'class="value overview-empty"', 1)
+            '<div class="overview-tile has-tip" tabindex="0">'
+            '<div class="value overview-empty">None</div>'
+            f'<div class="tip">{html.escape(tip)}</div></div>'
         ]
 
     return f'<div class="overview-tiles">{"".join(tiles)}</div>'

@@ -1573,6 +1573,7 @@ def test_signals_card_says_none_when_every_count_is_zero():
     tiles = dashboard.overview_positive(stats)
 
     assert "None" in tiles and "Betclic" not in tiles
+    assert 'class="tip">No match with EV (power method) &gt; 0%<' in tiles
 
     stats["Superbet EV(ref) > 0%"] = "1"
     tiles = dashboard.overview_positive(stats)
