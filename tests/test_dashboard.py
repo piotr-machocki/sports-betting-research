@@ -620,11 +620,11 @@ def test_checks_card_shows_the_gap_of_each_book_to_pinnacle():
     text = overview_text(rows)
 
     # In the order the prices came, each arrow the time since the box before it.
-    assert "Pinnacle 10 min 00 s ago Pinnacle data age +2.0 s Superbet +11.0 s Betclic" in text
+    assert "Pinnacle 10 min 00 s ago +2.0 s Superbet +11.0 s Betclic" in text
 
 
 def test_flow_puts_a_book_without_data_last():
-    assert "Pinnacle 10 min 00 s ago Pinnacle data age +10.0 s Betclic -- Superbet" in overview_text([row()])
+    assert "Pinnacle 10 min 00 s ago +10.0 s Betclic -- Superbet" in overview_text([row()])
 
 
 def test_flow_shows_the_gap_in_minutes_past_a_minute():
@@ -633,10 +633,11 @@ def test_flow_shows_the_gap_in_minutes_past_a_minute():
     assert "+1m05s Betclic" in overview_text(rows)
 
 
-def test_flow_pinnacle_box_says_what_its_age_is_on_tap():
+def test_flow_card_title_names_the_age_so_the_pinnacle_box_has_no_tip():
     flow = dashboard.overview_flow({"pinnacle_age": 60.0, "pinnacle_captured": 1.0, "betclic_gap": 5.0})
-    assert '<div class="flow-node has-tip" tabindex="0"><div class="flow-name">Pinnacle</div>' in flow
-    assert '<div class="tip">Pinnacle data age</div>' in flow
+    assert '<div class="flow-node"><div class="flow-name">Pinnacle</div>' in flow
+    assert "has-tip" not in flow and "Pinnacle data age" not in flow
+    assert "Data flow and age" in overview_text([row()])
 
 
 def test_flow_arrows_give_the_total_since_pinnacle_on_hover():
@@ -693,7 +694,7 @@ def test_checks_card_says_whether_the_data_is_stale():
 def test_checks_card_without_prices():
     text = overview_text([])
 
-    assert "Pinnacle -- Pinnacle data age -- Betclic -- Superbet" in text
+    assert "Pinnacle -- -- Betclic -- Superbet" in text
     assert "Stale data" not in text
     no_age = dashboard.stale_fact({"pinnacle_age": None})
     assert ">--<" in no_age and "data-stale-flag" not in no_age

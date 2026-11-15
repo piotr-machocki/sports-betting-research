@@ -395,10 +395,12 @@ STATUS_COLOURS = {"finished": "#1f9d55", "failed": "#d64545", "interrupted": OVE
 OVERVIEW_STYLE = """<style>
 /* The run's heading (user, 15 Nov 2026): "Last run overview" with the status pill on
    its right, then its facts as values over small grey labels. */
-.session-head { margin-bottom: 10px; }
+/* Equal space over and under the facts (user, 16 Nov 2026): 16 px each, the gap
+   Streamlit leaves between this and the overview below. */
+.session-head { margin-bottom: 0; }
 .session-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .session-title .overview-title { margin-bottom: 0; }
-.session-facts { display: flex; flex-wrap: wrap; gap: 4px 28px; margin-top: 8px; }
+.session-facts { display: flex; flex-wrap: wrap; gap: 4px 28px; margin-top: 16px; }
 .session-facts .value {
     font-size: 17px;
     line-height: 22px;
@@ -586,7 +588,7 @@ OVERVIEW_STYLE = """<style>
 }
 .has-tip:hover .tip, .has-tip:focus .tip { display: block; }
 /* Dotted and grey (user, 15 Nov 2026): a hint that a tap explains it, quieter than the text. */
-.has-tip .label, .has-tip .flow-name {
+.has-tip .label {
     text-decoration: underline dotted;
     text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
     text-underline-offset: 3px;
@@ -796,7 +798,7 @@ TABLE_SCRIPT = """<script>
 
         if (age.firstChild.nodeValue !== shown) age.firstChild.nodeValue = shown;
 
-        // Green while fresh, red once stale: the age and the Data flow card's flag.
+        // Green while fresh, red once stale: the age in Data flow and age, and the Stale data flag.
         const flag = document.querySelector("[data-stale-flag]");
         [age.parentElement, flag].forEach(element => {
             if (!element || element.classList.contains("stale") === stale) return;
@@ -2755,11 +2757,10 @@ def overview_flow(summary: dict, books: list[str] = BOOKS) -> str:
             f' data-stale-after="{STALE_MINUTES * 60:g}">{pinnacle_age_text(age)}</span> ago</span>'
         )
 
-    # Tap or hover for what the age is (has-tip, like the tiles).
+    # The card's title says the age is here ("Data flow and age"), so no tip.
     steps = [
-        '<div class="flow-node has-tip" tabindex="0">'
-        f'<div class="flow-name">Pinnacle</div><div class="flow-sub">{age_html}</div>'
-        '<div class="tip">Pinnacle data age</div></div>'
+        '<div class="flow-node">'
+        f'<div class="flow-name">Pinnacle</div><div class="flow-sub">{age_html}</div></div>'
     ]
     gaps = [(summary.get(f"{book.lower()}_gap"), book) for book in BOOKS if book in books]
     gaps.sort(key=lambda pair: (pair[0] is None, pair[0] or 0))
@@ -2932,7 +2933,7 @@ def overview_html(
     results = [
         # "Signals" as the heading over the tiles, or as None's own label.
         card("Signals" if signal_tiles(stats, books) else "", overview_positive(stats, books), "wide"),
-        card("Data flow", overview_checks(summary, stats, books), "wide"),
+        card("Data flow and age", overview_checks(summary, stats, books), "wide"),
     ]
 
     return (
@@ -3573,7 +3574,7 @@ Pinnacle's price is fair, and it is measured against results as they come in
 * **Last run overview**: the run's status beside the heading; under it when the run
   started and whether its Pinnacle prices are stale (Stale data: Yes once they are over
   15 minutes old).
-* **Data flow**: the order the prices were collected in. The Pinnacle box shows how
+* **Data flow and age**: the order the prices were collected in. The Pinnacle box shows how
   long ago its prices were captured (green, red once over 15 minutes); each arrow, how
   much later the next bookmaker's prices were read.
 * **Signals**: how many matches reached EV above 0 and the minimum EV at each
