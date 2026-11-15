@@ -324,7 +324,7 @@ def test_overview_hides_waiting_and_superbet_when_they_do_not_apply():
     text = overview_text([row()], {"pinnacle": {"matches": 1}})
 
     assert "Waiting" not in text
-    assert "Superbet" not in text.replace("-- Superbet gap", "")
+    assert "Superbet" not in text.replace("-- Superbet", "")
     assert "Pinnacle 1 / 1" in text
 
 
@@ -610,28 +610,29 @@ def test_checks_card_shows_the_gap_of_each_book_to_pinnacle():
     ]
     text = overview_text(rows)
 
-    assert "13.0s Betclic gap" in text
-    assert "2.0s Superbet gap" in text
+    # In the order the prices came, each arrow the time since the box before it.
+    assert "Pinnacle 10 min 00 s ago +2.0 s Superbet +11.0 s Betclic" in text
 
 
-def test_checks_card_shows_the_superbet_gap_right_after_betclic_even_without_data():
-    assert "10.0s Betclic gap -- Superbet gap" in overview_text([row()])
+def test_flow_puts_a_book_without_data_last():
+    assert "Pinnacle 10 min 00 s ago +10.0 s Betclic -- Superbet" in overview_text([row()])
 
 
-def test_checks_card_shows_the_gap_in_minutes_past_a_minute():
+def test_flow_shows_the_gap_in_minutes_past_a_minute():
     rows = [row(betclic_captured_at="2026-11-03T17:51:05+00:00")]
 
-    assert "1m05s Betclic gap" in overview_text(rows)
+    assert "+1m05s Betclic" in overview_text(rows)
 
 
-def test_performance_card_has_no_pinnacle_data_age():
-    performance = overview_text([row()]).split("Performance ")[1]
+def test_flow_arrows_give_the_total_since_pinnacle_on_hover():
+    summary = {"pinnacle_age": 600.0, "pinnacle_captured": 1.0, "betclic_gap": 13.0, "superbet_gap": 2.0}
+    flow = dashboard.overview_flow(summary)
 
-    assert performance.startswith("10.0s Betclic gap")
-    assert "Pinnacle data age" not in overview_text([row()])
+    assert "capture, per match: 13.0 s" in flow and "capture, per match: 2.0 s" in flow
+    assert flow.index("Superbet") < flow.index("Betclic")
 
 
-def test_session_bar_shows_the_start_to_the_minute_and_the_pinnacle_age():
+def test_session_bar_shows_the_start_to_the_minute_without_the_pinnacle_age():
     summary = dashboard.session_summary([row()], {}, 0.02, NOW)
     summary["status"] = "finished"
     bar = dashboard.session_bar_html(summary, "session_20261105_151211_abcdef")
@@ -639,11 +640,7 @@ def test_session_bar_shows_the_start_to_the_minute_and_the_pinnacle_age():
 
     assert f"</span>{started:%m-%d %H:%M}</span>" in bar
     assert f"{started:%H:%M:%S}" not in bar
-    assert ">10 min 00 s</span> ago</span>" in bar
-
-
-def test_session_bar_without_prices_has_no_age():
-    assert "session-age" not in session_bar()
+    assert " ago" not in bar and "data-since" not in bar
 
 
 def test_checks_card_drops_the_seconds_once_the_data_is_stale():
@@ -654,15 +651,13 @@ def test_checks_card_drops_the_seconds_once_the_data_is_stale():
     assert dashboard.pinnacle_age_text(3600 + 2 * 60) == "1 h 02 min"
 
 
-def test_session_bar_gives_the_browser_the_capture_time_to_count_from():
+def test_flow_gives_the_browser_the_capture_time_to_count_from():
     summary = dashboard.session_summary([row()], {}, 0.02, NOW)
     summary["status"] = "finished"
     captured = (NOW - timedelta(minutes=10)).timestamp()
 
     assert summary["pinnacle_captured"] == captured
-    assert f'data-since="{captured}" data-stale-after="900"' in dashboard.session_bar_html(
-        summary, "session_20261105_151211_abcdef"
-    )
+    assert f'data-since="{captured}" data-stale-after="900"' in dashboard.overview_html(summary)
 
 
 def test_checks_card_says_whether_the_data_is_stale():
@@ -678,7 +673,7 @@ def test_checks_card_says_whether_the_data_is_stale():
 def test_checks_card_without_prices():
     text = overview_text([])
 
-    assert "-- Betclic gap" in text
+    assert "Pinnacle -- -- Betclic -- Superbet" in text
     assert "-- Stale (over 15 min)" in text
 
 
@@ -1250,14 +1245,14 @@ def test_overview_with_superbet_off_is_betclic_only():
     page = overview_for([row(**BOTH_BOOKS)], ["Betclic"])
 
     assert "Superbet" not in page
-    assert 'donut-book">Betclic' in page and "Betclic gap" in page
+    assert 'donut-book">Betclic' in page and 'flow-name">Betclic' in page
 
 
 def test_overview_with_betclic_off_is_superbet_only():
     page = overview_for([row(**BOTH_BOOKS, status="ERROR")], ["Superbet"])
 
     assert "Betclic" not in page
-    assert 'donut-book">Superbet' in page and "Superbet gap" in page
+    assert 'donut-book">Superbet' in page and 'flow-name">Superbet' in page
     assert "Superbet &gt; 0%" in page or "Superbet > 0%" in page
     assert ">Errors<" not in page
     first, second = page.split('<div class="overview-cards">')[1:]
@@ -1322,10 +1317,10 @@ def test_pinnacle_age_and_stale_flag_are_green_while_fresh_and_red_once_stale(
 ):
     summary = dashboard.session_summary([row(pinnacle_captured_at=captured_at)], {}, 0.02, NOW)
     summary["status"] = "finished"
-    bar = dashboard.session_bar_html(summary, "session_20261105_151211_abcdef")
+    overview = dashboard.overview_html(summary)
 
-    assert f'class="session-age {freshness}"' in bar
-    assert f'class="value {freshness}" data-stale-flag=""' in dashboard.overview_html(summary)
+    assert f'class="flow-age {freshness}"' in overview
+    assert f'class="value {freshness}" data-stale-flag=""' in overview
 
 
 def test_calendar_shows_each_days_session_count_in_its_month_only():

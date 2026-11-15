@@ -424,17 +424,54 @@ OVERVIEW_STYLE = """<style>
     font-weight: 400;
     color: color-mix(in srgb, currentColor 65%, transparent);
 }
-.session-age {
-    margin-left: -8px;
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
+.flow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 0;
+    margin: 2px 0 10px;
+}
+.flow-node {
+    padding: 4px 10px;
+    border: 1px solid rgba(128, 128, 128, 0.35);
+    border-radius: 6px;
+    background-color: rgba(128, 128, 128, 0.08);
+}
+.flow-name { font-weight: 600; }
+.flow-sub { font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 600; }
+.flow-arrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 52px;
+    padding: 0 4px;
+}
+.flow-gap { font-size: 12px; font-variant-numeric: tabular-nums; }
+/* A line with an arrowhead, in the muted text colour. */
+.flow-line {
+    position: relative;
+    align-self: stretch;
+    height: 2px;
+    margin-right: 5px;
+    background-color: color-mix(in srgb, currentColor 45%, transparent);
+}
+.flow-line::after {
+    content: "";
+    position: absolute;
+    right: -6px;
+    top: -4px;
+    border: 5px solid transparent;
+    border-left: 6px solid color-mix(in srgb, currentColor 45%, transparent);
 }
 /* One line on a phone (user, 10 Nov 2026): no "Run on" label or year, tighter gaps. */
 @media (max-width: 700px) {
+    /* The flow on one line down to about 360 px wide. */
+    .flow-node { padding: 3px 6px; font-size: 13px; }
+    .flow-sub, .flow-gap { font-size: 11px; }
+    .flow-arrow { min-width: 38px; padding: 0 3px; }
     .session-bar { gap: 4px 12px; font-size: 13px; }
     .session-status { padding: 0 9px; }
     .session-fact .label, .session-fact .year { display: none; }
-    .session-age { margin-left: 0; }
 }
 .fresh { color: #1f9d55; }
 .stale { color: #d64545; }
@@ -721,7 +758,7 @@ TABLE_SCRIPT = """<script>
     // Counts in the browser, because a server tick each second makes scrolling stutter
     // (see IDLE_REFRESH_SECONDS). Writing the text node does not wake the observer above.
     setInterval(() => {
-        const age = document.querySelector(".session-age [data-since]");
+        const age = document.querySelector(".flow-age [data-since]");
 
         if (!age || !age.firstChild) return;
 
@@ -2665,26 +2702,57 @@ def pinnacle_age_text(age: float) -> str:
     return fmt_age(seconds)
 
 
+def gap_text(seconds: float) -> str:
+    return f"{seconds:.1f} s" if seconds < 60 else fmt_gap(seconds)
+
+
+def overview_flow(summary: dict, books: list[str] = BOOKS) -> str:
+    """How the run's prices arrived (user, 15 Nov 2026): Pinnacle with the age of its
+    prices, which TABLE_SCRIPT counts on each second, then each book in the order its
+    prices came, the arrow giving the time since the box before it. Each gap is the
+    median per match from the Pinnacle capture; a book without data comes last."""
+    age = summary.get("pinnacle_age")
+    age_html = "--"
+
+    if age is not None:
+        freshness = "stale" if age > STALE_MINUTES * 60 else "fresh"
+        age_html = (
+            f'<span class="flow-age {freshness}">'
+            f'<span data-since="{summary["pinnacle_captured"]}"'
+            f' data-stale-after="{STALE_MINUTES * 60:g}">{pinnacle_age_text(age)}</span> ago</span>'
+        )
+
+    steps = [
+        '<div class="flow-node" title="Time since the Pinnacle odds were captured, up to now: '
+        'the oldest prices in the run">'
+        f'<div class="flow-name">Pinnacle</div><div class="flow-sub">{age_html}</div></div>'
+    ]
+    gaps = [(summary.get(f"{book.lower()}_gap"), book) for book in BOOKS if book in books]
+    gaps.sort(key=lambda pair: (pair[0] is None, pair[0] or 0))
+    before = 0.0
+
+    for seconds, book in gaps:
+        if seconds is None:
+            label, title = "--", f"No {book} prices in this run"
+        else:
+            label = f"+{gap_text(max(seconds - before, 0))}"
+            title = f"Median time from the Pinnacle capture to the {book} capture, per match: {gap_text(seconds)}"
+            before = seconds
+        steps.append(
+            f'<div class="flow-arrow" title="{html.escape(title)}">'
+            f'<span class="flow-gap">{label}</span><span class="flow-line"></span></div>'
+            f'<div class="flow-node"><div class="flow-name">{html.escape(book)}</div></div>'
+        )
+
+    return f'<div class="flow">{"".join(steps)}</div>'
+
+
 def overview_checks(summary: dict, stats: dict, books: list[str] = BOOKS) -> str:
-    """Each book's gap to Pinnacle and what needs attention, in amber. Pinnacle's age
-    is in the session bar."""
+    """The collection flow (overview_flow), then what needs attention: Stale, and
+    Errors in amber."""
 
     def warning(label: str, value: str, count: int, help_text: str) -> str:
         return overview_tile(label, value, help_text, EV_AMBER if count else "")
-
-    def gap(book: str) -> str:
-        seconds = summary[f"{book.lower()}_gap"]
-
-        if seconds is None:
-            value = "--"
-        else:
-            value = f"{seconds:.1f}s" if seconds < 60 else fmt_gap(seconds)
-
-        return overview_tile(
-            f"{book} gap",
-            value,
-            f"Median time from the Pinnacle capture to the {book} capture, per match",
-        )
 
     age = summary["pinnacle_age"]
     stale = age is not None and age > STALE_MINUTES * 60
@@ -2701,20 +2769,19 @@ def overview_checks(summary: dict, stats: dict, books: list[str] = BOOKS) -> str
         stale_tile = stale_tile.replace(
             'class="value"', f'class="value {"stale" if stale else "fresh"}"', 1
         )
-    tiles = [*(gap(book) for book in BOOKS if book in books), stale_tile]
+    tiles = [stale_tile]
 
     # Only in the stats when it matters: see session_summary. They are Betclic's.
     if "Errors" in stats and "Betclic" in books:
         errors = stats["Errors"]
         tiles.append(warning("Errors", errors, int(errors), "Matches that could not be checked"))
 
-    return f'<div class="overview-tiles">{"".join(tiles)}</div>'
+    return overview_flow(summary, books) + f'<div class="overview-tiles">{"".join(tiles)}</div>'
 
 
 def session_bar_html(summary: dict, session_id: str) -> str:
-    """The session's state above the overview: status, start (to the minute) and the
-    age of its oldest Pinnacle prices, green while fresh and red once stale, which
-    TABLE_SCRIPT counts on each second."""
+    """The session's state above the overview: status and start (to the minute). The
+    age of its Pinnacle prices moved to the Performance card's flow (15 Nov 2026)."""
     colour = STATUS_COLOURS.get(summary["status"], OVERVIEW_BLUE)
     started = session_started(session_id)
     # Phones hide the year (and the label), so the whole bar fits on one line.
@@ -2723,26 +2790,12 @@ def session_bar_html(summary: dict, session_id: str) -> str:
         if started is None
         else f'<span class="year">{started:%Y-}</span>{started:%m-%d %H:%M}'
     )
-    age = summary.get("pinnacle_age")
-    age_html = ""
-
-    if age is not None:
-        freshness = "stale" if age > STALE_MINUTES * 60 else "fresh"
-        age_html = (
-            f'<span class="session-age {freshness}" title="Time since the Pinnacle odds were captured,'
-            ' up to now: the oldest prices in the run">'
-            f'<span data-since="{summary["pinnacle_captured"]}"'
-            f' data-stale-after="{STALE_MINUTES * 60:g}">{pinnacle_age_text(age)}</span>'
-            " ago</span>"
-        )
-
     return (
         '<div class="session-bar">'
         f'<span class="session-status" style="--status: {colour}">'
         f"{html.escape(summary['status'].capitalize())}</span>"
         '<span class="session-fact"><span class="label">Run on</span>'
-        f'<span class="value">{run_on}</span></span>'
-        f"{age_html}</div>"
+        f'<span class="value">{run_on}</span></span></div>'
     )
 
 
