@@ -393,15 +393,26 @@ OVERVIEW_NOT_MATCHED = "rgba(128, 128, 128, 0.65)"
 OVERVIEW_WAITING = "rgba(128, 128, 128, 0.2)"
 STATUS_COLOURS = {"finished": "#1f9d55", "failed": "#d64545", "interrupted": OVERVIEW_NO_EV}
 OVERVIEW_STYLE = """<style>
-.session-bar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4px 20px;
-    font-size: 14px;
-    line-height: 24px;
+/* The run's heading (user, 15 Nov 2026): "Last run overview" with the status pill on
+   its right, then its facts as values over small grey labels. */
+.session-head { margin-bottom: 10px; }
+.session-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.session-title .overview-title { margin-bottom: 0; }
+.session-facts { display: flex; flex-wrap: wrap; gap: 4px 28px; margin-top: 8px; }
+.session-facts .value {
+    font-size: 15px;
+    line-height: 20px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+.session-facts .label {
+    font-size: 12px;
+    line-height: 16px;
+    color: color-mix(in srgb, currentColor 60%, transparent);
 }
 .session-status {
+    font-size: 14px;
+    line-height: 24px;
     display: inline-flex;
     align-items: center;
     gap: 7px;
@@ -417,14 +428,6 @@ OVERVIEW_STYLE = """<style>
     height: 7px;
     border-radius: 50%;
     background-color: currentColor;
-}
-.session-fact { font-variant-numeric: tabular-nums; font-weight: 600; }
-.session-stale { font-weight: 600; }
-.session-stale .label { margin-right: 6px; font-weight: 400; }
-.session-fact .label {
-    margin-right: 6px;
-    font-weight: 400;
-    color: color-mix(in srgb, currentColor 65%, transparent);
 }
 .flow {
     display: flex;
@@ -488,9 +491,8 @@ OVERVIEW_STYLE = """<style>
     .flow-sub { font-size: 11px; }
     .flow-gap { font-size: 13px; }
     .flow-arrow { min-width: 46px; padding: 0 4px; }
-    .session-bar { gap: 4px 12px; font-size: 13px; }
     .session-status { padding: 0 9px; }
-    .session-fact .label, .session-fact .year { display: none; }
+    .session-facts .year { display: none; }
 }
 .fresh { color: #1f9d55; }
 .stale { color: #d64545; }
@@ -2779,7 +2781,7 @@ def overview_flow(summary: dict, books: list[str] = BOOKS) -> str:
 
 
 def stale_fact(summary: dict) -> str:
-    """Whether the Pinnacle odds are past STALE_MINUTES, in the session bar beside the
+    """Whether the Pinnacle odds are past STALE_MINUTES, under the heading beside the
     run time (user, 15 Nov 2026): green No, red Yes, its limit in a tip shown on hover
     or a tap. TABLE_SCRIPT flips it between server ticks, like the Data flow age."""
     age = summary.get("pinnacle_age")
@@ -2789,10 +2791,10 @@ def stale_fact(summary: dict) -> str:
     flag = "" if age is None else ' data-stale-flag=""'
 
     return (
-        '<span class="session-stale has-tip end" tabindex="0">'
-        '<span class="label">Stale data</span>'
-        f'<span class="value{css}"{flag}>{value}</span>'
-        f'<span class="tip">Pinnacle odds over {STALE_MINUTES:g} min old</span></span>'
+        '<div class="session-stale has-tip" tabindex="0">'
+        f'<div class="value{css}"{flag}>{value}</div>'
+        '<div class="label">Stale data</div>'
+        f'<div class="tip">Pinnacle odds over {STALE_MINUTES:g} min old</div></div>'
     )
 
 
@@ -2813,22 +2815,26 @@ def overview_checks(summary: dict, stats: dict, books: list[str] = BOOKS) -> str
 
 
 def session_bar_html(summary: dict, session_id: str) -> str:
-    """The session's state above the overview: status, start (to the minute) and
-    whether its Pinnacle prices are stale. Their age is in the Data flow card."""
+    """The overview's heading (user, 15 Nov 2026): "Last run overview" with the run's
+    status on its right, then when it ran and whether its Pinnacle prices are stale,
+    each a value over a small grey label. Their age is in the Data flow card."""
     colour = STATUS_COLOURS.get(summary["status"], OVERVIEW_BLUE)
     started = session_started(session_id)
-    # Phones hide the year (and the label), so the whole bar fits on one line.
+    # Phones hide the year.
     run_on = (
         html.escape(session_id)
         if started is None
         else f'<span class="year">{started:%Y-}</span>{started:%m-%d %H:%M}'
     )
     return (
-        '<div class="session-bar">'
+        '<div class="session-head"><div class="session-title">'
+        '<span class="overview-title">Last run overview</span>'
         f'<span class="session-status" style="--status: {colour}">'
-        f"{html.escape(summary['status'].capitalize())}</span>"
-        '<span class="session-fact"><span class="label">Run on</span>'
-        f'<span class="value">{run_on}</span></span>{stale_fact(summary)}</div>'
+        f"{html.escape(summary['status'].capitalize())}</span></div>"
+        '<div class="session-facts">'
+        f'<div class="session-fact"><div class="value">{run_on}</div>'
+        '<div class="label">Last run on</div></div>'
+        f"{stale_fact(summary)}</div></div>"
     )
 
 
@@ -2849,8 +2855,10 @@ def overview_html(
     ev_stats: dict | None = None,
     books: list[str] = BOOKS,
     track: str = "",
+    titled: bool = True,
 ) -> str:
-    """The stats of session_summary as two rows of cards, then track (track_card,
+    """titled=False when session_bar_html is the heading above it. The stats of
+    session_summary as two rows of cards, then track (track_card,
     over all sessions) on its own row when given. Coverage stays as bars, since its
     counts are often close together (99 and 105 of 110), which slices do not show; the
     EV status split is one donut per book (overview_donut), with its counts beside it,
@@ -2859,6 +2867,7 @@ def overview_html(
     counted over ev_stats (all sessions) when given."""
     stats = dict(summary["stats"])
     matches, total = summary["matches"], summary["total"]
+    title = '<div class="overview-title">Last run overview</div>' if titled else ""
     betclic_reasons = ", ".join(
         f"{label.strip()} {value}"
         for label, value in stats.items()
@@ -2878,7 +2887,7 @@ def overview_html(
         )
 
         return (
-            '<section class="overview"><div class="overview-title">Run overview</div>'
+            '<section class="overview">' + title +
             f'<div class="overview-cards">{positive}</div>'
             + track_section(track)
             + "</section>"
@@ -2926,7 +2935,7 @@ def overview_html(
     ]
 
     return (
-        '<section class="overview"><div class="overview-title">Run overview</div>'
+        '<section class="overview">' + title +
         f'<div class="overview-cards">{"".join(coverage)}</div>'
         f'<div class="overview-cards">{"".join(results)}</div>'
         + track_section(track)
@@ -3059,7 +3068,7 @@ def render_header(
                 "The run may have stopped without updating its status."
             )
 
-    st.html(overview_html(summary, ev_only, ev_stats, books, track))
+    st.html(overview_html(summary, ev_only, ev_stats, books, track, titled=False))
 
     if waiting:
         age = session_summary(rows, {}, min_ev, now)["pinnacle_age"]
@@ -3560,8 +3569,9 @@ Pinnacle's price is fair, and it is measured against results as they come in
   first alert's book, price and time. On the Bet on side that is the bet already
   placed, so a later, smaller EV there is not a new bet; an alert on the other
   player is shown greyed out.
-* **Session bar**: the run's status, when it started and whether its Pinnacle prices
-  are stale (Stale data: Yes once they are over 15 minutes old).
+* **Last run overview**: the run's status beside the heading; under it when the run
+  started and whether its Pinnacle prices are stale (Stale data: Yes once they are over
+  15 minutes old).
 * **Data flow**: the order the prices were collected in. The Pinnacle box shows how
   long ago its prices were captured (green, red once over 15 minutes); each arrow, how
   much later the next bookmaker's prices were read.

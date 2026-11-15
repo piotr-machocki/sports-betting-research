@@ -282,8 +282,10 @@ def session_bar(status="finished") -> str:
 def test_session_bar_shows_the_status_and_run_time():
     bar = session_bar()
 
+    # "Last run overview" with the status pill on its right, then the facts.
+    assert '<span class="overview-title">Last run overview</span><span class="session-status"' in bar
     assert ">Finished</span>" in bar
-    assert ">Run on</span>" in bar
+    assert '<div class="label">Last run on</div>' in bar
     started = dashboard.session_started("session_20261105_151211_abcdef")
     # The year has its own span, so phones can hide it.
     assert f'<span class="year">{started:%Y-}</span>{started:%m-%d %H:%M}' in bar
@@ -311,7 +313,7 @@ def test_overview_splits_every_match_by_what_happened_to_it():
     ]
     text = overview_text(rows, {"pinnacle": {"matches": 6}})
 
-    assert "Run overview" in text
+    assert "Last run overview" in text
     assert "EV calculated 1" in text
     assert "No EV 1" in text
     assert "Found, no EV" not in text
@@ -365,6 +367,11 @@ def test_overview_splits_superbet_like_betclic():
 
     assert "EV calculated 1 No EV 1 Not matched 2 Waiting 1" in superbet
     assert "EV calculated 4 Waiting 1" in betclic and "No EV" not in betclic
+
+
+def test_overview_title_is_left_to_the_session_heading():
+    summary = dashboard.session_summary([row()], {}, 0.02, NOW)
+    assert "Last run overview" not in dashboard.overview_html(summary, titled=False)
 
 
 def test_overview_puts_the_status_cards_in_the_first_row():
@@ -646,7 +653,7 @@ def test_session_bar_shows_the_start_to_the_minute_without_the_pinnacle_age():
     bar = dashboard.session_bar_html(summary, "session_20261105_151211_abcdef")
     started = dashboard.session_started("session_20261105_151211_abcdef")
 
-    assert f"</span>{started:%m-%d %H:%M}</span>" in bar
+    assert f"</span>{started:%m-%d %H:%M}</div>" in bar
     assert f"{started:%H:%M:%S}" not in bar
     assert " ago" not in bar and "data-since" not in bar
 
@@ -677,9 +684,10 @@ def test_checks_card_says_whether_the_data_is_stale():
         summary["status"] = "finished"
         return dashboard.session_bar_html(summary, "session_20261105_151211_abcdef")
 
-    assert '<span class="label">Stale data</span><span class="value fresh" data-stale-flag="">No</span>' in bar(at_limit)
-    assert '<span class="value stale" data-stale-flag="">Yes</span>' in bar(past_limit)
-    assert '<span class="tip">Pinnacle odds over 15 min old</span>' in bar(at_limit)
+    # The value over its small grey label, like "Last run on".
+    assert '<div class="value fresh" data-stale-flag="">No</div><div class="label">Stale data</div>' in bar(at_limit)
+    assert '<div class="value stale" data-stale-flag="">Yes</div>' in bar(past_limit)
+    assert '<div class="tip">Pinnacle odds over 15 min old</div>' in bar(at_limit)
 
 
 def test_checks_card_without_prices():
