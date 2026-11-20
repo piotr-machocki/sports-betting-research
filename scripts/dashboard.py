@@ -316,6 +316,15 @@ table.matches .ev-superbet { display: none; }
 :root[data-ev-book="superbet"] table.matches .ev-betclic { display: none; }
 table.matches td[data-flip] { cursor: pointer; }
 table.matches td.tax-flipped { background-color: rgba(201, 138, 0, 0.18); }
+/* A Telegram alert was sent on this player (user, 20 Nov 2026: replaces the Alerted
+   column). A gradient over the background colour keeps the sticky first column opaque. */
+table.matches td.alerted {
+    background-image: linear-gradient(rgba(201, 138, 0, 0.2), rgba(201, 138, 0, 0.2));
+    cursor: help;
+}
+table.matches td.alerted-other { cursor: help; }
+table.matches td .bell { margin-right: 6px; font-size: 12px; }
+table.matches td.alerted-other .bell { opacity: 0.45; filter: grayscale(1); }
 table.matches .tax-switch, table.matches .book-switch {
     cursor: pointer;
     user-select: none;
@@ -1400,36 +1409,36 @@ def alert_text(alerts: list[dict], same_side: bool) -> tuple[str, str]:
 
 
 def add_alerts(records: list[dict], alerts: list[dict]) -> list[dict]:
-    """An Alerted column after the names (and Session) for matches a Telegram alert
-    was sent for (notify.sent_alerts), naming the first alert's price and time.
-    Records unchanged when none of them was alerted."""
+    """Marks matches a Telegram alert was sent for (notify.sent_alerts) with hidden
+    fields, no column (user, 20 Nov 2026: the Alerted column took too much room):
+    `_alert` ('🔔 Betclic 3.90 · 10 Nov 00:15', the first alert's price and time),
+    `_title Alerted` (its tooltip) and `_alert_side`, the name column of the alerted
+    player ('Bet on', or 'Opponent' for an alert on the other side). The table puts
+    a bell on that name and tints it; phone cards keep an Alerted line."""
     by_match: dict[tuple, list[dict]] = {}
 
     for alert in alerts:
         key = frozenset((alert["player1"], alert["player2"])), alert["tournament"]
         by_match.setdefault(key, []).append(alert)
 
-    if not any(match_key(record) in by_match for record in records):
-        return records
-
     out = []
 
     for record in records:
         found = by_match.get(match_key(record), [])
+
+        if not found:
+            out.append(record)
+            continue
+
         same = [alert for alert in found if alert["player"] == record["Bet on"]]
         other = [alert for alert in found if alert["player"] != record["Bet on"]]
-        text, title = alert_text(same or other, bool(same)) if found else ("", None)
-        anchor = "Session" if "Session" in record else "Opponent"
-        new = {}
-
-        for column, value in record.items():
-            new[column] = value
-
-            if column == anchor:
-                new["Alerted"] = text
-                new["_title Alerted"] = title
-
-        out.append(new)
+        text, title = alert_text(same or other, bool(same))
+        out.append({
+            **record,
+            "_alert": text,
+            "_title Alerted": title,
+            "_alert_side": "Bet on" if same else "Opponent",
+        })
 
     return out
 
@@ -2392,8 +2401,12 @@ def table_html(
     def attribute(name: str, value: Any) -> str:
         return f' {name}="{html.escape(str(value))}"' if value else ""
 
-    def classes(column: str) -> str:
+    def classes(column: str, record: dict | None = None) -> str:
         names = ["number"] if column in numeric else []
+
+        if record is not None and record.get("_alert_side") == column:
+            names += ["alerted" if column == "Bet on" else "alerted-other"]
+
         names += [TAX_SWITCH_CLASSES[column]] if column in TAX_SWITCH_CLASSES else []
         # With one book no switch could bring the other's back once it is off.
         names += [EV_BOOK_CLASSES[column]] if both and column in EV_BOOK_CLASSES else []
@@ -2414,13 +2427,20 @@ def table_html(
         format_cell = CELL_FORMATS.get(column, str)
         text = "--" if value is None else format_cell(value)
         full_name = column in NAME_COLUMNS and text != value
+        title = value if full_name else record.get(f"_title {column}")
+        bell = ""
+
+        if record.get("_alert_side") == column:
+            bell = f'<span class="bell">{ALERT_BELL}</span>'
+            alert_line = f"{record['_alert']}. {record['_title Alerted']}"
+            title = f"{value}\n{alert_line}" if full_name else alert_line
 
         return (
-            f"<td{classes(column)}"
+            f"<td{classes(column, record)}"
             f"{attribute('style', cell_css(column, value, dimmed, min_ev))}"
-            f"{attribute('title', value if full_name else record.get(f'_title {column}'))}"
+            f"{attribute('title', title)}"
             f"{attribute('data-flip', column in TAX_SWITCH_CLASSES and not blank)}>"
-            f"{html.escape(str(text))}</td>"
+            f"{bell}{html.escape(str(text))}</td>"
         )
 
     rows = "".join(
@@ -2508,15 +2528,17 @@ def cards_html(
         extras = []
 
         for column in ("Alerted", "Result", "CLV", "Session"):
-            if column not in record:
+            source = "_alert" if column == "Alerted" else column
+
+            if source not in record:
                 continue
 
-            style = cell_css(column, record[column], False, min_ev)
+            style = cell_css(column, record[source], False, min_ev)
             extras.append(
                 f'<span{attribute("title", record.get(f"_title {column}"))}>'
                 f'<span class="label">{column}</span>'
                 f'<span{attribute("style", style)}>'
-                f"{html.escape(text(column, record))}</span></span>"
+                f"{html.escape(text(source, record))}</span></span>"
             )
 
         cards.append(
@@ -3176,9 +3198,6 @@ COLUMN_HELP = {
     "now - 1, i.e. whether that bet is still +EV.",
     "Result": "Whether the Bet on player won (Matchstat results). Pending until the "
     "match is played and the results cover its day; retirements and walkovers are named.",
-    "Alerted": "A Telegram alert was already sent for this match: the book, price "
-    "and time of the first one. On the Bet on side it is the bet you already placed, "
-    "so a later EV here is not a new bet. Hover for EV and every book.",
     "Session": "The run every value in the row is from. With the EV filter over all "
     "sessions, the latest run that priced this match at or above the minimum EV.",
     "Match conf": "How well the Betclic match fit the Pinnacle names.",
@@ -3776,10 +3795,10 @@ Pinnacle's price is fair, and it is measured against results as they come in
   before the start. Consistently positive CLV is the usual sign that an edge is real.
   Before the start, an alerted match shows **≈** and the alert's price against
   Pinnacle's fair price now: whether the bet placed on the alert is still +EV.
-* **Alerted** (🔔): a Telegram alert was already sent for this match, with the
-  first alert's book, price and time. On the Bet on side that is the bet already
-  placed, so a later, smaller EV there is not a new bet; an alert on the other
-  player is shown greyed out.
+* **🔔 on a name**: a Telegram alert was already sent on that player; hover the name
+  for the first alert's book, price and time (on phones, the card's Alerted line). A
+  shaded Bet on name is the bet already placed, so a later, smaller EV there is not a
+  new bet; a grey bell on the Opponent means the alert was on the other player.
 * **Last run overview**: the run's status beside the heading; under it when the run
   started and whether its Pinnacle prices are stale (Stale data: Yes once they are over
   15 minutes old).

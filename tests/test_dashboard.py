@@ -1695,20 +1695,25 @@ def test_alerted_matches_name_the_first_alert():
     [record] = dashboard.add_alerts(
         records, [alert("Bea Beta", "Superbet", 3.75, hour=23), alert("Bea Beta", price=3.9, hour=22)]
     )
-    assert list(record)[:3] == ["Bet on", "Opponent", "Alerted"]
+    assert "Alerted" not in record and record["_alert_side"] == "Bet on"
     time = dashboard.alert_time(datetime(2026, 11, 2, 22, 15, tzinfo=timezone.utc))
-    assert record["Alerted"] == f"🔔 Betclic 3.90, Superbet 3.75 · {time}"
+    assert record["_alert"] == f"🔔 Betclic 3.90, Superbet 3.75 · {time}"
     assert "EV +26.0%" in record["_title Alerted"] and "already bet" in record["_title Alerted"]
-    assert dashboard.cell_css("Alerted", record["Alerted"], False, 0.02) == dashboard.EV_AMBER
+    assert dashboard.cell_css("Alerted", record["_alert"], False, 0.02) == dashboard.EV_AMBER
 
-    # An alert on the other player is a different bet, shown dimmed; no price in
-    # entries written before prices were kept.
+    # An alert on the other player is a different bet, its bell on the Opponent; no
+    # price in entries written before prices were kept.
     [record] = dashboard.add_alerts(records, [alert("Ann Alpha", price=None)])
-    assert record["Alerted"].startswith("🔔 other side: Betclic · ")
-    assert dashboard.cell_css("Alerted", record["Alerted"], False, 0.02) == dashboard.DIMMED
+    assert record["_alert"].startswith("🔔 other side: Betclic · ")
+    assert record["_alert_side"] == "Opponent"
+    assert dashboard.cell_css("Alerted", record["_alert"], False, 0.02) == dashboard.DIMMED
+    page = dashboard.table_html([record], 0.02, False)
+    assert 'class="alerted-other"' in page and 'class="alerted"' not in page
 
+    # No column: a bell and a tint on the Bet on name, the alert in its tooltip.
     page = dashboard.table_html(dashboard.add_alerts(records, [alert("Bea Beta")]), 0.02, False)
-    assert "<th" in page and ">Alerted</th>" in page and "🔔 Betclic 3.90" in page
+    assert ">Alerted</th>" not in page and 'class="alerted"' in page
+    assert '<span class="bell">🔔</span>Bea Beta' in page and "🔔 Betclic 3.90" in page
     cards = dashboard.cards_html(dashboard.add_alerts(records, [alert("Bea Beta")]), 0.02, False)
     assert "🔔 Betclic 3.90" in cards
 
