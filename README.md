@@ -6,7 +6,7 @@ This guide explains how to set up the project from a fresh clone. The Betclic in
 
 * Python 3.12 or newer (`python --version`)
 * Git
-* A PinnAPI key (available at [PinnAPI](https://pinnapi.com))
+* A PinnFeed key for Pinnacle's odds (free at [PinnFeed](https://pinnfeed.io))
 
 ## 1. Clone the repository
 
@@ -36,18 +36,21 @@ pip install -e .
 playwright install chromium
 ```
 
-## 4. Get a PinnAPI key
+## 4. Get a PinnFeed key
 
-1. Go to [PinnAPI](https://pinnapi.com) and create an account.
-2. Open your account dashboard and generate an API key.
-3. Copy the key.
+1. Go to [PinnFeed](https://pinnfeed.io) and request a free key (email only, no card).
+2. Copy the key. The free plan has 2 sports (tennis is one), main markets, prices 30 seconds
+   delayed and 1,000 requests a day for the whole account. A run makes one request, so runs
+   every 5 minutes use 288 a day. Use one account and one key: the limit counts the account.
+
+Pinnacle's odds came from PinnAPI until 17 Nov 2026, when every account was suspended.
 
 ## 5. Configure environment variables
 
 Create a `.env` file in the repository root with the following content:
 
 ```dotenv
-PINNAPI_KEY_TENNIS=your_key_here
+PINNFEED_KEY=your_key_here
 RAPIDAPI_KEY=your_rapidapi_key_here
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
@@ -56,9 +59,9 @@ HEALTHCHECK_BACKUP_URL=
 PINNAPI_KEY_NBA=
 ```
 
-Replace the placeholders with your actual API keys. Do not commit your `.env` file. (`PINNAPI_KEY_TENNIS` was called `PINNAPI_KEY` before 12 Nov 2026; the old name is still read.)
+Replace the placeholders with your actual API keys. Do not commit your `.env` file.
 
-Each PinnAPI account allows 100 requests a day, one per run. To run more often, set several tennis keys (from separate accounts) as `PINNAPI_KEY_TENNIS_1`, `PINNAPI_KEY_TENNIS_2`, ... instead of `PINNAPI_KEY_TENNIS`: the runs take turns by 5-minute slot of the UTC day. With runs every 5 minutes, 3 keys give each one run in 15 minutes, 96 requests a day.
+Without `PINNFEED_KEY`, or when the Pinnacle request fails, a run still saves each bookmaker's whole tennis offer and the prediction-market prices (a "books-only" run with a `books_` ID), but computes no EV and sends no alert. The PinnAPI variables (`PINNAPI_KEY_TENNIS*`, `PINNAPI_KEY`) are no longer read for tennis.
 
 `RAPIDAPI_KEY` is optional: it fetches finished match results from the [Tennis API - ATP WTA ITF](https://rapidapi.com/jjrm365-kIFr3Nx_odV/api/tennis-api-atp-wta-itf) on RapidAPI (the free plan allows 50 requests a day). Without it, a run only skips that step.
 

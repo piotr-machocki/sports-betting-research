@@ -35,21 +35,34 @@ def test_american_to_decimal():
 
 
 def test_pinnacle_spread_sign_and_totals():
-    data = {"events": [{
-        "event_id": 1, "league_name": "NBA", "parent_id": None,
+    def market(kind, *outcomes, period=0):
+        return {"type": kind, "period": period, "maxStake": 3000, "outcomes": list(outcomes)}
+
+    game = {
+        "id": 1, "league": {"id": 487, "name": "NBA"}, "parentId": None,
         "home": "Memphis Grizzlies", "away": "Denver Nuggets",
-        "starts": "2026-11-12T01:10:00Z",
-        "periods": {"num_0": {"number": 0, "money_line": {"home": 2.49, "away": 1.61},
-                              "spreads": {"4": {"hdp": 4, "home": 1.92, "away": 1.96, "max": 20000}},
-                              "totals": {"230": {"points": 230, "over": 1.89, "under": 2.0}}}},
-    }]}
-    rows = nc.parse_pinnacle(data)
+        "startTime": "2026-11-12T01:10:00Z", "status": "pending", "live": False,
+        "markets": [
+            market("moneyline", {"name": "home", "decimal": 2.49}, {"name": "away", "decimal": 1.61}),
+            market("spread", {"name": "home", "decimal": 1.92, "points": 4},
+                   {"name": "away", "decimal": 1.96, "points": -4}),
+            market("total", {"name": "over", "decimal": 1.89, "points": 230},
+                   {"name": "under", "decimal": 2.0, "points": 230}),
+            market("moneyline", {"name": "home", "decimal": 9.9}, {"name": "away", "decimal": 1.1}, period=1),
+        ],
+    }
+    started = {**game, "id": 2, "status": "started"}
+    other_league = {**game, "id": 3, "league": {"id": 1, "name": "NCAA"}}
+
+    rows = nc.parse_pinnacle({"events": [game, started, other_league]})
     keys = {(r["market"], r["side"], r.get("line", "")): r["price"] for r in rows}
+    assert {r["source_id"] for r in rows} == {1}
     assert rows[0]["game_key"] == "2026-11-11_DEN@MEM"
     assert keys[("moneyline", "MEM", "")] == 2.49
     assert keys[("spread", "MEM", 4)] == 1.92
     assert keys[("spread", "DEN", -4)] == 1.96
     assert keys[("total", "under", 230)] == 2.0
+    assert len(rows) == 6  # the first-half moneyline is left out
 
 
 def test_action_network_books_and_sides():

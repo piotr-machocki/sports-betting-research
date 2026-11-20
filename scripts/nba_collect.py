@@ -9,7 +9,8 @@ best predicts closing prices and results.
 
 Sources (each optional; a failure only warns and is recorded in runs.jsonl):
 
-- ``pinnacle``: PinnAPI, basketball (sport_id 3), only with ``PINNAPI_KEY_NBA``
+- ``pinnacle``: PinnFeed, basketball (NBA league 487), only with ``PINNFEED_KEY``
+  (PinnAPI with ``PINNAPI_KEY_NBA`` until its accounts were suspended on 17 Nov 2026)
   in .env, a separate key so the tennis quota is untouched. One request.
 - ``actionnetwork``: the public JSON behind actionnetwork.com's odds pages:
   US books (DraftKings, FanDuel, BetMGM, Caesars, bet365, BetRivers, Fanatics,
@@ -169,59 +170,75 @@ def us_dates(now: datetime, days: tuple[int, ...]) -> list[str]:
     return [(today + timedelta(days=d)).strftime("%Y%m%d") for d in days]
 
 
-# ---------- Pinnacle (PinnAPI) ----------
+# ---------- Pinnacle (PinnFeed) ----------
 
-PINNAPI_URL = "https://pinnapi.com/kit/v1/prematch/fixtures"
-PINNAPI_BASKETBALL = 3
+# Since 20 Nov 2026 (PinnAPI suspended every account on 17 Nov). The free plan's two
+# sports are tennis and basketball, main markets only (one moneyline, spread and
+# total per game; no alternate lines as PinnAPI had), prices 30 s delayed. Runs every
+# 15 minutes use 96 of the account's 1,000 requests a day, shared with the tennis runs.
+PINNFEED_URL = "https://pinnfeed.io/v1/odds"
+PINNFEED_NBA_LEAGUE = 487
 
 
 def parse_pinnacle(data: dict) -> list[dict]:
     rows = []
     for ev in data.get("events") or []:
-        if ev.get("league_name") != "NBA" or ev.get("parent_id") is not None:
+        if (ev.get("league") or {}).get("name") != "NBA" or ev.get("parentId") is not None:
+            continue
+        if ev.get("live") or str(ev.get("status") or "").lower() == "started":
             continue
         home, away = team_code(ev.get("home")), team_code(ev.get("away"))
         if not home or not away:
             continue
-        starts = parse_time(ev.get("starts"))
-        game = next(
-            (p for k, p in (ev.get("periods") or {}).items()
-             if p.get("number", k) in (0, "0", "num_0")),
-            None,
-        )
-        if not game:
-            continue
         base = dict(source="pinnacle", book="Pinnacle", away=away, home=home,
-                    starts=starts, source_id=ev.get("event_id"))
-        ml = game.get("money_line") or {}
-        for side, key in ((home, "home"), (away, "away")):
-            if to_float(ml.get(key)):
-                rows.append(make_row(market="moneyline", side=side, price=ml[key], **base))
-        for spread in (game.get("spreads") or {}).values():
-            hdp = to_float(spread.get("hdp"))
-            if hdp is None:
+                    starts=parse_time(ev.get("startTime")), source_id=ev.get("id"))
+        for market in ev.get("markets") or []:
+            if market.get("period") not in (0, "0"):
                 continue
-            rows.append(make_row(market="spread", side=home, line=hdp,
-                                 price=spread.get("home"), volume=spread.get("max"), **base))
-            rows.append(make_row(market="spread", side=away, line=-hdp,
-                                 price=spread.get("away"), volume=spread.get("max"), **base))
-        for total in (game.get("totals") or {}).values():
-            for side in ("over", "under"):
-                rows.append(make_row(market="total", side=side, line=total.get("points"),
-                                     price=total.get(side), volume=total.get("max"), **base))
+            kind = market.get("type")
+            outcomes = {o.get("name"): o for o in market.get("outcomes") or []}
+            volume = market.get("maxStake")
+            if kind == "moneyline":
+                for side, name in ((home, "home"), (away, "away")):
+                    price = to_float((outcomes.get(name) or {}).get("decimal"))
+                    if price:
+                        rows.append(make_row(market="moneyline", side=side, price=price,
+                                             volume=volume, **base))
+            elif kind == "spread":
+                for side, name in ((home, "home"), (away, "away")):
+                    outcome = outcomes.get(name) or {}
+                    line = to_float(outcome.get("points"))
+                    if line is None:
+                        line = to_float(market.get("line"))
+                        line = None if line is None else (line if name == "home" else -line)
+                    if line is not None and to_float(outcome.get("decimal")):
+                        rows.append(make_row(market="spread", side=side, line=line,
+                                             price=outcome["decimal"], volume=volume, **base))
+            elif kind == "total":
+                for side in ("over", "under"):
+                    outcome = outcomes.get(side) or {}
+                    line = to_float(outcome.get("points"))
+                    if line is None:
+                        line = to_float(market.get("line"))
+                    if line is not None and to_float(outcome.get("decimal")):
+                        rows.append(make_row(market="total", side=side, line=line,
+                                             price=outcome["decimal"], volume=volume, **base))
     return rows
 
 
 def fetch_pinnacle(now: datetime, props: bool) -> list[dict]:
-    key = os.environ.get("PINNAPI_KEY_NBA")
+    key = (os.environ.get("PINNFEED_KEY") or "").strip()
     if not key:
-        raise SkipSource("PINNAPI_KEY_NBA not set (the tennis key is never used here)")
-    response = requests.get(PINNAPI_URL, params={"sport_id": PINNAPI_BASKETBALL},
-                            headers={"x-portal-apikey": key}, timeout=TIMEOUT)
+        raise SkipSource("PINNFEED_KEY not set")
+    response = requests.get(
+        PINNFEED_URL,
+        params={"sport": "basketball", "league": PINNFEED_NBA_LEAGUE, "live": "false", "limit": 1000},
+        headers={"x-api-key": key}, timeout=TIMEOUT,
+    )
     if response.status_code == 429:
-        raise RuntimeError("429 from PinnAPI (NBA key quota); not retried")
+        raise RuntimeError("429 from PinnFeed (daily quota); not retried")
     if response.status_code != 200:
-        raise RuntimeError(f"HTTP {response.status_code} from PinnAPI")
+        raise RuntimeError(f"HTTP {response.status_code} from PinnFeed")
     return parse_pinnacle(response.json())
 
 

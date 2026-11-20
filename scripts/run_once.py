@@ -21,6 +21,16 @@ Workflow:
        results twice a day (scripts/match_results.py), unless the run was
        interrupted or --no-results is given.
 
+If step 1 fails (or PINNFEED_KEY is not set) the run does not stop: it
+becomes a books-only run with its own `books_<time>` ID and no session, queue,
+EV or alert. Each book collector still runs and saves its whole tennis offer
+(src/betting/books/superbet.py --no-input, src/betting/books/betclic_feed.py
+--all-competitions) so it can be matched with a reference later; one failing
+does not stop the other. Every run, with or without Pinnacle, also saves
+Polymarket and Kalshi tennis prices (scripts/tennis_markets.py, --no-markets to
+skip): a second reference kept only for comparison, never for EV or alerts.
+Exit code 1 if Pinnacle failed or no book was saved.
+
 Usage:
     python scripts/run_once.py
     python scripts/run_once.py --limit 20
@@ -72,6 +82,7 @@ BETCLIC_SCRIPT = SRC_DIR / "betting" / "books" / "betclic.py"
 BETCLIC_SCROLL_SCRIPT = SRC_DIR / "betting" / "books" / "betclic_scroll.py"
 BETCLIC_FEED_SCRIPT = SRC_DIR / "betting" / "books" / "betclic_feed.py"
 SUPERBET_SCRIPT = SRC_DIR / "betting" / "books" / "superbet.py"
+MARKETS_SCRIPT = SCRIPTS_DIR / "tennis_markets.py"
 SIGNAL_RESULTS_SCRIPT = SRC_DIR / "betting" / "books" / "superbet_results.py"
 AKO_SCRIPT = SRC_DIR / "betting" / "books" / "superbet_ako.py"
 
@@ -139,6 +150,8 @@ def build_pinnacle_info(
         "api_seconds": stats.get("api_seconds"),
         "events": stats.get("events"),
         "matches": stats.get("matches"),
+        "source": stats.get("source"),
+        "quota_remaining": stats.get("quota_remaining"),
         "excluded": stats.get("excluded"),
         "invalid": stats.get("invalid"),
         "completed_at": completed_at,
@@ -317,6 +330,12 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--no-markets",
+        action="store_true",
+        help="Skip saving prediction-market prices (scripts/tennis_markets.py).",
+    )
+
+    parser.add_argument(
         "--monitor",
         action="store_true",
         help="Open the live monitor terminal. Closing it stops the collection.",
@@ -357,6 +376,22 @@ def collect_superbet(session_id: str, pinnacle_snapshot: Path) -> None:
         print(f"WARNING: Superbet collection failed: {exc}", flush=True)
 
 
+def collect_markets(run_id: str) -> bool:
+    """Prediction-market prices (scripts/tennis_markets.py), saved for comparison only;
+    a failure never stops the run."""
+    try:
+        subprocess.run(
+            [sys.executable, str(MARKETS_SCRIPT), "--run-id", run_id],
+            check=True,
+            timeout=90,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"WARNING: prediction markets failed: {exc}", flush=True)
+        return False
+
+    return True
+
+
 def collect_signal_results(session_id: str, min_ev: float) -> None:
     """Optional; writes data/match_results/extra/. A failure never stops the run."""
     if not SIGNAL_RESULTS_SCRIPT.exists():
@@ -392,6 +427,66 @@ def build_ako(session_id: str, send: bool) -> None:
         subprocess.run(command, check=True, timeout=60)
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"WARNING: AKO coupon failed: {exc}", flush=True)
+
+
+# ------------------------------------------------------- without Pinnacle ---
+
+
+BOOKS_ONLY_TIMEOUT_S = 240
+
+
+def run_book_step(name: str, command: list[str]) -> bool:
+    """One book collector as a subprocess; a failure only warns."""
+    print(f"\n=== {name}: saving prices (no Pinnacle) ===", flush=True)
+
+    try:
+        subprocess.run(command, check=True, timeout=BOOKS_ONLY_TIMEOUT_S)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"WARNING: {name} collection failed: {exc}", flush=True)
+        return False
+
+    return True
+
+
+def books_only_run(args: argparse.Namespace, betclic_mode: str, failed: bool) -> int:
+    """Without Pinnacle, save each book's whole tennis offer so it can be matched
+    with a reference later. No session, queue, EV or alert: the run gets its own
+    `books_` ID, which the dashboard and the failed-run check do not read. Each
+    book runs whatever happens to the other. Returns the exit code: 1 if Pinnacle
+    failed (`failed`) or no book was saved, else 0."""
+    run_id = "books_" + make_session_id().removeprefix("session_")
+    print("\n========== BOOKS-ONLY RUN (no Pinnacle) ==========", flush=True)
+    print(f"Run ID: {run_id}", flush=True)
+    saved = []
+
+    if args.no_superbet:
+        print("Superbet skipped (--no-superbet).", flush=True)
+    elif SUPERBET_SCRIPT.exists() and run_book_step("Superbet", [
+        sys.executable, str(SUPERBET_SCRIPT), "--session-id", run_id, "--no-input",
+    ]):
+        saved.append("Superbet")
+
+    if betclic_mode != "feed":
+        print(
+            f"Betclic skipped: {betclic_mode} mode needs a Pinnacle list; "
+            "only the feed can read every competition.",
+            flush=True,
+        )
+    elif run_book_step("Betclic", [
+        sys.executable, str(BETCLIC_FEED_SCRIPT), "--session-id", run_id, "--all-competitions",
+    ]):
+        saved.append("Betclic")
+
+    if not args.no_markets:
+        print("\n=== Prediction markets: saving prices (comparison only) ===", flush=True)
+        collect_markets(run_id)
+
+    print(f"\nBooks saved: {', '.join(saved) or 'none'}", flush=True)
+
+    if not args.no_results:
+        match_results.run_step()
+
+    return 1 if failed or not saved else 0
 
 
 # --------------------------------------------------------------- Pinnacle ---
@@ -766,12 +861,6 @@ def main() -> None:
     if not 0 <= args.min_ev:
         sys.exit("ERROR: --min-ev cannot be negative.")
 
-    if not pinnacle.tennis_api_keys():
-        sys.exit(
-            "ERROR: PINNAPI_KEY_TENNIS is not set. "
-            "Check your .env loading or environment variables."
-        )
-
     betclic_mode = args.mode
 
     if betclic_mode is None:
@@ -817,13 +906,24 @@ def main() -> None:
 
     pinnacle_clock = time.perf_counter()
 
+    # Pinnacle is the reference, but the books do not depend on it: without it
+    # they are still collected and saved (books_only_run), only no EV is possible.
+    if not pinnacle.api_key():
+        print(f"Pinnacle skipped: {pinnacle.KEY_VARIABLE} is not set.", flush=True)
+        sys.exit(books_only_run(args, betclic_mode, failed=False))
+
     try:
         pinnacle_stats = pinnacle.main() or {}
-    except Exception as exc:
-        sys.exit(
-            f"ERROR: Pinnacle collection failed: "
-            f"{type(exc).__name__}: {exc}"
+    except KeyboardInterrupt:
+        raise
+    except BaseException as exc:
+        # pinnacle.main() exits on a 429, 401 or 403 (SystemExit), never retrying.
+        reason = (
+            f"exit: {exc.code}" if isinstance(exc, SystemExit)
+            else f"{type(exc).__name__}: {exc}"
         )
+        print(f"ERROR: Pinnacle collection failed: {reason}", flush=True)
+        sys.exit(books_only_run(args, betclic_mode, failed=True))
 
     pinnacle_done_clock = time.perf_counter()
     pinnacle_finished_at = timestamp_string(utc_now())
@@ -851,9 +951,8 @@ def main() -> None:
     try:
         pinnacle_snapshot = preserve_pinnacle_snapshot(session_id)
     except (OSError, FileNotFoundError) as exc:
-        sys.exit(
-            f"ERROR: Could not preserve Pinnacle snapshot: {exc}"
-        )
+        print(f"ERROR: Could not preserve Pinnacle snapshot: {exc}", flush=True)
+        sys.exit(books_only_run(args, betclic_mode, failed=True))
 
     # Every session artifact shares this ID.
     report_path = SESSIONS_DIR / f"{session_id}.txt"
@@ -881,6 +980,9 @@ def main() -> None:
 
     if not args.no_superbet:
         collect_superbet(session_id, pinnacle_snapshot)
+
+    if not args.no_markets:
+        collect_markets(session_id)
 
     worker = None
     monitor = None

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # One unattended nba_collect.py run, for cron (offset from the tennis run,
 # e.g. "7-59/15 * * * *"). Output goes to data/logs/nba_collect.log; flock
-# skips a run while the previous one is still going. It uses no PinnAPI
-# request unless PINNAPI_KEY_NBA is set in .env.
+# skips a run while the previous one is still going. It uses one PinnFeed
+# request (shared with tennis) only when PINNFEED_KEY is set in .env.
 cd "$(dirname "$0")/.." || exit 1
 mkdir -p data/logs
 exec 9>data/logs/nba_collect.lock
