@@ -3793,6 +3793,11 @@ Pinnacle's price is fair, and it is measured against results as they come in
   for a single). Its average CLV and share above 0 say first whether the edge is real;
   win rate, ROI and units need many more bets, and while ROI's 95% range covers 0 the
   results show nothing either way.
+* **Tennis markets** tab: Polymarket and Kalshi prices next to Pinnacle's for the
+  newest run, for comparison only (no alerts, not in the Track record). A market's
+  probability is the middle of its bid and ask; a market whose spread is wider than
+  the sidebar's limit is greyed out and its EV not trusted. **Agree** marks a side
+  that reaches the minimum EV against Pinnacle and every tight market.
 """
 
 
@@ -3887,6 +3892,9 @@ def main() -> None:
                 url_path="all"),
         st.Page(lambda: render_tennis(st), title="Tennis", icon=":material/sports_tennis:",
                 url_path="tennis", default=True),
+        # Prediction markets next to Pinnacle, comparison only (user, 20 Nov 2026).
+        st.Page(lambda: render_markets(st), title="Tennis markets",
+                icon=":material/query_stats:", url_path="markets"),
         st.Page(lambda: render_basketball(st), title="Basketball",
                 icon=":material/sports_basketball:", url_path="basketball"),
     ]
@@ -3901,6 +3909,13 @@ def main() -> None:
 def render_all(st) -> None:
     """Placeholder for a view across every sport, left empty for now."""
     st.info("All sports in one view is coming. For now, pick Tennis or Basketball.")
+
+
+def render_markets(st) -> None:
+    """Polymarket and Kalshi against Pinnacle and the books (dashboard_markets.py)."""
+    from dashboard_markets import render_markets as render
+
+    render(st)
 
 
 def render_basketball(st) -> None:
