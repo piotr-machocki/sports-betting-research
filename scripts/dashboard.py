@@ -26,6 +26,7 @@ scrollbars move this one, so the browser scrolls it without repainting anything.
 from __future__ import annotations
 
 import calendar
+import csv
 import html
 import os
 import pickle
@@ -399,6 +400,7 @@ OVERVIEW_NO_EV = "#c98a00"
 SUPERBET_NO_EV_LABEL = "FOUND on Superbet but no EV"
 OVERVIEW_NOT_MATCHED = "rgba(128, 128, 128, 0.65)"
 OVERVIEW_WAITING = "rgba(128, 128, 128, 0.2)"
+OVERVIEW_STARTED = "rgba(160, 120, 200, 0.55)"
 STATUS_COLOURS = {"finished": "#1f9d55", "failed": "#d64545", "interrupted": OVERVIEW_NO_EV}
 OVERVIEW_STYLE = """<style>
 /* The run's heading (user, 15 Nov 2026): "Last run overview" with the status pill on
@@ -2139,6 +2141,46 @@ def pinnacle_tip(source: dict) -> str:
     return "<br>".join(lines)
 
 
+# Session ID -> name pairs its Pinnacle snapshot listed as already started. A snapshot
+# is written once, so a found one is never read again.
+STARTED_PAIRS: dict[str, list[frozenset]] = {}
+
+
+def started_pairs(session_id: str) -> list[frozenset]:
+    """Matches Pinnacle listed as started in this run's snapshot (PinnFeed's
+    status "started", since 20 Nov 2026). The collectors skip them, so they never
+    get a row."""
+    if session_id in STARTED_PAIRS:
+        return STARTED_PAIRS[session_id]
+
+    path = PINNACLE_RAW_DIR / f"pinnacle_{session_id}.csv"
+    try:
+        with path.open(newline="", encoding="utf-8-sig") as handle:
+            pairs = [
+                frozenset((row.get("player1", ""), row.get("player2", "")))
+                for row in csv.DictReader(handle)
+                if str(row.get("status", "")).lower() == "live"
+            ]
+    except OSError:
+        return []
+
+    STARTED_PAIRS[session_id] = pairs
+    return pairs
+
+
+def started_without_row(session_id: str, rows: list[dict]) -> int:
+    """Started matches with no row in the session: counted apart from Waiting, which
+    would otherwise never empty for a finished run (user, 20 Nov 2026)."""
+    if not session_id:
+        return 0
+
+    seen = {
+        frozenset((row.get("pinnacle_player1", ""), row.get("pinnacle_player2", "")))
+        for row in rows
+    }
+    return sum(pair not in seen for pair in started_pairs(session_id))
+
+
 def session_summary(rows: list[dict], info: dict, min_ev: float, now: datetime) -> dict:
     """Header values for a session. The odds age always runs up to now, even for
     a finished session: how old the prices are is what matters when betting."""
@@ -2156,6 +2198,9 @@ def session_summary(rows: list[dict], info: dict, min_ev: float, now: datetime) 
     ]
     start = parse_timestamp(info.get("session_start"))
     expected = pinnacle_info(info).get("matches")
+    # Started matches never reach the books, so every "x / total" leaves them out.
+    started = started_without_row(info.get("session_id", ""), rows) if expected else 0
+    expected = expected - started if expected else expected
 
     last_activity = max(betclic_times, default=start)
     idle = (now - last_activity).total_seconds() if last_activity else None
@@ -2214,6 +2259,7 @@ def session_summary(rows: list[dict], info: dict, min_ev: float, now: datetime) 
         "stats": stats,
         "matches": len(latest),
         "total": total,
+        "started": started,
         "betclic_gap": capture_gap(latest, "betclic_captured_at"),
         "superbet_gap": capture_gap(latest, "superbet_captured_at"),
         "pinnacle_source": pinnacle_source(info),
@@ -2562,15 +2608,23 @@ def donut_gradient(drawn: list[tuple[str, int, str, str]]) -> str:
 
 
 def overview_donut(
-    book: str, calculated: int, no_ev: int, reasons: str, matches: int, total: int
+    book: str,
+    calculated: int,
+    no_ev: int,
+    reasons: str,
+    matches: int,
+    total: int,
+    started: int = 0,
 ) -> str:
     """Where every Pinnacle match ended up at one book, as a ring with the matches that
     got an EV in its centre and the counts beside it. VERIFY, AMBIGUOUS and ERROR count
-    as not matched, because EV is calculated for FOUND only."""
+    as not matched, because EV is calculated for FOUND only. total leaves out the
+    started matches, which the books were never asked about."""
     parts = [
         ("EV calculated", calculated, OVERVIEW_BLUE, ""),
         ("No EV", no_ev, OVERVIEW_NO_EV, reasons),
         ("Not matched", max(matches - calculated - no_ev, 0), OVERVIEW_NOT_MATCHED, ""),
+        ("Started", started, OVERVIEW_STARTED, "skipped"),
         ("Waiting", max(total - matches, 0), OVERVIEW_WAITING, ""),
     ]
     # A part at zero draws nothing. Waiting only means something during a run.
@@ -3020,6 +3074,7 @@ def overview_html(
     counted over ev_stats (all sessions) when given."""
     stats = dict(summary["stats"])
     matches, total = summary["matches"], summary["total"]
+    started = summary.get("started", 0)
     title = '<div class="overview-title">Last run overview</div>' if titled else ""
     betclic_reasons = ", ".join(
         f"{label.strip()} {value}"
@@ -3061,6 +3116,7 @@ def overview_html(
                 betclic_reasons,
                 matches,
                 total,
+                started,
             )
         )
 
@@ -3073,6 +3129,7 @@ def overview_html(
                 "",
                 matches,
                 total,
+                started,
             )
         )
 

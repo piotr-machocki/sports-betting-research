@@ -337,6 +337,27 @@ def test_overview_splits_every_match_by_what_happened_to_it():
     assert "Betclic 2 / 6" in text
 
 
+def test_overview_counts_started_matches_apart_from_waiting(tmp_path, monkeypatch):
+    # Pinnacle listed 3: one played (has a row), one already started (skipped by the
+    # collectors, so no row ever comes), one prematch still on its way.
+    monkeypatch.setattr(dashboard, "PINNACLE_RAW_DIR", tmp_path)
+    monkeypatch.setattr(dashboard, "STARTED_PAIRS", {})
+    (tmp_path / "pinnacle_session_x.csv").write_text(
+        "player1,player2,status\n"
+        "Ann Alpha,Bea Beta,prematch\n"
+        "Lan Mi,Ana Sofia Sanchez,live\n"
+        "Cy Gamma,Di Delta,prematch\n",
+        encoding="utf-8",
+    )
+    info = {"session_id": "session_x", "pinnacle": {"matches": 3}}
+    summary = dashboard.session_summary([row()], info, 0.02, NOW)
+    text = overview_text([row()], info)
+
+    assert (summary["total"], summary["started"]) == (2, 1)
+    assert "Started 1" in text and "Waiting 1" in text
+    assert "Pinnacle 1 / 2" in text
+
+
 def test_overview_hides_waiting_and_superbet_when_they_do_not_apply():
     text = overview_text([row()], {"pinnacle": {"matches": 1}})
 
