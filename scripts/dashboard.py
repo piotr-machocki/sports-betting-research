@@ -3881,7 +3881,10 @@ def main() -> None:
     # sidebar; tennis stays the default at "/". Streamlit's own top navigation sits in
     # the fixed, see-through header, so the page scrolled under it: the tabs are page
     # links at the top of the content instead, and scroll away with it.
+    # "All" comes first but tennis stays the default page (user, 20 Nov 2026).
     pages = [
+        st.Page(lambda: render_all(st), title="All", icon=":material/apps:",
+                url_path="all"),
         st.Page(lambda: render_tennis(st), title="Tennis", icon=":material/sports_tennis:",
                 url_path="tennis", default=True),
         st.Page(lambda: render_basketball(st), title="Basketball",
@@ -3893,6 +3896,11 @@ def main() -> None:
         for each in pages:
             st.page_link(each)
     page.run()
+
+
+def render_all(st) -> None:
+    """Placeholder for a view across every sport, left empty for now."""
+    st.info("All sports in one view is coming. For now, pick Tennis or Basketball.")
 
 
 def render_basketball(st) -> None:
