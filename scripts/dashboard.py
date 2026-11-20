@@ -168,6 +168,7 @@ PINNACLE_RAW_DIR = ROOT / "data" / "pinnacle" / "raw"
 # status lacks the reply's headers: 1,000 requests a day for the account, prices
 # 30 s behind Pinnacle. Tennis makes one request per 5-minute run, 288 a day.
 PINNFEED_DAILY_LIMIT = 1000
+PINNFEED_SITE = "https://pinnfeed.io"
 PINNFEED_DELAY_SECONDS = 30
 TENNIS_RUNS_PER_DAY = 288
 MATCH_RESULTS_FILES = [
@@ -598,6 +599,7 @@ OVERVIEW_STYLE = """<style>
 /* The tip stays open while the mouse crosses the gap to it, so its text can be
    selected and copied (user, 20 Nov 2026). */
 .has-tip .tip { cursor: text; user-select: text; }
+.has-tip .tip a { color: inherit; text-decoration: underline; cursor: pointer; }
 .has-tip .tip::before { content: ""; position: absolute; left: 0; right: 0; top: -6px; height: 6px; }
 /* Dotted and grey (user, 15 Nov 2026): a hint that a tap explains it, quieter than the text. */
 .has-tip .label {
@@ -723,6 +725,16 @@ TABLE_SCRIPT = """<script>
     }
 
     document.addEventListener("click", event => {
+        // Streamlit's sanitizer drops target="_blank", so a link in a tip (PinnFeed's
+        // site) is opened in a new tab here instead of leaving the dashboard.
+        const link = event.target.closest(".tip a[href]");
+
+        if (link) {
+            event.preventDefault();
+            window.open(link.href, "_blank", "noopener");
+            return;
+        }
+
         const root = document.documentElement.dataset;
 
         if (event.target.closest("table.matches .book-switch")) {
@@ -2114,15 +2126,15 @@ def pinnacle_source(info: dict) -> dict | None:
 
 
 def pinnacle_tip(source: dict) -> str:
-    """Short lines, one fact each (user, 20 Nov 2026)."""
-    lines = ["Source: PinnFeed (free plan)"]
+    """Short lines, one fact each (user, 20 Nov 2026); the name links to PinnFeed."""
+    lines = [f'Source: <a href="{PINNFEED_SITE}">PinnFeed</a>']
 
     if source.get("tennis_today") is not None:
-        lines.append(f"Tennis today: {source['tennis_today']} / {TENNIS_RUNS_PER_DAY}")
-    if source.get("used") is not None:
-        lines.append(f"Account today: {source['used']:,} / {source['limit']:,}")
-    lines.append(f"Delay: {source['delay']} s")
-    return "<br>".join(html.escape(line) for line in lines)
+        lines.append(html.escape(
+            f"Today: {source['tennis_today']} / {TENNIS_RUNS_PER_DAY} ({source['limit']:,} free)"
+        ))
+    lines.append(html.escape(f"Delay: {source['delay']} s"))
+    return "<br>".join(lines)
 
 
 def session_summary(rows: list[dict], info: dict, min_ev: float, now: datetime) -> dict:

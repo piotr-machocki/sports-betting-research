@@ -677,9 +677,9 @@ def test_pinnacle_box_tip_names_pinnfeed_its_quota_and_delay(tmp_path, monkeypat
     flow = dashboard.overview_flow({"pinnacle_age": 60.0, "pinnacle_captured": 1.0,
                                     "pinnacle_source": source})
     assert '<div class="flow-node has-tip" tabindex="0">' in flow
-    assert "Source: PinnFeed (free plan)" in flow
-    assert "Tennis today: 2 / 288" in flow
-    assert "Account today: 43 / 1,000" in flow
+    assert 'Source: <a href="https://pinnfeed.io">PinnFeed</a>' in flow
+    assert "Today: 2 / 288 (1,000 free)" in flow
+    assert "Account" not in flow
     assert "Delay: 30 s" in flow
 
 
@@ -690,7 +690,7 @@ def test_pinnacle_source_falls_back_to_the_free_plan_and_skips_older_runs():
     source = dashboard.pinnacle_source({"session_id": "x", "pinnacle": {"source": "pinnfeed"}})
     assert source == {"tennis_today": None, "used": None, "limit": 1000, "delay": 30}
     tip = dashboard.pinnacle_tip(source)
-    assert "Tennis today" not in tip and "Account" not in tip and "Delay: 30 s" in tip
+    assert "Today" not in tip and "Delay: 30 s" in tip
 
 
 def test_flow_arrows_give_the_total_since_pinnacle_on_hover():
