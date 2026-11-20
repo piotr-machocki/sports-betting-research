@@ -54,6 +54,8 @@ def book_steps(monkeypatch, tmp_path):
     superbet = tmp_path / "superbet.py"
     superbet.touch()
     monkeypatch.setattr(run_once, "SUPERBET_SCRIPT", superbet)
+    monkeypatch.setattr(run_once.run_ledger, "LEDGER_FILE", tmp_path / "runs.jsonl")
+    monkeypatch.setattr(run_once.run_ledger, "MARKETS_DIR", tmp_path / "markets")
     monkeypatch.setattr(run_once.match_results, "run_step", lambda: calls.append("results"))
 
     def step(name, command):
@@ -107,6 +109,25 @@ def test_no_book_saved_or_pinnacle_failed_exits_1(book_steps):
     assert run_once.books_only_run(books_args(), "feed", failed=False) == 1
 
 
+def test_books_only_runs_are_recorded_in_the_run_ledger(book_steps):
+    _, results = book_steps
+    results["Betclic"] = False
+    pinnacle = run_once.run_ledger.state("failed", "exit: 403")
+
+    run_once.books_only_run(
+        books_args("--no-markets"), "feed", failed=True,
+        started_at="2026-11-20T10:00:00Z", pinnacle_state=pinnacle,
+    )
+
+    [run] = run_once.run_ledger.read()
+    assert run["kind"] == "books" and run["run_id"].startswith("books_")
+    assert run["started_at"] == "2026-11-20T10:00:00Z" and run["status"] == "failed"
+    sources = {name: each["state"] for name, each in run["sources"].items()}
+    assert sources == {"pinnacle": "failed", "betclic": "failed", "superbet": "ok",
+                       "polymarket": "skipped", "kalshi": "skipped"}
+    assert run["sources"]["pinnacle"]["detail"] == "exit: 403"
+
+
 def test_browser_modes_skip_betclic_without_a_pinnacle_list(book_steps):
     calls, _ = book_steps
 
@@ -133,7 +154,7 @@ def isolated_run(monkeypatch, tmp_path):
     seen = []
     monkeypatch.setattr(
         run_once, "books_only_run",
-        lambda args, mode, failed: seen.append((mode, failed)) or (1 if failed else 0),
+        lambda args, mode, failed, **kwargs: seen.append((mode, failed)) or (1 if failed else 0),
     )
     return seen
 

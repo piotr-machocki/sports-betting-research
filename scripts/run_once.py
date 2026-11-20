@@ -116,6 +116,7 @@ import match_results  # noqa: E402
 import notify  # noqa: E402
 from perf_summary import performance_lines  # noqa: E402
 import results_store  # noqa: E402
+import run_ledger  # noqa: E402
 
 
 # --------------------------------------------------------------- timestamps -
@@ -356,10 +357,11 @@ def parse_args() -> argparse.Namespace:
 # --------------------------------------------------------------- Superbet ---
 
 
-def collect_superbet(session_id: str, pinnacle_snapshot: Path) -> None:
-    """Optional and separate from the queue; a failure never stops the run."""
+def collect_superbet(session_id: str, pinnacle_snapshot: Path) -> dict:
+    """Optional and separate from the queue; a failure never stops the run. Returns
+    its run ledger state."""
     if not SUPERBET_SCRIPT.exists():
-        return
+        return run_ledger.state("skipped", "superbet.py missing")
 
     try:
         subprocess.run(
@@ -376,6 +378,9 @@ def collect_superbet(session_id: str, pinnacle_snapshot: Path) -> None:
         )
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"WARNING: Superbet collection failed: {exc}", flush=True)
+        return run_ledger.state("failed", str(exc)[:200])
+
+    return run_ledger.state("ok")
 
 
 def collect_markets(run_id: str) -> bool:
@@ -450,7 +455,13 @@ def run_book_step(name: str, command: list[str]) -> bool:
     return True
 
 
-def books_only_run(args: argparse.Namespace, betclic_mode: str, failed: bool) -> int:
+def books_only_run(
+    args: argparse.Namespace,
+    betclic_mode: str,
+    failed: bool,
+    started_at: str = "",
+    pinnacle_state: dict | None = None,
+) -> int:
     """Without Pinnacle, save each book's whole tennis offer so it can be matched
     with a reference later. No session, queue, EV or alert: the run gets its own
     `books_` ID, which the dashboard and the failed-run check do not read. Each
@@ -460,6 +471,7 @@ def books_only_run(args: argparse.Namespace, betclic_mode: str, failed: bool) ->
     print("\n========== BOOKS-ONLY RUN (no Pinnacle) ==========", flush=True)
     print(f"Run ID: {run_id}", flush=True)
     saved = []
+    markets_tried = False
 
     if args.no_superbet:
         print("Superbet skipped (--no-superbet).", flush=True)
@@ -482,8 +494,27 @@ def books_only_run(args: argparse.Namespace, betclic_mode: str, failed: bool) ->
     if not args.no_markets:
         print("\n=== Prediction markets: saving prices (comparison only) ===", flush=True)
         collect_markets(run_id)
+        markets_tried = True
 
     print(f"\nBooks saved: {', '.join(saved) or 'none'}", flush=True)
+
+    def book_state(book: str, tried: bool) -> dict:
+        if not tried:
+            return run_ledger.state("skipped")
+        return run_ledger.state("ok" if book in saved else "failed")
+
+    run_ledger.record(
+        run_id,
+        "books",
+        started_at,
+        "failed" if failed or not saved else "finished",
+        {
+            "pinnacle": pinnacle_state or run_ledger.state("skipped", "no key"),
+            "superbet": book_state("Superbet", not args.no_superbet and SUPERBET_SCRIPT.exists()),
+            "betclic": book_state("Betclic", betclic_mode == "feed"),
+            **run_ledger.market_states(run_id, markets_tried),
+        },
+    )
 
     if not args.no_results:
         match_results.run_step()
@@ -912,7 +943,7 @@ def main() -> None:
     # they are still collected and saved (books_only_run), only no EV is possible.
     if not pinnacle.api_key():
         print(f"Pinnacle skipped: {pinnacle.KEY_VARIABLE} is not set.", flush=True)
-        sys.exit(books_only_run(args, betclic_mode, failed=False))
+        sys.exit(books_only_run(args, betclic_mode, failed=False, started_at=run_started_at))
 
     try:
         pinnacle_stats = pinnacle.main() or {}
@@ -925,7 +956,10 @@ def main() -> None:
             else f"{type(exc).__name__}: {exc}"
         )
         print(f"ERROR: Pinnacle collection failed: {reason}", flush=True)
-        sys.exit(books_only_run(args, betclic_mode, failed=True))
+        sys.exit(books_only_run(
+            args, betclic_mode, failed=True, started_at=run_started_at,
+            pinnacle_state=run_ledger.state("failed", reason[:200]),
+        ))
 
     pinnacle_done_clock = time.perf_counter()
     pinnacle_finished_at = timestamp_string(utc_now())
@@ -954,7 +988,10 @@ def main() -> None:
         pinnacle_snapshot = preserve_pinnacle_snapshot(session_id)
     except (OSError, FileNotFoundError) as exc:
         print(f"ERROR: Could not preserve Pinnacle snapshot: {exc}", flush=True)
-        sys.exit(books_only_run(args, betclic_mode, failed=True))
+        sys.exit(books_only_run(
+            args, betclic_mode, failed=True, started_at=run_started_at,
+            pinnacle_state=run_ledger.state("failed", f"snapshot not kept: {exc}"[:200]),
+        ))
 
     # Every session artifact shares this ID.
     report_path = SESSIONS_DIR / f"{session_id}.txt"
@@ -980,8 +1017,11 @@ def main() -> None:
         },
     )
 
+    superbet_state = run_ledger.state("skipped")
+    markets_tried = False
+
     if not args.no_superbet:
-        collect_superbet(session_id, pinnacle_snapshot)
+        superbet_state = collect_superbet(session_id, pinnacle_snapshot)
 
     worker = None
     monitor = None
@@ -1189,6 +1229,21 @@ def main() -> None:
         # Betclic's prices by 2-12 s, and these are only kept for comparison.
         if not args.no_markets and session_status != "interrupted":
             collect_markets(session_id)
+            markets_tried = True
+
+        # One line per run for the dashboard's run health (scripts/run_ledger.py).
+        run_ledger.record(
+            session_id,
+            "session",
+            run_started_at,
+            session_status,
+            {
+                "pinnacle": run_ledger.state("ok"),
+                "superbet": superbet_state,
+                "betclic": run_ledger.betclic_state(performance),
+                **run_ledger.market_states(session_id, markets_tried),
+            },
+        )
 
         if not args.no_results and session_status != "interrupted":
             collect_signal_results(session_id, args.min_ev)

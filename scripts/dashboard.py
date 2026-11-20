@@ -3944,8 +3944,10 @@ def main() -> None:
 
 
 def render_all(st) -> None:
-    """Placeholder for a view across every sport, left empty for now."""
-    st.info("All sports in one view is coming. For now, pick Tennis or Basketball.")
+    """Run health across every sport (dashboard_runs.py; user, 20 Nov 2026)."""
+    from dashboard_runs import render_runs
+
+    render_runs(st)
 
 
 def render_markets(st) -> None:
