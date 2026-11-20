@@ -64,4 +64,6 @@ CITY_ALIASES = {
     "lwow": "lviv", "moskwa": "moscow", "edynburg": "edinburgh",
     # --- Americas ---
     "nowy": "new", "jork": "york", "meksyk": "mexico",
+    # --- added automatically: tournaments found under another name ---
+    "trnawa": "trnava",
 }
