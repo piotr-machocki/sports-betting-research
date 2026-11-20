@@ -1,5 +1,5 @@
 """
-The dashboard's Markets tab: Polymarket and Kalshi next to Pinnacle and the books.
+The dashboard's Prediction markets subtab of Tennis: Polymarket and Kalshi next to Pinnacle and the books.
 
 Since 20 Nov 2026 (user's request). Comparison only, like the files it reads
 (scripts/tennis_markets.py, matched by scripts/market_compare.py): no Telegram, no
@@ -336,7 +336,6 @@ def render_markets(st) -> None:
         player = st.text_input("Player", key="markets_player")
 
     st.html(MARKETS_STYLE)
-    st.markdown("#### Prediction markets")
     st.html(
         '<div class="markets-note">Polymarket and Kalshi against Pinnacle, for '
         "comparison only: no Telegram alerts, and nothing here counts in the Tennis "

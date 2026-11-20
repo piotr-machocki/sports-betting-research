@@ -3,7 +3,7 @@ Prediction-market prices (scripts/tennis_markets.py) set against one session's m
 
 Since 20 Nov 2026 (user's request). Comparison only: nothing here sends alerts or feeds
 the Tennis page, Telegram or the Track record. It answers two questions for the
-dashboard's Markets tab: how close are Polymarket and Kalshi to Pinnacle's devigged
+dashboard's Prediction markets subtab: how close are Polymarket and Kalshi to Pinnacle's devigged
 probability, and what would the Betclic and Superbet prices be worth if a market's
 probability were the true one.
 

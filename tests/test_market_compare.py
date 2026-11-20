@@ -1,5 +1,5 @@
 """Prediction markets against a session's matches (scripts/market_compare.py) and the
-dashboard's Markets tab (scripts/dashboard_markets.py)."""
+dashboard's Prediction markets subtab (scripts/dashboard_markets.py)."""
 
 import sys
 from datetime import datetime, timezone

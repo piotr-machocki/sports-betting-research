@@ -3793,7 +3793,7 @@ Pinnacle's price is fair, and it is measured against results as they come in
   for a single). Its average CLV and share above 0 say first whether the edge is real;
   win rate, ROI and units need many more bets, and while ROI's 95% range covers 0 the
   results show nothing either way.
-* **Tennis markets** tab: Polymarket and Kalshi prices next to Pinnacle's for the
+* **Prediction markets** (a subtab of Tennis; Bookmakers is the page described above): Polymarket and Kalshi prices next to Pinnacle's for the
   newest run, for comparison only (no alerts, not in the Track record). A market's
   probability is the middle of its bid and ask; a market whose spread is wider than
   the sidebar's limit is greyed out and its EV not trusted. **Agree** marks a side
@@ -3855,6 +3855,12 @@ SPORT_TABS_STYLE = """<style>
     font-size: 1.15rem !important;
     font-weight: 600;
 }
+/* The same shade Streamlit gives the page shown. */
+.st-key-sport_tab_parent a { background-color: rgba(172, 177, 195, 0.15) !important; }
+/* Tennis's subtabs: smaller, under the sport row. */
+.st-key-tennis_tabs { margin-bottom: 0.3rem; }
+.st-key-tennis_tabs a { padding: 0.25rem 0.8rem !important; }
+.st-key-tennis_tabs a p { font-size: 0.95rem !important; }
 </style>"""
 
 
@@ -3887,22 +3893,34 @@ def main() -> None:
     # the fixed, see-through header, so the page scrolled under it: the tabs are page
     # links at the top of the content instead, and scroll away with it.
     # "All" comes first but tennis stays the default page (user, 20 Nov 2026).
-    pages = [
+    tennis = st.Page(lambda: render_tennis(st), title="Tennis",
+                     icon=":material/sports_tennis:", url_path="tennis", default=True)
+    # Prediction markets next to Pinnacle, comparison only (user, 20 Nov 2026): a
+    # subtab of Tennis, so it is left out of the sport row.
+    markets = st.Page(lambda: render_markets(st), title="Prediction markets",
+                      icon=":material/query_stats:", url_path="tennis-markets")
+    sports = [
         st.Page(lambda: render_all(st), title="All", icon=":material/apps:",
                 url_path="all"),
-        st.Page(lambda: render_tennis(st), title="Tennis", icon=":material/sports_tennis:",
-                url_path="tennis", default=True),
-        # Prediction markets next to Pinnacle, comparison only (user, 20 Nov 2026).
-        st.Page(lambda: render_markets(st), title="Tennis markets",
-                icon=":material/query_stats:", url_path="markets"),
+        tennis,
         st.Page(lambda: render_basketball(st), title="Basketball",
                 icon=":material/sports_basketball:", url_path="basketball"),
     ]
-    page = st.navigation(pages, position="hidden")
+    page = st.navigation([*sports, markets], position="hidden")
+    on_markets = page.title == markets.title
     st.html(SPORT_TABS_STYLE)
     with st.container(horizontal=True, key="sport_tabs", gap="small"):
-        for each in pages:
-            st.page_link(each)
+        for each in sports:
+            if each is tennis and on_markets:
+                # Streamlit marks only the page shown; Tennis stays marked on its subtab.
+                with st.container(key="sport_tab_parent", width="content"):
+                    st.page_link(each)
+            else:
+                st.page_link(each)
+    if on_markets or page.title == tennis.title:
+        with st.container(horizontal=True, key="tennis_tabs", gap="small"):
+            st.page_link(tennis, label="Bookmakers", icon=":material/storefront:")
+            st.page_link(markets)
     page.run()
 
 
