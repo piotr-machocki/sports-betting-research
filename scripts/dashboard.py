@@ -3877,9 +3877,9 @@ SPORT_TABS_STYLE = """<style>
 /* The same shade Streamlit gives the page shown. */
 .st-key-sport_tab_parent a { background-color: rgba(172, 177, 195, 0.15) !important; }
 /* Tennis's subtabs: smaller, under the sport row. */
-.st-key-tennis_tabs { margin-bottom: 0.3rem; }
-.st-key-tennis_tabs a { padding: 0.25rem 0.8rem !important; }
-.st-key-tennis_tabs a p { font-size: 0.95rem !important; }
+.st-key-tennis_tabs, .st-key-all_tabs { margin-bottom: 0.3rem; }
+.st-key-tennis_tabs a, .st-key-all_tabs a { padding: 0.25rem 0.8rem !important; }
+.st-key-tennis_tabs a p, .st-key-all_tabs a p { font-size: 0.95rem !important; }
 </style>"""
 
 
@@ -3918,9 +3918,10 @@ def main() -> None:
     # subtab of Tennis, so it is left out of the sport row.
     markets = st.Page(lambda: render_markets(st), title="Prediction markets",
                       icon=":material/query_stats:", url_path="tennis-markets")
+    all_sports = st.Page(lambda: render_all(st), title="All", icon=":material/apps:",
+                         url_path="all")
     sports = [
-        st.Page(lambda: render_all(st), title="All", icon=":material/apps:",
-                url_path="all"),
+        all_sports,
         tennis,
         st.Page(lambda: render_basketball(st), title="Basketball",
                 icon=":material/sports_basketball:", url_path="basketball"),
@@ -3940,14 +3941,20 @@ def main() -> None:
         with st.container(horizontal=True, key="tennis_tabs", gap="small"):
             st.page_link(tennis, label="Sharp vs soft", icon=":material/compare_arrows:")
             st.page_link(markets)
+    # All's subtabs (user, 20 Nov 2026): Pipeline health is the first and the default,
+    # drawn by the All page itself, like Sharp vs soft on Tennis.
+    if page.title == all_sports.title:
+        with st.container(horizontal=True, key="all_tabs", gap="small"):
+            st.page_link(all_sports, label="Pipeline health", icon=":material/monitor_heart:")
     page.run()
 
 
 def render_all(st) -> None:
-    """Run health across every sport (dashboard_runs.py; user, 20 Nov 2026)."""
-    from dashboard_runs import render_runs
+    """All's default subtab, Pipeline health: run and source success across every sport
+    (dashboard_runs.py; user, 20 Nov 2026)."""
+    from dashboard_runs import render_health
 
-    render_runs(st)
+    render_health(st)
 
 
 def render_markets(st) -> None:

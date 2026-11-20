@@ -110,19 +110,43 @@ def test_health_rates_count_only_runs_that_tried_a_source():
         run(2, now, pinnacle="ok", superbet="failed"),
         {"kind": "skipped", "started_at": (now - timedelta(hours=1)).isoformat(), "sources": {}},
     ]
+    stale = timedelta(minutes=20)
 
-    result = dashboard_runs.health(runs, ["pinnacle", "superbet"], now)
-    day, week, _ = (each for each in zip(*result["rows"].values()))
-    whole, pinnacle, superbet = day
+    day = dashboard_runs.health(runs, ["pinnacle", "superbet"], now, "24 h", stale)
+    whole, pinnacle, superbet = (card["stats"] for card in day["cards"])
     assert (whole["worked"], whole["tried"]) == (1, 3)
     assert (pinnacle["worked"], pinnacle["tried"]) == (2, 2)
     assert (superbet["worked"], superbet["tried"], superbet["partial"]) == (1, 2, 1)
-    assert (week[1]["worked"], week[1]["tried"]) == (2, 3)
-    assert result["meta"][0]["runs"] == 3 and result["meta"][1]["longest_gap"] == timedelta(hours=45)
+    assert (day["runs"], day["skipped"]) == (3, 1)
+    # A green card still names the newest failure ever.
+    assert day["cards"][1]["last_failure"][0] == now - timedelta(hours=48)
 
-    page = dashboard_runs.health_table(result, dashboard_runs.TENNIS_LABELS)
-    assert "Whole run" in page and "Superbet" in page and "rate-bad" in page
-    assert "skipped by cron" in page
+    week = dashboard_runs.health(runs, ["pinnacle", "superbet"], now, "7 days", stale)
+    assert (week["cards"][1]["stats"]["worked"], week["cards"][1]["stats"]["tried"]) == (2, 3)
+    assert week["longest_gap"] == timedelta(hours=45)
+
+    # 24 hourly buckets: the run 3 h ago worked, the one 2 h ago failed Superbet.
+    bars = day["cards"][2]["buckets"]
+    assert len(bars) == 24 and [b["tried"] for b in bars[-3:]] == [1, 1, 0]
+    assert [b["worked"] for b in bars[-3:-1]] == [1, 0]
+
+    # Latest attempts: Pinnacle worked 2 h ago (older than 20 min = no recent run).
+    assert day["cards"][1]["status"] == "stale"
+    fresh = dashboard_runs.health(runs, ["pinnacle"], now, "24 h", timedelta(hours=3))
+    assert fresh["cards"][1]["status"] == "ok"
+
+    page = dashboard_runs.sport_html("Tennis", fresh, dashboard_runs.TENNIS_LABELS, "24 h", now)
+    assert "Whole run" in page and "Pinnacle" in page and "health-bar bad" in page
+    assert "All sources working" in page and "skipped by cron" in page
+    assert "1 of 1 worked" in page
+
+
+def test_sport_pill_names_failing_sources():
+    now = datetime(2026, 11, 20, 18, tzinfo=timezone.utc)
+    runs = [run(0.05, now, pinnacle="failed", superbet="ok")]
+    result = dashboard_runs.health(runs, ["pinnacle", "superbet"], now, "24 h", timedelta(minutes=20))
+    page = dashboard_runs.sport_html("Tennis", result, dashboard_runs.TENNIS_LABELS, "24 h", now)
+    assert "Failing: Pinnacle" in page and "Failing</span>" in page
 
 
 def test_nba_runs_map_errors_and_skips(tmp_path):
