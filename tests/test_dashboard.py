@@ -1407,7 +1407,17 @@ def test_about_page_renders_without_the_sidebar():
     app.run()
     assert not app.exception
     assert not app.sidebar.children
-    assert any("Tennis EV" in block.value for block in app.markdown)
+    assert any("Betting EV" in block.value for block in app.markdown)
+
+
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_tennis_is_the_default_tab_with_its_sidebar():
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_file(str(Path(dashboard.__file__)), default_timeout=60)
+    app.run()
+    assert not app.exception
+    assert app.sidebar.text_input(key="player")
 
 
 @pytest.mark.parametrize(

@@ -3734,7 +3734,7 @@ METHODOLOGY = ROOT / "docs" / "methodology.md"
 IMAGE_LINE = re.compile(r"^!\[(?P<alt>[^\]]*)\]\((?P<path>[^)]+)\)\s*$")
 
 ABOUT_INTRO = """
-# Tennis EV
+# Betting EV
 
 This project looks for **positive expected value (EV)** bets on tennis match winners.
 
@@ -3839,13 +3839,13 @@ def main() -> None:
     import streamlit as st
 
     if st.query_params.get("page") == ABOUT_PAGE:
-        st.set_page_config(page_title="About · Tennis EV", layout="centered")
+        st.set_page_config(page_title="About · Betting EV", layout="centered")
         # Cached so that the whole server, across tabs and reruns, starts one watcher.
         st.cache_resource(show_spinner=False)(start_browser_watch)()
         render_about(st)
         return
 
-    st.set_page_config(page_title="Tennis EV", layout="wide")
+    st.set_page_config(page_title="Betting EV", layout="wide")
     st.html(
         NO_STALE_FADE
         + TABLE_STYLE
@@ -3859,6 +3859,26 @@ def main() -> None:
     # Cached so that the whole server, across tabs and reruns, starts one watcher.
     st.cache_resource(show_spinner=False)(start_browser_watch)()
 
+    # One tab per sport at the top of the page (user, 20 Nov 2026). Each has its own
+    # URL path and its own sidebar; tennis stays the default at "/".
+    pages = [
+        st.Page(lambda: render_tennis(st), title="Tennis", icon=":material/sports_tennis:",
+                url_path="tennis", default=True),
+        st.Page(lambda: render_basketball(st), title="Basketball",
+                icon=":material/sports_basketball:", url_path="basketball"),
+    ]
+    st.navigation(pages, position="top").run()
+
+
+def render_basketball(st) -> None:
+    """Placeholder until the NBA view is designed; nba_collect.py already logs prices."""
+    st.info(
+        "Basketball is coming. NBA prices are already being collected "
+        "(scripts/nba_collect.py); this tab will show them once it is designed."
+    )
+
+
+def render_tennis(st) -> None:
     state = st.session_state
     # The widgets take their defaults from Session State, so reset_settings can put
     # them back; giving a widget a default as well would make Streamlit warn.
