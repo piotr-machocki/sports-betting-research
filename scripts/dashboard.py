@@ -1788,11 +1788,13 @@ def lifetime_stats(lifetimes: list[dict]) -> dict:
         "lasts_seen": middle["seen"] if middle else None,
         "lasts_ended": len(ended),
         "lasts_open": len(lifetimes) - len(ended),
-        # Within the median rounded to a minute, as it is shown.
+        # Within the median as it is shown (minutes_text's rounding).
         "lasts_within": (
-            sum(minutes <= round(lasts) + 0.5 for minutes in ended) / len(ended) if ended else None
+            sum(minutes <= shown_minutes(lasts) + 0.05 for minutes in ended) / len(ended) if ended else None
         ),
-        "lasts_spacing": round(statistics.median(gaps)) if gaps else None,
+        # Median time from a flag to the next look at it: a run, or a recheck about
+        # 2 minutes after the alert (2.5 min after the Pinnacle snapshot).
+        "lasts_spacing": shown_minutes(statistics.median(gaps)) if gaps else None,
         "gone_next": sum(checked) / len(checked) if checked else None,
         "gone_checked": len(checked),
     }
@@ -2703,14 +2705,16 @@ def lifetime_text(stats: dict) -> str:
 
 def lifetime_help(stats: dict) -> str:
     """The Lasts tile's tip, shown on hover or a tap: how many were gone within the
-    shown time, and how often they were checked."""
+    shown time, and how long after the flag they were looked at again (the next run,
+    or a recheck about 2 minutes after the alert; user, 20 Nov 2026: "after", not
+    "every")."""
     within, lasts = stats.get("lasts_within"), stats.get("lasts")
 
     if within is None or lasts is None:
         return "No signal has ended yet"
 
     spacing = stats.get("lasts_spacing")
-    checked = f", checked every {spacing} min" if spacing else ""
+    checked = f", checked again {minutes_text(spacing)} after the odds were read" if spacing else ""
     open_text = (
         f" {stats['lasts_open']} still bettable at the start are left out."
         if stats.get("lasts_open")
@@ -2737,11 +2741,20 @@ def tip_tile(label: str, value: str, tip: str, value_class: str = "", end: bool 
     )
 
 
+def shown_minutes(minutes: float) -> float:
+    """Minutes as minutes_text shows them: tenths under 10 min, so a recheck 2.5 min
+    after the snapshot does not read as 3."""
+    return round(minutes, 1) if minutes < 9.95 else float(round(minutes))
+
+
 def minutes_text(minutes: float | None) -> str:
     if minutes is None:
         return "--"
 
-    return f"{minutes:.0f} min" if minutes < 90 else f"{minutes / 60:.1f} h"
+    if minutes >= 90:
+        return f"{minutes / 60:.1f} h"
+
+    return f"{shown_minutes(minutes):g} min"
 
 
 def overview_track(record: dict[str, dict], min_ev: float = 0.02) -> str:

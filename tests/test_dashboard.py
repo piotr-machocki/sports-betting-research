@@ -1565,6 +1565,7 @@ def test_track_card_shows_each_book_and_says_when_nothing_qualified():
     assert dashboard.lifetime_text({"lasts": 30.0, "lasts_seen": 15.0}) == "15–30 min"
     assert dashboard.lifetime_text({}) == "--"
     assert dashboard.minutes_text(29.6) == "30 min" and dashboard.minutes_text(150) == "2.5 h"
+    assert dashboard.minutes_text(2.52) == "2.5 min" and dashboard.minutes_text(5.01) == "5 min"
     assert "No match has reached this EV" in dashboard.track_card({}, 0.02)
 
     summary = dashboard.session_summary([row()], {"pinnacle": {"matches": 1}}, 0.02, NOW)
@@ -1842,7 +1843,7 @@ def test_lasts_prefers_five_minute_runs_once_there_are_enough():
     stats = dashboard.lifetime_stats(slow + fast)
     assert dashboard.lifetime_text(stats) == "< 5 min" and stats["lasts_ended"] == 10
     assert stats["lasts_within"] == 0.7
-    assert dashboard.lifetime_help(stats) == "70% of 10 signals were gone within 5 min, checked every 5 min."
+    assert dashboard.lifetime_help(stats) == "70% of 10 signals were gone within 5 min, checked again 5 min after the odds were read."
     assert dashboard.lifetime_help({}) == "No signal has ended yet"
 
     # An even count: the upper middle signal, not a mean of two (Superbet, 15 Nov 2026).
@@ -1863,7 +1864,7 @@ def test_lasts_tile_shows_its_share_on_hover_or_tap():
     page = dashboard.track_card({"Betclic": stats}, 0.02)
 
     assert '<div class="overview-tile has-tip end" tabindex="0"><div class="value">&lt; 15 min</div>' in page
-    assert '<div class="tip">67% of 3 signals were gone within 15 min, checked every 15 min.</div>' in page
+    assert '<div class="tip">67% of 3 signals were gone within 15 min, checked again 15 min after the odds were read.</div>' in page
 
 
 def test_donut_keeps_one_match_visible():
