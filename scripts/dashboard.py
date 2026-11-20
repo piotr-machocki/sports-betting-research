@@ -49,6 +49,7 @@ from live_monitor import (  # noqa: E402
     FINISHED_STATES,
     SESSIONS_DIR,
     STUCK_AFTER_SECONDS,
+    SUPERBET_RAW_DIR,
     fmt_age,
     fmt_gap,
     format_ev,
@@ -2053,6 +2054,13 @@ def capture_gap(latest: list[dict], column: str) -> float | None:
     return statistics.median(gaps) if gaps else None
 
 
+def superbet_collected(info: dict) -> bool:
+    """Whether this session has a Superbet CSV: rows get Superbet prices only once
+    Betclic has queued them, so before that the rows alone cannot tell."""
+    session_id = info.get("session_id")
+    return bool(session_id) and (SUPERBET_RAW_DIR / f"superbet_{session_id}.csv").exists()
+
+
 def session_summary(rows: list[dict], info: dict, min_ev: float, now: datetime) -> dict:
     """Header values for a session. The odds age always runs up to now, even for
     a finished session: how old the prices are is what matters when betting."""
@@ -2083,6 +2091,9 @@ def session_summary(rows: list[dict], info: dict, min_ev: float, now: datetime) 
     superbet_found = next(
         (value for label, _, value in items if label == "Superbet found"), None
     )
+    if superbet_found is None and superbet_collected(info):
+        # Superbet is read before Betclic, so its bar shows from the start of a run.
+        superbet_found = "0"
 
     for label, _, value in items:
         if label in ("Unique matches", "Not found", "Superbet found"):

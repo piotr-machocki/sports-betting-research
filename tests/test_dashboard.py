@@ -256,6 +256,21 @@ def test_found_on_superbet_sits_under_found_on_betclic():
     assert "Found on Superbet" not in without
 
 
+def test_found_on_superbet_shows_zero_before_the_first_row(tmp_path, monkeypatch):
+    monkeypatch.setattr(dashboard, "SUPERBET_RAW_DIR", tmp_path)
+    info = {"session_id": "session_x", "status": "running", "pinnacle": {"matches": 110}}
+
+    assert "Found on Superbet" not in dict(
+        dashboard.session_summary([], info, 0.02, NOW)["stats"]
+    )
+
+    (tmp_path / "superbet_session_x.csv").write_text("status\n", encoding="utf-8")
+    stats = dict(dashboard.session_summary([], info, 0.02, NOW)["stats"])
+
+    assert stats["Found on Superbet"] == "0 / 110"
+    assert "Superbet" in dashboard.overview_meters(stats, 110)
+
+
 def overview_text(rows, info=None, min_ev=0.02) -> str:
     summary = dashboard.session_summary(rows, info or {}, min_ev, NOW)
 
