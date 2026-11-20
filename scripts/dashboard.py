@@ -3793,7 +3793,7 @@ Pinnacle's price is fair, and it is measured against results as they come in
   for a single). Its average CLV and share above 0 say first whether the edge is real;
   win rate, ROI and units need many more bets, and while ROI's 95% range covers 0 the
   results show nothing either way.
-* **Prediction markets** (a subtab of Tennis; Bookmakers is the page described above): Polymarket and Kalshi prices next to Pinnacle's for the
+* **Prediction markets** (a subtab of Tennis; Sharp vs soft, Pinnacle against the bookmakers, is the page described above): Polymarket and Kalshi prices next to Pinnacle's for the
   newest run, for comparison only (no alerts, not in the Track record). A market's
   probability is the middle of its bid and ask; a market whose spread is wider than
   the sidebar's limit is greyed out and its EV not trusted. **Agree** marks a side
@@ -3919,7 +3919,7 @@ def main() -> None:
                 st.page_link(each)
     if on_markets or page.title == tennis.title:
         with st.container(horizontal=True, key="tennis_tabs", gap="small"):
-            st.page_link(tennis, label="Bookmakers", icon=":material/storefront:")
+            st.page_link(tennis, label="Sharp vs soft", icon=":material/compare_arrows:")
             st.page_link(markets)
     page.run()
 
