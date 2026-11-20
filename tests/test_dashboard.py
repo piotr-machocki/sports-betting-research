@@ -670,6 +670,9 @@ def test_pinnacle_box_tip_names_pinnfeed_its_quota_and_delay(tmp_path, monkeypat
 
     source = dashboard.pinnacle_source(info)
     assert source == {"tennis_today": 2, "used": 43, "limit": 1000, "delay": 30}
+    finished = {"session_id": info["session_id"], "status": "finished",
+                "performance": {"pinnacle": info["pinnacle"]}}
+    assert dashboard.pinnacle_source(finished) == source
 
     flow = dashboard.overview_flow({"pinnacle_age": 60.0, "pinnacle_captured": 1.0,
                                     "pinnacle_source": source})

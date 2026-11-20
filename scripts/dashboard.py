@@ -2085,8 +2085,9 @@ def tennis_requests_today(session_id: str) -> int | None:
 def pinnacle_source(info: dict) -> dict | None:
     """Where the run's Pinnacle odds came from and the PinnFeed quota after its
     request (user, 20 Nov 2026), for the tip on the Pinnacle box. None for runs
-    before PinnFeed or without a status."""
-    pinnacle = info.get("pinnacle") or {}
+    before PinnFeed or without a status. A finished run keeps the block under
+    "performance", a running one at the top level."""
+    pinnacle = pinnacle_info(info)
 
     if pinnacle.get("source") != "pinnfeed":
         return None
