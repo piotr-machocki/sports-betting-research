@@ -164,6 +164,12 @@ TEXT_COLUMNS = {
 # Files behind the CLV and Result columns: Pinnacle's snapshots (every match, so
 # also prices after the last session) and the finished matches.
 PINNACLE_RAW_DIR = ROOT / "data" / "pinnacle" / "raw"
+# PinnFeed's free plan (since 20 Nov 2026), for the Pinnacle box's tip when a run's
+# status lacks the reply's headers: 1,000 requests a day for the account, prices
+# 30 s behind Pinnacle. Tennis makes one request per 5-minute run, 288 a day.
+PINNFEED_DAILY_LIMIT = 1000
+PINNFEED_DELAY_SECONDS = 30
+TENNIS_RUNS_PER_DAY = 288
 MATCH_RESULTS_FILES = [
     ROOT / "data" / "match_results" / "results.csv",
     ROOT / "data" / "match_results" / "state.json",
@@ -455,6 +461,7 @@ OVERVIEW_STYLE = """<style>
     background-color: rgba(128, 128, 128, 0.08);
 }
 .flow-name { font-weight: 600; }
+.flow-node .tip { white-space: normal; text-align: left; font-weight: 400; }
 .flow-sub { font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 600; }
 .flow-arrow {
     flex: none;
@@ -2061,6 +2068,63 @@ def superbet_collected(info: dict) -> bool:
     return bool(session_id) and (SUPERBET_RAW_DIR / f"superbet_{session_id}.csv").exists()
 
 
+def tennis_requests_today(session_id: str) -> int | None:
+    """Pinnacle tennis requests on this run's day (UTC on the VM) up to and including
+    this run, counted from the snapshots: each one is one successful request."""
+    match = re.match(r"session_(\d{8})_", session_id or "")
+
+    if not match:
+        return None
+
+    own = f"pinnacle_{session_id}.csv"
+    return sum(
+        path.name <= own for path in PINNACLE_RAW_DIR.glob(f"pinnacle_session_{match[1]}_*.csv")
+    )
+
+
+def pinnacle_source(info: dict) -> dict | None:
+    """Where the run's Pinnacle odds came from and the PinnFeed quota after its
+    request (user, 20 Nov 2026), for the tip on the Pinnacle box. None for runs
+    before PinnFeed or without a status."""
+    pinnacle = info.get("pinnacle") or {}
+
+    if pinnacle.get("source") != "pinnfeed":
+        return None
+
+    def number(key: str) -> int | None:
+        try:
+            return int(pinnacle.get(key))
+        except (TypeError, ValueError):
+            return None
+
+    limit = number("quota_limit") or PINNFEED_DAILY_LIMIT
+    remaining = number("quota_remaining")
+
+    return {
+        "tennis_today": tennis_requests_today(info.get("session_id", "")),
+        "used": limit - remaining if remaining is not None else None,
+        "limit": limit,
+        "delay": number("delay_seconds") or PINNFEED_DELAY_SECONDS,
+    }
+
+
+def pinnacle_tip(source: dict) -> str:
+    lines = ["Pinnacle odds from PinnFeed (pinnfeed.io), free plan"]
+
+    if source.get("tennis_today") is not None:
+        lines.append(
+            f"Tennis today: {source['tennis_today']} of {TENNIS_RUNS_PER_DAY} requests (UTC day)"
+        )
+    if source.get("used") is not None:
+        lines.append(
+            f"Account: {source['used']:,} of {source['limit']:,} free a day used (tennis + NBA)"
+        )
+    lines.append(
+        f"PinnFeed sends the odds {source['delay']} s late, so they are that much older than shown"
+    )
+    return "<br>".join(html.escape(line) for line in lines)
+
+
 def session_summary(rows: list[dict], info: dict, min_ev: float, now: datetime) -> dict:
     """Header values for a session. The odds age always runs up to now, even for
     a finished session: how old the prices are is what matters when betting."""
@@ -2138,6 +2202,7 @@ def session_summary(rows: list[dict], info: dict, min_ev: float, now: datetime) 
         "total": total,
         "betclic_gap": capture_gap(latest, "betclic_captured_at"),
         "superbet_gap": capture_gap(latest, "superbet_captured_at"),
+        "pinnacle_source": pinnacle_source(info),
     }
 
 
@@ -2809,11 +2874,20 @@ def overview_flow(summary: dict, books: list[str] = BOOKS) -> str:
             f' data-stale-after="{STALE_MINUTES * 60:g}">{pinnacle_age_text(age)}</span> ago</span>'
         )
 
-    # The card's title says the age is here ("Data flow and age"), so no tip.
-    steps = [
-        '<div class="flow-node">'
-        f'<div class="flow-name">Pinnacle</div><div class="flow-sub">{age_html}</div></div>'
-    ]
+    # The tip names the source, its quota and its delay (user, 20 Nov 2026).
+    source = summary.get("pinnacle_source")
+
+    if source:
+        steps = [
+            '<div class="flow-node has-tip" tabindex="0">'
+            f'<div class="flow-name label">Pinnacle</div><div class="flow-sub">{age_html}</div>'
+            f'<div class="tip">{pinnacle_tip(source)}</div></div>'
+        ]
+    else:
+        steps = [
+            '<div class="flow-node">'
+            f'<div class="flow-name">Pinnacle</div><div class="flow-sub">{age_html}</div></div>'
+        ]
     gaps = [(summary.get(f"{book.lower()}_gap"), book) for book in BOOKS if book in books]
     gaps.sort(key=lambda pair: (pair[0] is None, pair[0] or 0))
     before = 0.0

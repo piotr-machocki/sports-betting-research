@@ -238,6 +238,8 @@ def main() -> dict[str, Any]:
         "matches": len(matches),
         "api_seconds": fetch_seconds,
         "quota_remaining": quota.get("remaining") or None,
+        "quota_limit": quota.get("limit") or None,
+        "delay_seconds": quota.get("delay_seconds") or None,
         "excluded": {r: rejected[r] for r in EXCLUDED_REASONS if rejected[r]},
         "invalid": {r: rejected[r] for r in INVALID_REASONS if rejected[r]},
     }

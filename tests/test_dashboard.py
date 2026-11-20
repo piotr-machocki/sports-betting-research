@@ -648,11 +648,46 @@ def test_flow_shows_the_gap_in_minutes_past_a_minute():
     assert "+1m05s Betclic" in overview_text(rows)
 
 
-def test_flow_card_title_names_the_age_so_the_pinnacle_box_has_no_tip():
+def test_pinnacle_box_has_no_tip_without_a_pinnfeed_source():
     flow = dashboard.overview_flow({"pinnacle_age": 60.0, "pinnacle_captured": 1.0, "betclic_gap": 5.0})
     assert '<div class="flow-node"><div class="flow-name">Pinnacle</div>' in flow
     assert "has-tip" not in flow and "Pinnacle data age" not in flow
     assert "Data flow and age" in overview_text([row()])
+
+
+def test_pinnacle_box_tip_names_pinnfeed_its_quota_and_delay(tmp_path, monkeypatch):
+    monkeypatch.setattr(dashboard, "PINNACLE_RAW_DIR", tmp_path)
+    for name in ("pinnacle_session_20261119_235502_aaaaaa.csv",  # the day before
+                 "pinnacle_session_20261120_000002_bbbbbb.csv",
+                 "pinnacle_session_20261120_125502_f402f8.csv",
+                 "pinnacle_session_20261120_130002_cccccc.csv"):  # after this run
+        (tmp_path / name).write_text("", encoding="utf-8")
+    info = {
+        "session_id": "session_20261120_125502_f402f8",
+        "pinnacle": {"source": "pinnfeed", "quota_remaining": "957", "quota_limit": "1000",
+                     "delay_seconds": "30"},
+    }
+
+    source = dashboard.pinnacle_source(info)
+    assert source == {"tennis_today": 2, "used": 43, "limit": 1000, "delay": 30}
+
+    flow = dashboard.overview_flow({"pinnacle_age": 60.0, "pinnacle_captured": 1.0,
+                                    "pinnacle_source": source})
+    assert '<div class="flow-node has-tip" tabindex="0">' in flow
+    assert "PinnFeed (pinnfeed.io)" in flow
+    assert "Tennis today: 2 of 288 requests" in flow
+    assert "Account: 43 of 1,000 free a day used" in flow
+    assert "30 s late" in flow
+
+
+def test_pinnacle_source_falls_back_to_the_free_plan_and_skips_older_runs():
+    assert dashboard.pinnacle_source({"pinnacle": {"source": "pinnapi"}}) is None
+    assert dashboard.pinnacle_source({}) is None
+
+    source = dashboard.pinnacle_source({"session_id": "x", "pinnacle": {"source": "pinnfeed"}})
+    assert source == {"tennis_today": None, "used": None, "limit": 1000, "delay": 30}
+    tip = dashboard.pinnacle_tip(source)
+    assert "Tennis today" not in tip and "Account" not in tip and "30 s late" in tip
 
 
 def test_flow_arrows_give_the_total_since_pinnacle_on_hover():

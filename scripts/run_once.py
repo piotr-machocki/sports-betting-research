@@ -152,6 +152,8 @@ def build_pinnacle_info(
         "matches": stats.get("matches"),
         "source": stats.get("source"),
         "quota_remaining": stats.get("quota_remaining"),
+        "quota_limit": stats.get("quota_limit"),
+        "delay_seconds": stats.get("delay_seconds"),
         "excluded": stats.get("excluded"),
         "invalid": stats.get("invalid"),
         "completed_at": completed_at,
