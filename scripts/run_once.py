@@ -981,9 +981,6 @@ def main() -> None:
     if not args.no_superbet:
         collect_superbet(session_id, pinnacle_snapshot)
 
-    if not args.no_markets:
-        collect_markets(session_id)
-
     worker = None
     monitor = None
     session_status = "finished"
@@ -1185,6 +1182,11 @@ def main() -> None:
 
         if session_status != "interrupted":
             build_ako(session_id, send=not args.no_notify)
+
+        # After Betclic and the alerts (20 Nov 2026): run before Betclic it delayed
+        # Betclic's prices by 2-12 s, and these are only kept for comparison.
+        if not args.no_markets and session_status != "interrupted":
+            collect_markets(session_id)
 
         if not args.no_results and session_status != "interrupted":
             collect_signal_results(session_id, args.min_ev)

@@ -28,8 +28,9 @@ TOURNAMENT_STOPWORDS = {
     # qualifying
     "qualifiers", "qualification", "qualifying", "qual",
     "kwalifikacje", "kwalifikacja",
-    # misc
-    "tennis", "tenis", "turniej", "final", "finals", "games", "the",
+    # misc ("final" is a round; "finals" is not here: it names a tournament,
+    # e.g. "ATP Finals" = Betclic's "Finały Nitto ATP", see "finaly" below)
+    "tennis", "tenis", "turniej", "final", "games", "the",
 }
 
 # Polish exonym (Betclic) -> English / local name (Pinnacle).
@@ -64,6 +65,9 @@ CITY_ALIASES = {
     "lwow": "lviv", "moskwa": "moscow", "edynburg": "edinburgh",
     # --- Americas ---
     "nowy": "new", "jork": "york", "meksyk": "mexico",
+    # --- season finals (20 Nov 2026: "Finały Nitto ATP" matched nothing, so every
+    # run paid a full feed scan for ATP Finals) ---
+    "finaly": "finals",
     # --- added automatically: tournaments found under another name ---
     "trnawa": "trnava",
 }
