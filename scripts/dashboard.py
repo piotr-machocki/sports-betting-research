@@ -3835,6 +3835,24 @@ def render_about(st) -> None:
             st.caption(f"Missing figure: {value}")
 
 
+# The sport tabs: larger than Streamlit's page links, with a line under the row.
+SPORT_TABS_STYLE = """<style>
+.st-key-sport_tabs {
+    padding-bottom: 0.6rem;
+    margin-bottom: 0.4rem;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+}
+.st-key-sport_tabs a {
+    padding: 0.45rem 1.1rem !important;
+}
+.st-key-sport_tabs a p,
+.st-key-sport_tabs a span {
+    font-size: 1.15rem !important;
+    font-weight: 600;
+}
+</style>"""
+
+
 def main() -> None:
     import streamlit as st
 
@@ -3859,15 +3877,22 @@ def main() -> None:
     # Cached so that the whole server, across tabs and reruns, starts one watcher.
     st.cache_resource(show_spinner=False)(start_browser_watch)()
 
-    # One tab per sport at the top of the page (user, 20 Nov 2026). Each has its own
-    # URL path and its own sidebar; tennis stays the default at "/".
+    # One tab per sport (user, 20 Nov 2026). Each has its own URL path and its own
+    # sidebar; tennis stays the default at "/". Streamlit's own top navigation sits in
+    # the fixed, see-through header, so the page scrolled under it: the tabs are page
+    # links at the top of the content instead, and scroll away with it.
     pages = [
         st.Page(lambda: render_tennis(st), title="Tennis", icon=":material/sports_tennis:",
                 url_path="tennis", default=True),
         st.Page(lambda: render_basketball(st), title="Basketball",
                 icon=":material/sports_basketball:", url_path="basketball"),
     ]
-    st.navigation(pages, position="top").run()
+    page = st.navigation(pages, position="hidden")
+    st.html(SPORT_TABS_STYLE)
+    with st.container(horizontal=True, key="sport_tabs", gap="small"):
+        for each in pages:
+            st.page_link(each)
+    page.run()
 
 
 def render_basketball(st) -> None:
