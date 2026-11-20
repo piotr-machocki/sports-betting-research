@@ -595,6 +595,10 @@ OVERVIEW_STYLE = """<style>
     background: #333;
 }
 .has-tip:hover .tip, .has-tip:focus .tip { display: block; }
+/* The tip stays open while the mouse crosses the gap to it, so its text can be
+   selected and copied (user, 20 Nov 2026). */
+.has-tip .tip { cursor: text; user-select: text; }
+.has-tip .tip::before { content: ""; position: absolute; left: 0; right: 0; top: -6px; height: 6px; }
 /* Dotted and grey (user, 15 Nov 2026): a hint that a tap explains it, quieter than the text. */
 .has-tip .label {
     text-decoration: underline dotted;
@@ -2110,19 +2114,14 @@ def pinnacle_source(info: dict) -> dict | None:
 
 
 def pinnacle_tip(source: dict) -> str:
-    lines = ["Pinnacle odds from PinnFeed (pinnfeed.io), free plan"]
+    """Short lines, one fact each (user, 20 Nov 2026)."""
+    lines = ["Source: PinnFeed (free plan)"]
 
     if source.get("tennis_today") is not None:
-        lines.append(
-            f"Tennis today: {source['tennis_today']} of {TENNIS_RUNS_PER_DAY} requests (UTC day)"
-        )
+        lines.append(f"Tennis today: {source['tennis_today']} / {TENNIS_RUNS_PER_DAY}")
     if source.get("used") is not None:
-        lines.append(
-            f"Account: {source['used']:,} of {source['limit']:,} free a day used (tennis + NBA)"
-        )
-    lines.append(
-        f"PinnFeed sends the odds {source['delay']} s late, so they are that much older than shown"
-    )
+        lines.append(f"Account today: {source['used']:,} / {source['limit']:,}")
+    lines.append(f"Delay: {source['delay']} s")
     return "<br>".join(html.escape(line) for line in lines)
 
 
