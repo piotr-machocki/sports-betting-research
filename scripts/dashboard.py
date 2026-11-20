@@ -3081,10 +3081,11 @@ def overview_html(
             card("EV status", f'<div class="donut-pair">{"".join(donuts)}</div>', "wide")
         )
 
+    # Data flow left, under the coverage bars, and Signals right (user, 20 Nov 2026).
     results = [
+        card("Data flow and age", overview_checks(summary, stats, books), "wide"),
         # "Signals" as the heading over the tiles, or as None's own label.
         card("Signals" if signal_tiles(stats, books) else "", overview_positive(stats, books), "wide"),
-        card("Data flow and age", overview_checks(summary, stats, books), "wide"),
     ]
 
     return (
