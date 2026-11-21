@@ -370,7 +370,8 @@ def compare_session(
 
 def market_stats(matches: list[dict], min_ev: float) -> dict:
     """Coverage, agreement with Pinnacle and EV counts per source, over prematch
-    matches only ("matches"; started ones are counted apart).
+    matches only ("matches"; started ones are counted apart). "books" counts the
+    prematch matches each book prices on at least one side (`book_prices`).
 
     gap = market probability - Pinnacle's, for player 1, tight markets only."""
     prematch = [match for match in matches if not match["started"]]
@@ -378,6 +379,13 @@ def market_stats(matches: list[dict], min_ev: float) -> dict:
         "matches": len(prematch),
         "started": len(matches) - len(prematch),
         "sources": {},
+        "books": {
+            book: sum(
+                any(book in book_prices(match["row"], side) for side in (1, 2))
+                for match in prematch
+            )
+            for book in ("Betclic", "Superbet")
+        },
     }
 
     for source in SOURCES:

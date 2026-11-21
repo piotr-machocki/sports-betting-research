@@ -213,29 +213,37 @@ def tile(label: str, value: str, help_text: str, style: str = "") -> str:
 
 
 def meters(stats: dict) -> str:
+    """Coverage of the matches on Pinnacle's prematch list: each book that priced it,
+    then each market (dark = tight spread). Pinnacle itself is the 100% and has no bar."""
     total = stats["matches"]
-    cells = [
-        "<div>Pinnacle</div>"
-        '<div class="overview-meter"><div style="width: 100%; background-color: #2a78d6">'
-        f'</div></div><div class="count">{total}</div>'
-    ]
+
+    def share(count: int) -> float:
+        return min(100.0, 100 * count / total) if total else 0
+
+    cells = []
+    for book, count in stats.get("books", {}).items():
+        cells.append(
+            f"<div>{book}</div>"
+            f'<div class="overview-meter" title="{count} of {total} matches priced on {book}">'
+            f'<div style="width: {share(count):.1f}%; background-color: #2a78d6"></div></div>'
+            f'<div class="count">{count}</div>'
+        )
     for source in SOURCES:
         part = stats["sources"][source]
-        width = min(100.0, 100 * part["matched"] / stats["matches"]) if stats["matches"] else 0
-        tight = min(100.0, 100 * part["tight"] / stats["matches"]) if stats["matches"] else 0
         cells.append(
             f"<div>{SOURCE_LABELS[source]}</div>"
-            f'<div class="overview-meter" title="{part["matched"]} of {stats["matches"]} '
+            f'<div class="overview-meter" title="{part["matched"]} of {total} '
             f'matches on {SOURCE_LABELS[source]}, {part["tight"]} with a tight spread" '
             'style="position: relative">'
-            f'<div style="position: absolute; width: {width:.1f}%; '
+            f'<div style="position: absolute; width: {share(part["matched"]):.1f}%; '
             'background-color: rgba(42, 120, 214, 0.45)"></div>'
-            f'<div style="position: absolute; width: {tight:.1f}%; background-color: #2a78d6">'
-            f'</div></div><div class="count">{part["matched"]} ({part["tight"]} tight)</div>'
+            f'<div style="position: absolute; width: {share(part["tight"]):.1f}%; '
+            'background-color: #2a78d6"></div></div>'
+            f'<div class="count">{part["matched"]} ({part["tight"]} tight)</div>'
         )
     note = (
-        f'<div class="overview-note">Dark: spread within the limit. '
-        f'{stats["started"]} started, not compared.</div>'
+        f'<div class="overview-note">Of {total} prematch matches on Pinnacle&#39;s list. '
+        f'Markets dark: spread within the limit. {stats["started"]} started, not compared.</div>'
     )
     return f'<div class="overview-meters">{"".join(cells)}</div>{note}'
 
@@ -300,7 +308,7 @@ def overview(stats: dict, min_ev: float) -> str:
 
     return (
         '<section class="overview"><div class="overview-cards">'
-        + card("Matches on a market", meters(stats))
+        + card("Matches found", meters(stats))
         + card("Agreement with Pinnacle", agreement_tiles(stats))
         + "</div><div class=\"overview-cards\">"
         + card("Signals (comparison only, nothing is sent)", signal_tiles(stats, min_ev))
