@@ -220,10 +220,18 @@ BOOK_COLOUR = "#2a78d6"
 
 def market_count(part: dict, total: int) -> str:
     """A market's count as "33 (3) / 38": matches found, the loose ones (spread over
-    the limit) greyed in brackets, then Pinnacle's prematch total."""
+    the limit) greyed in brackets with a tap/hover explanation, then Pinnacle's
+    prematch total."""
     loose = part["matched"] - part["tight"]
+    tip = (
+        f"{loose} of {part['matched']} with a spread wider than the limit: "
+        "greyed out in the table, EV not trusted."
+    )
+    # A tap (tabindex) or hover opens the tip; it opens leftwards from the right edge.
     return (
-        f'{part["matched"]} <span class="overview-note">({loose})</span> / {total}'
+        f'{part["matched"]} <span class="overview-note has-tip" tabindex="0">({loose})'
+        '<span class="tip" style="left: auto; right: 0; text-align: left">'
+        f"{html.escape(tip)}</span></span> / {total}"
     )
 
 

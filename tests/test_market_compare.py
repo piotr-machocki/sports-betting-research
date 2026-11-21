@@ -175,7 +175,9 @@ def test_coverage_card_lists_pinnacle_books_and_markets():
     stats["sources"]["kalshi"].update(matched=35, tight=32)
     stats["matches"] = 38
     card = dm.meters(stats)
-    assert '35 <span class="overview-note">(3)</span> / 38' in card
+    assert '35 <span class="overview-note has-tip" tabindex="0">(3)' in card
+    assert "3 of 35 with a spread wider than the limit" in card
+    assert "</span></span> / 38" in card
     assert "1 / 38" in card.split("<div>Betclic</div>")[1]
 
 
