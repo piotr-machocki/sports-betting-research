@@ -232,7 +232,7 @@ def loose_count(part: dict, label: str) -> str:
     )
     return (
         f'<div class="count has-tip end" tabindex="0">{matched}{extra}'
-        f'<div class="tip" style="text-align: left">{html.escape(tip)}</div></div>'
+        f'<div class="tip">{html.escape(tip)}</div></div>'
     )
 
 
