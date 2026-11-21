@@ -212,9 +212,15 @@ def tile(label: str, value: str, help_text: str, style: str = "") -> str:
     )
 
 
+# Bar colours by kind: sharp reference, prediction market, soft book.
+SHARP_COLOUR = "#e0a526"
+MARKET_COLOUR, MARKET_LIGHT = "#1f9d55", "rgba(31, 157, 85, 0.4)"
+BOOK_COLOUR = "#2a78d6"
+
+
 def meters(stats: dict) -> str:
-    """Coverage of the matches on Pinnacle's prematch list: Pinnacle (the 100%), each
-    book that priced it, then each market (dark = tight spread)."""
+    """Coverage of the matches on Pinnacle's prematch list: Pinnacle (the 100%, yellow),
+    each market (green, dark = tight spread), then each book that priced it (blue)."""
     total = stats["matches"]
 
     def share(count: int) -> float:
@@ -223,16 +229,9 @@ def meters(stats: dict) -> str:
     cells = [
         "<div>Pinnacle</div>"
         f'<div class="overview-meter" title="{total} prematch matches on Pinnacle&#39;s list">'
-        f'<div style="width: 100%; background-color: #2a78d6"></div></div>'
+        f'<div style="width: 100%; background-color: {SHARP_COLOUR}"></div></div>'
         f'<div class="count">{total}</div>'
     ]
-    for book, count in stats.get("books", {}).items():
-        cells.append(
-            f"<div>{book}</div>"
-            f'<div class="overview-meter" title="{count} of {total} matches priced on {book}">'
-            f'<div style="width: {share(count):.1f}%; background-color: #2a78d6"></div></div>'
-            f'<div class="count">{count}</div>'
-        )
     for source in SOURCES:
         part = stats["sources"][source]
         cells.append(
@@ -241,13 +240,22 @@ def meters(stats: dict) -> str:
             f'matches on {SOURCE_LABELS[source]}, {part["tight"]} with a tight spread" '
             'style="position: relative">'
             f'<div style="position: absolute; width: {share(part["matched"]):.1f}%; '
-            'background-color: rgba(42, 120, 214, 0.45)"></div>'
+            f'background-color: {MARKET_LIGHT}"></div>'
             f'<div style="position: absolute; width: {share(part["tight"]):.1f}%; '
-            'background-color: #2a78d6"></div></div>'
+            f'background-color: {MARKET_COLOUR}"></div></div>'
             f'<div class="count">{part["matched"]} ({part["tight"]} tight)</div>'
         )
+    for book, count in stats.get("books", {}).items():
+        cells.append(
+            f"<div>{book}</div>"
+            f'<div class="overview-meter" title="{count} of {total} matches priced on {book}">'
+            f'<div style="width: {share(count):.1f}%; background-color: {BOOK_COLOUR}"></div></div>'
+            f'<div class="count">{count}</div>'
+        )
     note = (
-        f'<div class="overview-note">Markets dark: spread within the limit. {stats["started"]} started, not compared.</div>'
+        '<div class="overview-note">Yellow: sharp book, green: prediction markets '
+        "(dark = spread within the limit), blue: soft books. "
+        f'{stats["started"]} started, not compared.</div>'
     )
     return f'<div class="overview-meters">{"".join(cells)}</div>{note}'
 
