@@ -218,6 +218,15 @@ MARKET_COLOUR, MARKET_LIGHT = "#1f9d55", "rgba(31, 157, 85, 0.4)"
 BOOK_COLOUR = "#2a78d6"
 
 
+def tight_share(part: dict) -> str:
+    """Greyed " 91% tight" after a market's count: the share of its matches with a
+    spread within the limit (the bar's bright part)."""
+    if not part["matched"]:
+        return ""
+    share = part["tight"] / part["matched"]
+    return f' <span class="overview-note">{share:.0%} tight</span>'
+
+
 def meters(stats: dict) -> str:
     """Coverage of the matches on Pinnacle's prematch list: Pinnacle (the 100%, yellow),
     each market (green, bright part = tight spread), then each book that priced it (blue)."""
@@ -243,7 +252,7 @@ def meters(stats: dict) -> str:
             f'background-color: {MARKET_LIGHT}"></div>'
             f'<div style="position: absolute; width: {share(part["tight"]):.1f}%; '
             f'background-color: {MARKET_COLOUR}"></div></div>'
-            f'<div class="count">{part["matched"]} ({part["tight"]} tight)</div>'
+            f'<div class="count">{part["matched"]}{tight_share(part)}</div>'
         )
     for book, count in stats.get("books", {}).items():
         cells.append(
