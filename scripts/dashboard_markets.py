@@ -218,13 +218,13 @@ MARKET_COLOUR, MARKET_LIGHT = "#1f9d55", "rgba(31, 157, 85, 0.4)"
 BOOK_COLOUR = "#2a78d6"
 
 
-def tight_share(part: dict) -> str:
-    """Greyed " 91% tight" after a market's count: the share of its matches with a
-    spread within the limit (the bar's bright part)."""
-    if not part["matched"]:
-        return ""
-    share = part["tight"] / part["matched"]
-    return f' <span class="overview-note">{share:.0%} tight</span>'
+def market_count(part: dict, total: int) -> str:
+    """A market's count as "33 (3) / 38": matches found, the loose ones (spread over
+    the limit) greyed in brackets, then Pinnacle's prematch total."""
+    loose = part["matched"] - part["tight"]
+    return (
+        f'{part["matched"]} <span class="overview-note">({loose})</span> / {total}'
+    )
 
 
 def meters(stats: dict) -> str:
@@ -252,18 +252,19 @@ def meters(stats: dict) -> str:
             f'background-color: {MARKET_LIGHT}"></div>'
             f'<div style="position: absolute; width: {share(part["tight"]):.1f}%; '
             f'background-color: {MARKET_COLOUR}"></div></div>'
-            f'<div class="count">{part["matched"]}{tight_share(part)}</div>'
+            f'<div class="count">{market_count(part, total)}</div>'
         )
     for book, count in stats.get("books", {}).items():
         cells.append(
             f"<div>{book}</div>"
             f'<div class="overview-meter" title="{count} of {total} matches priced on {book}">'
             f'<div style="width: {share(count):.1f}%; background-color: {BOOK_COLOUR}"></div></div>'
-            f'<div class="count">{count}</div>'
+            f'<div class="count">{count} / {total}</div>'
         )
     note = (
         '<div class="overview-note">Yellow: sharp book, green: prediction markets '
-        "(bright part = spread within the limit), blue: soft books. "
+        "(bright part = spread within the limit; in brackets, how many are not), "
+        "blue: soft books. "
         f'{stats["started"]} started, not compared.</div>'
     )
     return f'<div class="overview-meters">{"".join(cells)}</div>{note}'

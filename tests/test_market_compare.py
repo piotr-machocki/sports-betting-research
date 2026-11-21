@@ -173,7 +173,10 @@ def test_coverage_card_lists_pinnacle_books_and_markets():
     assert "1 prematch matches on Pinnacle&#39;s list" in card
     stats = mc.market_stats([match], 0.02)
     stats["sources"]["kalshi"].update(matched=35, tight=32)
-    assert '35 <span class="overview-note">91% tight</span>' in dm.meters(stats)
+    stats["matches"] = 38
+    card = dm.meters(stats)
+    assert '35 <span class="overview-note">(3)</span> / 38' in card
+    assert "1 / 38" in card.split("<div>Betclic</div>")[1]
 
 
 def test_superbet_price_is_shown_as_the_app_shows_it():
