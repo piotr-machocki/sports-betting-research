@@ -95,58 +95,37 @@ def test_market_states_read_the_saved_snapshot(tmp_path, monkeypatch):
 
 def run(hours_ago, now, **states):
     return {
-        "run_id": f"r{hours_ago}",
         "kind": "session",
         "started_at": (now - timedelta(hours=hours_ago)).isoformat(),
         "sources": {name: run_ledger.state(value) for name, value in states.items()},
     }
 
 
-def test_health_rates_count_only_runs_that_tried_a_source():
-    now = datetime(2026, 11, 20, 18, tzinfo=timezone.utc)
+def test_calendar_colours_each_day_by_the_share_of_runs_that_worked():
+    now = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
+    today = now.astimezone().date()
     runs = [
-        run(48, now, pinnacle="failed", superbet="skipped"),
-        run(3, now, pinnacle="ok", superbet="partial"),
-        run(2, now, pinnacle="ok", superbet="failed"),
-        {"kind": "skipped", "started_at": (now - timedelta(hours=1)).isoformat(), "sources": {}},
+        run(0, now, pinnacle="ok", superbet="partial"),     # worked
+        run(0.1, now, pinnacle="ok", superbet="skipped"),   # worked
+        run(0.2, now, pinnacle="ok", superbet="failed"),    # failed
+        {"kind": "skipped", "started_at": (now - timedelta(hours=0.3)).isoformat(), "sources": {}},
+        run(48, now, pinnacle="ok"),
     ]
-    stale = timedelta(minutes=20)
 
-    day = dashboard_runs.health(runs, ["pinnacle", "superbet"], now, "24 h", stale)
-    whole, pinnacle, superbet = (card["stats"] for card in day["cards"])
-    assert (whole["worked"], whole["tried"]) == (1, 3)
-    assert (pinnacle["worked"], pinnacle["tried"]) == (2, 2)
-    assert (superbet["worked"], superbet["tried"], superbet["partial"]) == (1, 2, 1)
-    assert (day["runs"], day["skipped"]) == (3, 1)
-    # A green card still names the newest failure ever.
-    assert day["cards"][1]["last_failure"][0] == now - timedelta(hours=48)
+    days = dashboard_runs.daily(runs)
+    assert days[today] == (2, 4)
+    assert days[(now - timedelta(hours=48)).astimezone().date()] == (1, 1)
 
-    week = dashboard_runs.health(runs, ["pinnacle", "superbet"], now, "7 days", stale)
-    assert (week["cards"][1]["stats"]["worked"], week["cards"][1]["stats"]["tried"]) == (2, 3)
-    assert week["longest_gap"] == timedelta(hours=45)
+    assert dashboard_runs.level(1, 1) == "g3"
+    assert dashboard_runs.level(19, 20) == "g2"
+    assert dashboard_runs.level(2, 4) == "y2"
+    assert dashboard_runs.level(1, 10) == "r2"
 
-    # 24 hourly buckets: the run 3 h ago worked, the one 2 h ago failed Superbet.
-    bars = day["cards"][2]["buckets"]
-    assert len(bars) == 24 and [b["tried"] for b in bars[-3:]] == [1, 1, 0]
-    assert [b["worked"] for b in bars[-3:-1]] == [1, 0]
-
-    # Latest attempts: Pinnacle worked 2 h ago (older than 20 min = no recent run).
-    assert day["cards"][1]["status"] == "stale"
-    fresh = dashboard_runs.health(runs, ["pinnacle"], now, "24 h", timedelta(hours=3))
-    assert fresh["cards"][1]["status"] == "ok"
-
-    page = dashboard_runs.sport_html("Tennis", fresh, dashboard_runs.TENNIS_LABELS, "24 h", now)
-    assert "Whole run" in page and "Pinnacle" in page and "health-bar bad" in page
-    assert "All sources working" in page and "skipped by cron" in page
-    assert "1 of 1 worked" in page
-
-
-def test_sport_pill_names_failing_sources():
-    now = datetime(2026, 11, 20, 18, tzinfo=timezone.utc)
-    runs = [run(0.05, now, pinnacle="failed", superbet="ok")]
-    result = dashboard_runs.health(runs, ["pinnacle", "superbet"], now, "24 h", timedelta(minutes=20))
-    page = dashboard_runs.sport_html("Tennis", result, dashboard_runs.TENNIS_LABELS, "24 h", now)
-    assert "Failing: Pinnacle" in page and "Failing</span>" in page
+    page = dashboard_runs.sport_html("Tennis", runs, today)
+    assert "5 runs in the last year" in page
+    assert "50.0% worked (2 of 4 runs)" in page and "100% worked (1 of 1 runs)" in page
+    assert 'class="cal-cell y2"' in page and ": no runs" in page
+    assert page.count('class="cal-cell') >= 7 * 52
 
 
 def test_nba_runs_map_errors_and_skips(tmp_path):
