@@ -220,7 +220,7 @@ BOOK_COLOUR = "#2a78d6"
 
 def meters(stats: dict) -> str:
     """Coverage of the matches on Pinnacle's prematch list: Pinnacle (the 100%, yellow),
-    each market (green, dark = tight spread), then each book that priced it (blue)."""
+    each market (green, bright part = tight spread), then each book that priced it (blue)."""
     total = stats["matches"]
 
     def share(count: int) -> float:
@@ -254,7 +254,7 @@ def meters(stats: dict) -> str:
         )
     note = (
         '<div class="overview-note">Yellow: sharp book, green: prediction markets '
-        "(dark = spread within the limit), blue: soft books. "
+        "(bright part = spread within the limit), blue: soft books. "
         f'{stats["started"]} started, not compared.</div>'
     )
     return f'<div class="overview-meters">{"".join(cells)}</div>{note}'
