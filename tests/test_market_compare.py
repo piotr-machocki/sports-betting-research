@@ -164,13 +164,13 @@ def test_dashboard_record_and_table():
     assert "Agreement with Pinnacle" in dm.overview(mc.market_stats([match], 0.02), 0.02)
 
 
-def test_coverage_card_lists_books_and_markets_but_no_pinnacle_bar():
+def test_coverage_card_lists_pinnacle_books_and_markets():
     (match,) = mc.compare_session([session_row()], [market()], max_spread=0.04)
     card = dm.meters(mc.market_stats([match], 0.02))
     labels = [part.split("</div>")[0] for part in card.split("<div>")[1:]]
-    assert labels == ["Betclic", "Superbet", "Polymarket", "Kalshi"]
+    assert labels == ["Pinnacle", "Betclic", "Superbet", "Polymarket", "Kalshi"]
     assert "1 of 1 matches priced on Betclic" in card
-    assert "Of 1 prematch matches on Pinnacle&#39;s list" in card
+    assert "1 prematch matches on Pinnacle&#39;s list" in card
 
 
 def test_superbet_price_is_shown_as_the_app_shows_it():

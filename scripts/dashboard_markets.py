@@ -213,14 +213,19 @@ def tile(label: str, value: str, help_text: str, style: str = "") -> str:
 
 
 def meters(stats: dict) -> str:
-    """Coverage of the matches on Pinnacle's prematch list: each book that priced it,
-    then each market (dark = tight spread). Pinnacle itself is the 100% and has no bar."""
+    """Coverage of the matches on Pinnacle's prematch list: Pinnacle (the 100%), each
+    book that priced it, then each market (dark = tight spread)."""
     total = stats["matches"]
 
     def share(count: int) -> float:
         return min(100.0, 100 * count / total) if total else 0
 
-    cells = []
+    cells = [
+        "<div>Pinnacle</div>"
+        f'<div class="overview-meter" title="{total} prematch matches on Pinnacle&#39;s list">'
+        f'<div style="width: 100%; background-color: #2a78d6"></div></div>'
+        f'<div class="count">{total}</div>'
+    ]
     for book, count in stats.get("books", {}).items():
         cells.append(
             f"<div>{book}</div>"
@@ -242,8 +247,7 @@ def meters(stats: dict) -> str:
             f'<div class="count">{part["matched"]} ({part["tight"]} tight)</div>'
         )
     note = (
-        f'<div class="overview-note">Of {total} prematch matches on Pinnacle&#39;s list. '
-        f'Markets dark: spread within the limit. {stats["started"]} started, not compared.</div>'
+        f'<div class="overview-note">Markets dark: spread within the limit. {stats["started"]} started, not compared.</div>'
     )
     return f'<div class="overview-meters">{"".join(cells)}</div>{note}'
 
