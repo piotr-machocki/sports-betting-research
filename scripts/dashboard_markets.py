@@ -214,31 +214,13 @@ def tile(label: str, value: str, help_text: str, style: str = "") -> str:
 
 # Bar colours by kind: sharp reference, prediction market, soft book.
 SHARP_COLOUR = "#e0a526"
-MARKET_COLOUR, MARKET_LIGHT = "#1f9d55", "rgba(31, 157, 85, 0.55)"
+MARKET_COLOUR, MARKET_LIGHT = "#1f9d55", "rgba(31, 157, 85, 0.4)"
 BOOK_COLOUR = "#2a78d6"
-
-
-def loose_count(part: dict, label: str) -> str:
-    """A market's count: matches found, then "N loose" in the bar's loose colour.
-    A tap (or hover) gives tight / found."""
-    matched, tight = part["matched"], part["tight"]
-    loose = matched - tight
-    extra = (
-        f' <span style="color: {MARKET_LIGHT}">· {loose} loose</span>' if loose else ""
-    )
-    tip = (
-        f"{tight}/{matched} tight on {label}: spread within the limit. "
-        f"{loose} loose: wider spread, greyed out in the table and not trusted."
-    )
-    return (
-        f'<div class="count has-tip end" tabindex="0">{matched}{extra}'
-        f'<div class="tip">{html.escape(tip)}</div></div>'
-    )
 
 
 def meters(stats: dict) -> str:
     """Coverage of the matches on Pinnacle's prematch list: Pinnacle (the 100%, yellow),
-    each market (green, faded = loose spread), then each book that priced it (blue)."""
+    each market (green, bright part = tight spread), then each book that priced it (blue)."""
     total = stats["matches"]
 
     def share(count: int) -> float:
@@ -261,7 +243,7 @@ def meters(stats: dict) -> str:
             f'background-color: {MARKET_LIGHT}"></div>'
             f'<div style="position: absolute; width: {share(part["tight"]):.1f}%; '
             f'background-color: {MARKET_COLOUR}"></div></div>'
-            + loose_count(part, SOURCE_LABELS[source])
+            f'<div class="count">{part["matched"]} ({part["tight"]} tight)</div>'
         )
     for book, count in stats.get("books", {}).items():
         cells.append(
@@ -272,7 +254,7 @@ def meters(stats: dict) -> str:
         )
     note = (
         '<div class="overview-note">Yellow: sharp book, green: prediction markets '
-        "(loose = spread over the limit, faded), blue: soft books. "
+        "(bright part = spread within the limit), blue: soft books. "
         f'{stats["started"]} started, not compared.</div>'
     )
     return f'<div class="overview-meters">{"".join(cells)}</div>{note}'
