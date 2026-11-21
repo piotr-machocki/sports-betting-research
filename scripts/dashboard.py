@@ -3880,6 +3880,24 @@ SPORT_TABS_STYLE = """<style>
 .st-key-tennis_tabs, .st-key-all_tabs { margin-bottom: 0.3rem; }
 .st-key-tennis_tabs a, .st-key-all_tabs a { padding: 0.25rem 0.8rem !important; }
 .st-key-tennis_tabs a p, .st-key-all_tabs a p { font-size: 0.95rem !important; }
+/* Phones: the three sport tabs stay on one row (user, 21 Nov 2026: Basketball wrapped
+   under Tennis), smaller, and scroll sideways rather than wrap if still too wide. */
+@media (max-width: 700px) {
+    .st-key-sport_tabs, .st-key-tennis_tabs, .st-key-all_tabs {
+        flex-wrap: nowrap !important;
+        overflow-x: auto;
+        scrollbar-width: none;
+        gap: 0.25rem !important;
+    }
+    .st-key-sport_tabs > div, .st-key-tennis_tabs > div, .st-key-all_tabs > div {
+        flex-shrink: 0;
+        width: auto !important;
+    }
+    .st-key-sport_tabs a { padding: 0.35rem 0.6rem !important; }
+    .st-key-sport_tabs a p,
+    .st-key-sport_tabs a span { font-size: 1rem !important; }
+    .st-key-tennis_tabs a, .st-key-all_tabs a { padding: 0.25rem 0.6rem !important; }
+}
 </style>"""
 
 
