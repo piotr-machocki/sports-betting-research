@@ -261,13 +261,7 @@ def meters(stats: dict) -> str:
             f'<div style="width: {share(count):.1f}%; background-color: {BOOK_COLOUR}"></div></div>'
             f'<div class="count">{count} / {total}</div>'
         )
-    note = (
-        '<div class="overview-note">Yellow: sharp book, green: prediction markets '
-        "(bright part = spread within the limit; in brackets, how many are not), "
-        "blue: soft books. "
-        f'{stats["started"]} started, not compared.</div>'
-    )
-    return f'<div class="overview-meters">{"".join(cells)}</div>{note}'
+    return f'<div class="overview-meters">{"".join(cells)}</div>'
 
 
 def agreement_tiles(stats: dict) -> str:
