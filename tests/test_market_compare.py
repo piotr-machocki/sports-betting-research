@@ -171,6 +171,13 @@ def test_coverage_card_lists_pinnacle_books_and_markets():
     assert labels == ["Pinnacle", "Polymarket", "Kalshi", "Betclic", "Superbet"]
     assert "1 of 1 matches priced on Betclic" in card
     assert "1 prematch matches on Pinnacle&#39;s list" in card
+    assert "loose" not in card.split("Polymarket")[1].split("Kalshi")[0]   # tight market
+
+    stats = mc.market_stats([match], 0.02)
+    stats["sources"]["kalshi"].update(matched=35, tight=32)
+    kalshi = dm.meters(stats).split("<div>Kalshi</div>")[1]
+    assert "35 <span" in kalshi and "· 3 loose</span>" in kalshi
+    assert "32/35 tight on Kalshi" in kalshi
 
 
 def test_superbet_price_is_shown_as_the_app_shows_it():
