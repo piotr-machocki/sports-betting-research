@@ -43,6 +43,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import live_monitor  # noqa: E402
+import run_ledger  # noqa: E402
 
 from results_store import BETCLIC_MIN_ODDS  # noqa: E402
 
@@ -62,6 +63,15 @@ RUN_LOG = ROOT / "data" / "logs" / "scheduled_run.log"
 FAIL_STREAK = 3  # failed runs in a row before an alert; one-off failures happen
 LOG_TAIL_BYTES = 64_000
 REASON_MAX_CHARS = 300
+# Names in the alert's per-source summary, in run_ledger.SOURCES order.
+SOURCE_NAMES = {
+    "pinnacle": "PinnFeed tennis",
+    "betclic": "Betclic",
+    "superbet": "Superbet",
+    "polymarket": "Polymarket",
+    "kalshi": "Kalshi",
+}
+LEDGER_SLACK_S = 5  # run_once.py stamps its record a moment after the cron script's start
 
 
 # ----------------------------------------------------------------- Telegram ---
@@ -436,6 +446,57 @@ def last_error_line(log_path: Path = RUN_LOG) -> str | None:
     return errors[-1] if errors else None
 
 
+def joined(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def sources_summary(record: dict) -> str | None:
+    """One line per kind of outcome from a run ledger record, e.g.
+    "PinnFeed tennis step failed: RuntimeError: No matches parsed." and
+    "Superbet, Betclic, Polymarket and Kalshi all succeeded." Skipped sources are left out."""
+    groups: dict[str, list[tuple[str, str]]] = {}
+
+    for key, info in (record.get("sources") or {}).items():
+        info = info if isinstance(info, dict) else {}
+        detail = str(info.get("detail") or "").split(". ")[0][:REASON_MAX_CHARS]
+        groups.setdefault(info.get("state") or "", []).append(
+            (SOURCE_NAMES.get(key, key), detail)
+        )
+
+    lines = []
+
+    for name, detail in groups.get("failed", []):
+        lines.append(f"{name} step failed" + (f": {detail}" if detail else "."))
+    for name, detail in groups.get("partial", []):
+        lines.append(f"{name} partly worked" + (f": {detail}" if detail else "."))
+
+    worked = [name for name, _ in groups.get("ok", [])]
+    if worked:
+        lines.append(f"{joined(worked)} {'all ' if len(worked) > 2 else ''}succeeded."
+                     if len(worked) > 1 else f"{worked[0]} succeeded.")
+
+    return "\n".join(lines) or None
+
+
+def run_sources(started: datetime, ledger: Path | None = None) -> str | None:
+    """The per-source summary of the run that started at `started`, or None when it
+    left no ledger record (it failed before that, e.g. a crash at start)."""
+    since = started.timestamp() - LEDGER_SLACK_S
+    found = None
+
+    # Newest first: the run's own record is the oldest one from its start on.
+    for record in reversed(run_ledger.read(ledger)):
+        moment = live_monitor.parse_timestamp(record.get("started_at"))
+        if moment is None:
+            continue
+        if moment.timestamp() < since:
+            break
+        if record.get("kind") != "skipped":
+            found = record
+
+    return sources_summary(found) if found else None
+
+
 def load_failures(path: Path = FAILURES_FILE) -> dict:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -461,10 +522,15 @@ def failure_message(state: dict, now: datetime) -> str:
         day = "" if first.date() == local.date() else first.strftime("%a %d %b ")
         since_text = f" since {day}{first:%H:%M}{label}"
 
+    details = (
+        f"Last run:\n{state['sources']}" if state.get("sources")
+        else f"Last error: {state.get('reason') or 'unknown'}"
+    )
+
     return (
         f"⚠️ Collector: {state['streak']} runs failed in a row{since_text} "
         f"(last at {local:%H:%M}{label}).\n"
-        f"Last error: {state.get('reason') or 'unknown'}\n"
+        f"{details}\n"
         "No more alerts about this today."
     )
 
@@ -474,6 +540,7 @@ def notify_run(
     now: datetime | None = None,
     path: Path = FAILURES_FILE,
     send_alert=None,
+    sources: str | None = None,
 ) -> dict:
     """Counts failed runs in a row and alerts once FAIL_STREAK is reached, at most
     once per local day. A finished run resets the count. A failed send is not
@@ -483,7 +550,7 @@ def notify_run(
 
     if failure is None:
         if state.get("streak"):
-            state.update(streak=0, first_failed_at=None, reason=None)
+            state.update(streak=0, first_failed_at=None, reason=None, sources=None)
             save_failures(state, path)
         return {"status": "ok", "streak": 0, "alerted": False}
 
@@ -491,6 +558,7 @@ def notify_run(
         state["first_failed_at"] = now.isoformat()
     state["streak"] = int(state.get("streak") or 0) + 1
     state["reason"] = failure
+    state["sources"] = sources
     today = to_local(now)[0].date().isoformat()
     alerted = False
     status = "counted"
@@ -545,7 +613,9 @@ def backup_failed(reason: str, now: datetime | None = None, send_alert=None) -> 
 def after_run(exit_code: int, started: datetime) -> None:
     """scheduled_run.sh's hook: prints one line, never raises."""
     try:
-        result = notify_run(run_failure(exit_code, started))
+        failure = run_failure(exit_code, started)
+        sources = run_sources(started) if failure else None
+        result = notify_run(failure, sources=sources)
     except Exception as exc:  # noqa: BLE001 - the cron script goes on either way
         print(f"WARNING: failed-run check failed: {type(exc).__name__}: {exc}", flush=True)
         return

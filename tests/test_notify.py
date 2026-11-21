@@ -1,5 +1,6 @@
 """scripts/notify.py: picking bets, the message and the sent memory. No network."""
 
+import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -247,3 +248,32 @@ def test_sent_memory_keeps_price_and_reads_old_entries(tmp_path, monkeypatch):
     later = datetime(2026, 11, 10, 12, tzinfo=timezone.utc)
     notify.save_sent(notify.load_sent(sent_path), later, sent_path)
     assert [alert["player"] for alert in notify.sent_alerts(sent_path)] == ["Bea Beta"]
+
+
+def test_alert_names_each_source_of_the_last_failed_run(tmp_path):
+    ledger = tmp_path / "tennis.jsonl"
+    record = {
+        "run_id": "books_20261121_193002_6ac572", "kind": "books",
+        "started_at": "2026-11-21T19:30:01.998Z", "status": "failed",
+        "sources": {
+            "pinnacle": {"state": "failed", "detail": "RuntimeError: No matches parsed. "
+                         "CSV not saved, inspect /home/x/latest.json"},
+            "betclic": {"state": "ok"}, "superbet": {"state": "ok"},
+            "polymarket": {"state": "ok"}, "kalshi": {"state": "ok"},
+        },
+    }
+    ledger.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    started = datetime(2026, 11, 21, 19, 30, 1, tzinfo=timezone.utc)
+
+    summary = notify.run_sources(started, ledger)
+    assert summary == (
+        "PinnFeed tennis step failed: RuntimeError: No matches parsed\n"
+        "Betclic, Superbet, Polymarket and Kalshi all succeeded."
+    )
+    assert notify.run_sources(datetime(2026, 11, 21, 19, 35, tzinfo=timezone.utc), ledger) is None
+
+    path = tmp_path / "failures.json"
+    sent = []
+    for hour in (10, 11, 12):
+        notify.notify_run("ERROR: x", at(hour), path, sent.append, sources=summary)
+    assert sent and f"Last run:\n{summary}" in sent[0] and "Last error" not in sent[0]
