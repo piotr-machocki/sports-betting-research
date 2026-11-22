@@ -62,10 +62,10 @@ MARKETS_STYLE = """<style>
 .markets-tiles + .markets-source { margin-top: 6px; }
 /* A phone gets the table too (sideways scroll): there are no cards for this tab. */
 @media (max-width: 700px) { table.matches.markets { display: table; } }
-/* Five boxes do not fit a phone: each keeps its text's width and the row wraps. */
-@media (max-width: 700px) {
-    .markets-flow .flow-node { flex: 1 0 auto; min-width: max-content; }
-}
+/* Five boxes do not fit the half-width card: each keeps its text's width and the
+   row wraps, an arrow staying with the box after it. */
+.markets-flow .flow-node { flex: 1 0 auto; min-width: max-content; }
+.markets-flow .flow-step { display: flex; flex: 1 0 auto; }
 </style>"""
 
 GREEN = "color: #1f9d55; background-color: rgba(31, 157, 85, 0.16)"

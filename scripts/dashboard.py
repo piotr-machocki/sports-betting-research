@@ -472,6 +472,8 @@ OVERVIEW_STYLE = """<style>
     border-radius: 6px;
     background-color: rgba(128, 128, 128, 0.08);
 }
+/* Only the Prediction markets tab lays steps out; here they are not there at all. */
+.flow-step { display: contents; }
 .flow-name { font-weight: 600; }
 .flow-node .tip { white-space: normal; text-align: left; font-weight: 400; }
 .flow-sub { font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 600; }
@@ -3037,9 +3039,11 @@ def flow_html(summary: dict, gaps: list[tuple[float | None, str]]) -> str:
             title = f"Median time from the Pinnacle capture to the {book} capture, per match: {gap_text(seconds)}"
             before = seconds
         steps.append(
+            # Arrow and box in one step, so a wrapping flow keeps them together.
+            '<div class="flow-step">'
             f'<div class="flow-arrow" title="{html.escape(title)}">'
             f'<span class="flow-gap">{label}</span><span class="flow-line"></span></div>'
-            f'<div class="flow-node"><div class="flow-name">{html.escape(book)}</div></div>'
+            f'<div class="flow-node"><div class="flow-name">{html.escape(book)}</div></div></div>'
         )
 
     return f'<div class="flow">{"".join(steps)}</div>'
