@@ -717,6 +717,23 @@ OVERVIEW_STYLE = """<style>
    (user, 22 Nov 2026: to see that the card was worked out again). */
 .toggle-status .spinner.brief { animation: spin 0.8s linear infinite, vanish 0.9s step-end forwards; }
 @keyframes vanish { to { width: 0; height: 0; border-width: 0; } }
+/* The browser's own spinner right after a click (TABLE_SCRIPT adds .busy). */
+.st-key-track_longshots.busy, .st-key-markets_longshots.busy {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.st-key-track_longshots.busy::after, .st-key-markets_longshots.busy::after {
+    content: "";
+    flex: none;
+    width: 18px;
+    height: 18px;
+    box-sizing: border-box;
+    border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+    border-top-color: #2a78d6;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
 </style>"""
 
 # Installed once. Streamlit runs a script before inserting the HTML sent with it, and
@@ -856,6 +873,30 @@ TABLE_SCRIPT = """<script>
 
         return seconds > staleAfter ? `${minutes} min` : `${minutes} min ${pad(seconds % 60)} s`;
     }
+
+    // Include long shots: a spinner beside the box the moment it is clicked (user, 22
+    // Nov 2026: on Sharp vs soft the server's own spinner came about 5 s later, after
+    // redrawing the page), until the server's spinner or tick arrives in the same row.
+    const LONGSHOT_BOXES = ".st-key-track_longshots, .st-key-markets_longshots";
+    const statusChange = row => {
+        const status = row && row.querySelector(".toggle-status");
+        return status ? String(status.dataset.change ?? "loading") : "none";
+    };
+    document.addEventListener("click", event => {
+        const box = event.target.closest && event.target.closest(LONGSHOT_BOXES);
+        if (!box) return;
+        const row = box.closest('[data-testid="stHorizontalBlock"]');
+        box.dataset.busySince = String(Date.now());
+        box.dataset.busyFrom = statusChange(row);
+        box.classList.add("busy");
+    }, true);
+    setInterval(() => {
+        document.querySelectorAll(".busy[data-busy-since]").forEach(box => {
+            const row = box.closest('[data-testid="stHorizontalBlock"]');
+            const old = Date.now() - Number(box.dataset.busySince) > 30000;
+            if (old || statusChange(row) !== box.dataset.busyFrom) box.classList.remove("busy");
+        });
+    }, 200);
 
     // Counts in the browser, because a server tick each second makes scrolling stutter
     // (see IDLE_REFRESH_SECONDS). Writing the text node does not wake the observer above.
