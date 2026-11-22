@@ -201,8 +201,10 @@ def test_flow_names_each_market_after_pinnacle():
     import dashboard
 
     rows = [
-        {"pinnacle_captured_at": "2026-11-22T13:10:00Z"},
-        {"pinnacle_captured_at": "2026-11-22T13:10:02Z"},
+        {"pinnacle_captured_at": "2026-11-22T13:10:00Z",
+         "superbet_captured_at": "2026-11-22T13:10:01Z", "betclic_captured_at": "2026-11-22T13:10:10Z"},
+        {"pinnacle_captured_at": "2026-11-22T13:10:02Z",
+         "superbet_captured_at": "2026-11-22T13:10:03Z", "betclic_captured_at": "2026-11-22T13:10:12Z"},
     ]
     snapshot = [
         {"source": "polymarket", "captured_at": "2026-11-22T13:11:01Z"},
@@ -212,14 +214,15 @@ def test_flow_names_each_market_after_pinnacle():
     summary, gaps = dm.flow_summary(rows, snapshot, now)
 
     assert summary["pinnacle_age"] == 120.0
-    assert gaps == [(60.0, "Polymarket"), (62.0, "Kalshi")]
+    assert gaps == [(10.0, "Betclic"), (1.0, "Superbet"), (60.0, "Polymarket"), (62.0, "Kalshi")]
     flow = dashboard.flow_html(summary, gaps)
-    assert flow.index("Polymarket") < flow.index("Kalshi")
-    assert "+1m00s" in flow
+    names = ["Superbet", "Betclic", "Polymarket", "Kalshi"]
+    assert sorted(names, key=flow.index) == names  # in the order the prices came
+    assert "+9.0 s" in flow and "+50.0 s" in flow
     assert "+2.0 s" in flow
 
     summary, gaps = dm.flow_summary(rows, snapshot[:1], now)
-    assert gaps[1] == (None, "Kalshi") and "No Kalshi prices" in dashboard.flow_html(summary, gaps)
+    assert gaps[3] == (None, "Kalshi") and "No Kalshi prices" in dashboard.flow_html(summary, gaps)
     assert "Data flow and age" in dm.overview(
         dm.market_stats([], 0.02), 0.02, flow=dashboard.flow_html(summary, gaps)
     )

@@ -337,16 +337,30 @@ def source_times(snapshot: list[dict]) -> dict[str, datetime]:
 
 def flow_summary(rows: list[dict], snapshot: list[dict], now: datetime) -> tuple[dict, list]:
     """The Tennis page's Data flow and age, for the markets (user, 22 Nov 2026): the
-    run's Pinnacle age, then each market's median time from a match's Pinnacle
-    capture to the market's. Files before 22 Nov 2026 give both markets one time."""
+    run's Pinnacle age, then the books and markets in the order their prices came,
+    each the median time from a match's Pinnacle capture to that source's. Files before 22 Nov 2026 give both markets one time."""
     pinnacle = [t for t in (parse_time(row.get("pinnacle_captured_at")) for row in rows) if t]
     summary: dict[str, Any] = {}
     if pinnacle:
         summary["pinnacle_age"] = (now - min(pinnacle)).total_seconds()
         summary["pinnacle_captured"] = min(pinnacle).timestamp()
 
-    times = source_times(snapshot)
     gaps = []
+    # The books first, per match from the session rows (as on the Tennis page)...
+    for book in ("Betclic", "Superbet"):
+        spans = [
+            (book_time - start).total_seconds()
+            for row in rows
+            for start, book_time in [(
+                parse_time(row.get("pinnacle_captured_at")),
+                parse_time(row.get(f"{book.lower()}_captured_at")),
+            )]
+            if start and book_time
+        ]
+        gaps.append((statistics.median(spans) if spans else None, book))
+
+    # ...then the markets, read once the run is over.
+    times = source_times(snapshot)
     for source in SOURCES:
         moment = times.get(source)
         seconds = (
