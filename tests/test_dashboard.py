@@ -2043,3 +2043,52 @@ def test_long_shots_can_be_left_out_of_the_first_flags():
     assert [f["Bet on"] for f in both] == ["Outsider", "Favourite"]
     without = dashboard.first_flags([longshot, normal], "Betclic", 0.02, {}, longshots=False)
     assert [f["Bet on"] for f in without] == ["Favourite"]
+
+
+def test_sightings_come_back_from_their_file_after_a_restart(monkeypatch, tmp_path):
+    import os
+    import time
+
+    import evaluate_ev
+    import match_results
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    old = raw / "pinnacle_old.csv"
+    old.write_text("x\n", encoding="utf-8")
+    past = time.time() - 60
+    os.utime(old, (past, past))
+    monkeypatch.setattr(dashboard, "PINNACLE_RAW_DIR", raw)
+    monkeypatch.setattr(match_results, "load_results", lambda: [])
+    monkeypatch.setattr(match_results, "index_results", lambda results: {})
+    monkeypatch.setattr(match_results, "read_covered_through", lambda: None)
+
+    read = []
+
+    def add_sightings(groups, paths):
+        read.extend(path.name for path in paths)
+        return set()
+
+    monkeypatch.setattr(evaluate_ev, "add_sightings", add_sightings)
+
+    cache_file = tmp_path / "sightings.pkl"
+    held = {("A", "B", "T"): [{"captured_at": "2026-11-22T10:00:00Z"}]}
+    dashboard.save_sightings_cache({"pinnacle_old.csv"}, held, cache_file)
+
+    # A restarted server: the file's snapshot is not read again, only a new one.
+    new = raw / "pinnacle_new.csv"
+    new.write_text("x\n", encoding="utf-8")
+    os.utime(new, (past, past))
+    sources = dashboard.load_outcome_sources({"cache_file": cache_file})
+
+    assert read == ["pinnacle_new.csv"]
+    assert sources["sightings"] == held
+    assert sources["sighting_files"] == {"pinnacle_old.csv", "pinnacle_new.csv"}
+    # Saved again with the new file (the last save was "now", so only after a while).
+    assert dashboard.load_sightings_cache(cache_file)["files"] == {"pinnacle_old.csv"}
+    sources["sightings_saved"] = 0
+    third = raw / "pinnacle_third.csv"
+    third.write_text("x\n", encoding="utf-8")
+    os.utime(third, (past, past))
+    dashboard.load_outcome_sources(sources)
+    assert len(dashboard.load_sightings_cache(cache_file)["files"]) == 3

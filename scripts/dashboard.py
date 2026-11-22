@@ -1234,6 +1234,27 @@ def outcome_signature() -> tuple:
 # next call (snapshots are written once and never changed).
 SNAPSHOT_SETTLE_SECONDS = 5
 SNAPSHOT_CHUNK = 200
+# The sightings, kept between server starts (user, 22 Nov 2026): 4342 snapshots took
+# 32 s to read on the VM (minutes right after a restart, with both Statistics cards
+# loading), the file 0.3 s (9 MB). A cache like track_flags.pkl: it lists the snapshot
+# files it holds, so only newer ones are read; saved at most every SIGHTINGS_SAVE_SECONDS.
+SIGHTINGS_CACHE_FILE = ROOT / "data" / "cache" / "sightings.pkl"
+SIGHTINGS_SAVE_SECONDS = 600
+
+
+def load_sightings_cache(path: Path) -> dict:
+    held = load_flag_cache(path)
+    if isinstance(held.get("files"), set) and isinstance(held.get("sightings"), dict):
+        return held
+    return {}
+
+
+def save_sightings_cache(files: set, sightings: dict, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_suffix(".tmp")
+    with open(partial, "wb") as handle:
+        pickle.dump({"files": files, "sightings": sightings}, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    os.replace(partial, path)
 
 
 def load_outcome_sources(cache: dict) -> dict:
@@ -1243,6 +1264,16 @@ def load_outcome_sources(cache: dict) -> dict:
     13.5 s for 1800 files on the VM, and a new one now comes every 5 minutes. The
     results are read again only when outcome_signature changes."""
     import evaluate_ev
+
+    # The server's shared cache names its file (outcomes_cache); a bare {} has none.
+    cache_file = cache.get("cache_file")
+
+    if "sightings" not in cache and cache_file is not None:
+        held = load_sightings_cache(cache_file)
+        if held:
+            cache["sighting_files"] = set(held["files"])
+            cache["sightings"] = held["sightings"]
+            cache["sightings_saved"] = time.time()
 
     known = cache.setdefault("sighting_files", set())
     settled = time.time() - SNAPSHOT_SETTLE_SECONDS
@@ -1276,6 +1307,15 @@ def load_outcome_sources(cache: dict) -> dict:
 
         known.update(path.name for path in new)
         cache["sightings"] = sightings
+
+        if cache_file is not None and new and (
+            time.time() - cache.get("sightings_saved", 0) >= SIGHTINGS_SAVE_SECONDS
+        ):
+            try:
+                save_sightings_cache(set(known), sightings, cache_file)
+                cache["sightings_saved"] = time.time()
+            except OSError:
+                pass  # only the next server start reads the snapshots again
 
     signature = outcome_signature()
 
@@ -1601,8 +1641,9 @@ def load_alerts() -> list[dict]:
 
 
 def outcomes_cache() -> dict:
-    """Held by st.cache_resource, so every tab and rerun shares one."""
-    return {}
+    """Held by st.cache_resource, so every tab and rerun shares one. It keeps its
+    sightings in SIGHTINGS_CACHE_FILE between server starts."""
+    return {"cache_file": SIGHTINGS_CACHE_FILE}
 
 
 def records_cache() -> dict:
