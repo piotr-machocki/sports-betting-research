@@ -405,9 +405,9 @@ def overview(
     return (
         '<section class="overview"><div class="overview-cards">'
         + card("Matches found", meters(stats, max_spread))
-        + card("Agreement with Pinnacle", agreement_tiles(stats))
-        + "</div><div class=\"overview-cards\">"
         + (card("Data flow and age", f'<div class="markets-flow">{flow}</div>') if flow else "")
+        + "</div><div class=\"overview-cards\">"
+        + card("Agreement with Pinnacle", agreement_tiles(stats))
         + card("Signals (comparison only, nothing is sent)", signal_tiles(stats, min_ev))
         + "</div></section>"
     )
