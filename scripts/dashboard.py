@@ -428,12 +428,13 @@ OVERVIEW_STYLE = """<style>
 .session-head { margin-bottom: 14px; }
 .session-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .session-title .overview-title { margin-bottom: 0; }
-/* The run's time right after the pill (user, 22 Nov 2026), no label. */
+/* The run's time after the pill, no label, white and at the line's right end so
+   the heading fills the width (user, 22 Nov 2026). */
 .session-time {
-    font-size: 15px;
+    margin-left: auto;
+    font-size: 16px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
-    color: color-mix(in srgb, currentColor 70%, transparent);
 }
 .session-status {
     font-size: 14px;
@@ -523,9 +524,9 @@ OVERVIEW_STYLE = """<style>
     .session-time .year { display: none; }
     /* Title, pill and time on one line down to 360 px (user, 22 Nov 2026). */
     .session-title { gap: 4px 8px; }
-    .session-title .overview-title { font-size: 17px; }
+    .session-title .overview-title { font-size: 18px; }
     .session-title .session-status { font-size: 13px; padding: 0 8px; gap: 5px; }
-    .session-time { font-size: 13px; }
+    .session-time { font-size: 15px; }
 }
 .fresh { color: #1f9d55; }
 .stale { color: #d64545; }
