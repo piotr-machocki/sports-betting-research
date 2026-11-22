@@ -3339,9 +3339,11 @@ def statistics_section(st: Any, key: str, help_key: str, card: str, loading: boo
     2026: out of the sidebar, easy to flip on a phone), a spinner beside it while the
     card is worked out again and a fading green tick once the new numbers are in."""
     pending = f"{key}_pending"
+    count = f"{key}_changes"
 
     def changed() -> None:
         st.session_state[pending] = True
+        st.session_state[count] = st.session_state.get(count, 0) + 1
 
     st.html('<div class="overview-title">Statistics (all runs)</div>')
 
@@ -3353,7 +3355,12 @@ def statistics_section(st: Any, key: str, help_key: str, card: str, loading: boo
             st.html('<div class="toggle-status"><span class="spinner"></span></div>')
         elif st.session_state.get(pending):
             st.session_state[pending] = False
-            st.html('<div class="toggle-status"><span class="toggle-tick">✓</span></div>')
+            # Numbered, so ticking back on sends a new element and its fade plays
+            # again; the same HTML twice would keep the old, already faded one.
+            st.html(
+                f'<div class="toggle-status" data-change="{st.session_state.get(count, 0)}">'
+                '<span class="toggle-tick">✓</span></div>'
+            )
 
     st.html(f'<div class="overview"><div class="overview-cards">{card}</div></div>')
 
