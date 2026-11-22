@@ -318,8 +318,8 @@ def market_track_card(dash: Any, record: dict | None, min_ev: float, error: str 
         expected, margin = stats["expected"], stats["roi_margin"]
         agree_share = stats["agree"] / stats["signals"] if stats["signals"] else None
         what = (
-            "the mean of Polymarket and Kalshi, both within the spread limit"
-            if reference == "Average" else f"{reference}, within the spread limit"
+            "Polymarket and against Kalshi at once (the lower EV counts), both within "
+            "the spread limit" if reference == "Both" else f"{reference}, within the spread limit"
         )
         tiles = [
             dash.tip_tile(

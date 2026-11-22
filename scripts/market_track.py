@@ -34,12 +34,14 @@ from market_compare import (
     read_snapshot,
 )
 
-AVERAGE = "Average"
+# Both markets at once (user, 22 Nov 2026; it replaced their average, which only
+# blended the two): a signal needs EV >= the minimum against each of them.
+BOTH = "Both"
 # Below this probability a signal is a long shot, which the sidebar can leave out:
 # markets overprice them, and a cent on a 5% price is already a fifth of it.
 LONGSHOT_BELOW = 0.15
-# Card rows in order: each market alone, then their mean where both are tight.
-REFERENCES = [SOURCE_LABELS[source] for source in SOURCES] + [AVERAGE]
+# Card rows in order: each market alone, then both agreeing.
+REFERENCES = [SOURCE_LABELS[source] for source in SOURCES] + [BOTH]
 
 
 def market_sessions(markets_dir: Path = MARKETS_DIR) -> dict[str, Path]:
@@ -113,16 +115,17 @@ def session_candidates(
 def reference_probability(candidate: dict, reference: str, max_spread: float) -> float | None:
     """The market's probability within the spread limit and not far from Pinnacle's
     (market_compare.MAX_PINNACLE_GAP: a new market's opening 50/50 is not a price);
-    Average needs every market trusted, so it never just repeats one of them."""
+    Both needs every market trusted and takes the lower probability, so its EV is
+    the smaller of the two and reaches the minimum only when both do."""
     tight = {
         name: chance
         for name, (chance, spread) in candidate["_markets"].items()
         if spread <= max_spread + 1e-9 and not far_from_pinnacle(chance, candidate["_pinnacle"])
     }
-    if reference == AVERAGE:
+    if reference == BOTH:
         if len(tight) < len(SOURCES):
             return None
-        return statistics.mean(tight.values())
+        return min(tight.values())
     return tight.get(reference)
 
 

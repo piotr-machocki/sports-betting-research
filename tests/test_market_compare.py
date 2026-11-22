@@ -296,8 +296,8 @@ def test_market_signals_are_judged_like_the_track_record(tmp_path, monkeypatch):
     assert stats["agree"] == 1  # Pinnacle: 2.30 x 0.458 - 1 = +5.3%
 
     wide = mt.market_record(dashboard, found, cache, sources, 0.02, 0.10, now)
-    assert list(wide) == ["Polymarket", "Kalshi", "Average"]
-    assert wide["Average"]["ev"] == pytest.approx(2.30 * (0.46 + 0.45) / 2 - 1)
+    assert list(wide) == ["Polymarket", "Kalshi", "Both"]
+    assert wide["Both"]["ev"] == pytest.approx(2.30 * 0.45 - 1)  # the lower of the two
 
     card = dm.market_track_card(dashboard, wide, 0.02, None)
     assert card.count('class="track-book"') == 3 and "Agree w/ Pinnacle" in card
