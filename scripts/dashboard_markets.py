@@ -166,7 +166,7 @@ def match_record(match: dict, min_ev: float) -> dict:
             chance = view["probability1"] if side == 1 else 1 - view["probability1"]
         record[label] = percent(chance) if view else ""
         record[f"_title {label}"] = quote_text(view, side) if view else "Not on this market"
-        record[f"_style {label}"] = "" if view and view["tight"] else GREY
+        record[f"_style {label}"] = "" if view and view["tight"] and not view["off"] else GREY
 
     record["EV Pinnacle"] = signed_percent(data["evs"]["pinnacle"])
     record["_style EV Pinnacle"] = ev_style(data["evs"]["pinnacle"], min_ev)
@@ -176,7 +176,13 @@ def match_record(match: dict, min_ev: float) -> dict:
         tight = source in trusted
         record[f"EV {label}"] = signed_percent(value) if value is not None else "--"
         record[f"_style EV {label}"] = ev_style(value, min_ev, tight)
-        if value is not None and not tight:
+        view = match["markets"].get(source)
+        if value is not None and view and view["off"]:
+            record[f"_title EV {label}"] = (
+                "Over 10 pp from Pinnacle: probably not a real price (e.g. a new market "
+                "still at its opening 50/50), not trusted"
+            )
+        elif value is not None and not tight:
             record[f"_title EV {label}"] = "Spread wider than the limit: not trusted"
 
     record["Agree"] = CHECK if agreement(match, side, min_ev) else ""
@@ -462,6 +468,12 @@ def render_markets(st, dash: Any = None) -> None:
             help="A market whose wider side's bid-ask spread is above this is shown in "
             "grey and its EV is not trusted: a thin market can sit on a stale quote.",
         ) / 100
+        longshots = st.checkbox(
+            "Include long shots", value=True, key="markets_longshots",
+            help="In Statistics, count signals whose market probability is below 15% "
+            "(odds above about 6.5). Markets tend to overprice outsiders, and a cent "
+            "on a 5% price is a fifth of it, so these can look like value that is not.",
+        )
         on_market = st.checkbox(
             "Only matches on a market", value=True, key="markets_only",
         )
@@ -477,7 +489,7 @@ def render_markets(st, dash: Any = None) -> None:
     )
 
     loader = st.cache_resource(show_spinner=False)(dash.market_loader)()
-    track_key = (min_ev, max_spread)
+    track_key = (min_ev, max_spread, longshots)
 
     @st.fragment(run_every=IDLE_REFRESH_SECONDS)
     def watch() -> None:

@@ -41,6 +41,11 @@ SOURCES = ("polymarket", "kalshi")
 SOURCE_LABELS = {"polymarket": "Polymarket", "kalshi": "Kalshi"}
 MAX_START_GAP_HOURS = 24
 DEFAULT_MAX_SPREAD = 0.04  # 4 cents on the wider side
+# A market price this far from Pinnacle's is taken as not a real price (user, 22 Nov
+# 2026): new Polymarket markets sit at their opening 50/50 with $1 traded (Agostini
+# 0.49 when Kalshi said 0.07 and Pinnacle 0.04). Of the other signals checked that
+# day, none was more than 9 pp away.
+MAX_PINNACLE_GAP = 0.10
 SUPERBET_TAX_FACTOR = 0.88
 
 
@@ -297,11 +302,13 @@ def compare_row(
     side the best book price and its EV against every reference. A started match
     keeps its prices but gets no EV."""
     found = {}
+    pinnacle1 = pinnacle_probability(row, 1)
     for source in SOURCES:
         hit = find_market(row, markets.get(source, []))
         if hit:
             view = market_view(*hit)
             view["tight"] = view["spread"] is not None and view["spread"] <= max_spread + 1e-9
+            view["off"] = far_from_pinnacle(view["probability1"], pinnacle1)
             found[source] = view
 
     started = has_started(row, found, captured_at)
@@ -323,14 +330,19 @@ def compare_row(
     return {"row": row, "markets": found, "sides": sides, "started": started}
 
 
+def far_from_pinnacle(chance: float | None, pinnacle: float | None) -> bool:
+    return chance is not None and pinnacle is not None and abs(chance - pinnacle) > MAX_PINNACLE_GAP
+
+
 def trusted_evs(match: dict, side: int) -> dict[str, float]:
-    """EVs against Pinnacle and against every tight market for one side."""
+    """EVs against Pinnacle and against every tight market for one side; a market
+    far from Pinnacle (MAX_PINNACLE_GAP) is not trusted either."""
     evs = match["sides"][side]["evs"]
     trusted = {}
     if evs["pinnacle"] is not None:
         trusted["pinnacle"] = evs["pinnacle"]
     for source, view in match["markets"].items():
-        if view["tight"] and evs[source] is not None:
+        if view["tight"] and not view.get("off") and evs[source] is not None:
             trusted[source] = evs[source]
     return trusted
 

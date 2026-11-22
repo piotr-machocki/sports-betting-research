@@ -2076,7 +2076,8 @@ MARKET_RESULTS_FILE = ROOT / "data" / "cache" / "market_results.pkl"
 
 
 class MarketTrackLoader(TrackLoader):
-    """TrackLoader for the markets' signals; a key is (minimum EV, maximum spread)."""
+    """TrackLoader for the markets' signals; a key is (minimum EV, maximum spread,
+    long shots included)."""
 
     def __init__(
         self,
@@ -2091,7 +2092,7 @@ class MarketTrackLoader(TrackLoader):
 
         return market_track.market_record(
             sys.modules[__name__], market_track.market_sessions(), self.cache, sources,
-            key[0], key[1], datetime.now(timezone.utc),
+            key[0], key[1], datetime.now(timezone.utc), key[2],
         )
 
 

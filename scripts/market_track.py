@@ -26,6 +26,7 @@ from typing import Any
 from live_monitor import SESSIONS_DIR, latest_per_match, read_session_rows
 from market_compare import (
     MARKETS_DIR,
+    far_from_pinnacle,
     SOURCE_LABELS,
     SOURCES,
     compare_session,
@@ -34,6 +35,9 @@ from market_compare import (
 )
 
 AVERAGE = "Average"
+# Below this probability a signal is a long shot, which the sidebar can leave out:
+# markets overprice them, and a cent on a 5% price is already a fifth of it.
+LONGSHOT_BELOW = 0.15
 # Card rows in order: each market alone, then their mean where both are tight.
 REFERENCES = [SOURCE_LABELS[source] for source in SOURCES] + [AVERAGE]
 
@@ -107,12 +111,13 @@ def session_candidates(
 
 
 def reference_probability(candidate: dict, reference: str, max_spread: float) -> float | None:
-    """The market's probability within the spread limit; Average needs every market
-    tight, so it never just repeats one of them."""
+    """The market's probability within the spread limit and not far from Pinnacle's
+    (market_compare.MAX_PINNACLE_GAP: a new market's opening 50/50 is not a price);
+    Average needs every market trusted, so it never just repeats one of them."""
     tight = {
         name: chance
         for name, (chance, spread) in candidate["_markets"].items()
-        if spread <= max_spread + 1e-9
+        if spread <= max_spread + 1e-9 and not far_from_pinnacle(chance, candidate["_pinnacle"])
     }
     if reference == AVERAGE:
         if len(tight) < len(SOURCES):
@@ -122,14 +127,18 @@ def reference_probability(candidate: dict, reference: str, max_spread: float) ->
 
 
 def flags_for(
-    candidates: list[dict], reference: str, min_ev: float, max_spread: float
+    candidates: list[dict],
+    reference: str,
+    min_ev: float,
+    max_spread: float,
+    longshots: bool = True,
 ) -> list[dict]:
     """Every candidate as a record with Best EV against this reference (None left
-    out) and whether Pinnacle agreed, oldest run first."""
+    out, and long shots unless longshots) and whether Pinnacle agreed, oldest run first."""
     out = []
     for candidate in candidates:
         chance = reference_probability(candidate, reference, max_spread)
-        if chance is None:
+        if chance is None or (not longshots and chance < LONGSHOT_BELOW):
             continue
         price = candidate["_price"]
         pinnacle = candidate["_pinnacle"]
@@ -149,6 +158,7 @@ def market_record(
     min_ev: float,
     max_spread: float,
     now: datetime,
+    longshots: bool = True,
 ) -> dict[str, dict]:
     """Each reference with at least one signal -> dashboard.track_stats plus the
     agreement with Pinnacle. dash is the dashboard module (its first_flags,
@@ -162,7 +172,8 @@ def market_record(
 
     for reference in REFERENCES:
         flags = dash.first_flags(
-            flags_for(candidates, reference, min_ev, max_spread), "", min_ev, sources["sightings"]
+            flags_for(candidates, reference, min_ev, max_spread, longshots),
+            "", min_ev, sources["sightings"],
         )
         if not flags:
             continue

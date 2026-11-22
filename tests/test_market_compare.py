@@ -303,3 +303,35 @@ def test_market_signals_are_judged_like_the_track_record(tmp_path, monkeypatch):
     assert card.count('class="track-book"') == 3 and "Agree w/ Pinnacle" in card
     assert "Loading" in dm.market_track_card(dashboard, None, 0.02, None)
     assert "No match has reached" in dm.market_track_card(dashboard, {}, 0.02, None)
+
+
+def test_a_market_far_from_pinnacle_is_not_trusted():
+    # A new Polymarket market at its opening 50/50 while Pinnacle says 30%: 20 pp
+    # away, so greyed and no signal, while Kalshi (32%) still counts.
+    row = session_row(probability1="0.30", probability2="0.70")
+    poly = market(bid1=0.49, ask1=0.51, bid2=0.49, ask2=0.51)
+    kalshi = market(source="kalshi", bid1=0.31, ask1=0.33, bid2=0.67, ask2=0.69)
+    (match,) = mc.compare_session([row], [poly, kalshi], max_spread=0.04)
+
+    assert match["markets"]["polymarket"]["off"] and not match["markets"]["kalshi"]["off"]
+    assert set(mc.trusted_evs(match, 1)) == {"pinnacle", "kalshi"}
+    record = dm.match_record(match, 0.02)
+    assert record["_style Polymarket"] == dm.GREY
+    assert "not a real price" in record.get("_title EV Polymarket", "")
+
+
+def test_long_shots_and_far_prices_in_the_statistics():
+    import market_track as mt
+
+    def candidate(chance, pinnacle, price):
+        return {"Bet on": "A", "Opponent": "B", "Tournament": "T", "_price": price,
+                "_pinnacle": pinnacle, "_markets": {"Polymarket": (chance, 0.01)}}
+
+    longshot = candidate(0.10, 0.06, 11.0)   # +10% against the market, a long shot
+    placeholder = candidate(0.49, 0.04, 7.5)  # 45 pp from Pinnacle: not a price
+    normal = candidate(0.50, 0.48, 2.10)
+
+    picked = mt.flags_for([longshot, placeholder, normal], "Polymarket", 0.02, 0.04)
+    assert [flag["_price"] for flag in picked] == [11.0, 2.10]
+    picked = mt.flags_for([longshot, normal], "Polymarket", 0.02, 0.04, longshots=False)
+    assert [flag["_price"] for flag in picked] == [2.10]
