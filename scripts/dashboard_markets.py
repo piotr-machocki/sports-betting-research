@@ -471,12 +471,17 @@ def render_markets(st, dash: Any = None) -> None:
     loader = st.cache_resource(show_spinner=False)(dash.market_loader)()
     longshots = dash.longshots_setting(st, "markets_longshots")
     track_key = (min_ev, max_spread, longshots)
+    record = loader.request_key(track_key, wait=dash.TRACK_WAIT_SECONDS)
+    track_loading = dash.toggle_loading(st, "markets_longshots", loader, track_key, record)
 
-    @st.fragment(run_every=IDLE_REFRESH_SECONDS)
+    # Every second while the Statistics card loads, so its tick comes quickly.
+    @st.fragment(run_every=1 if track_loading else IDLE_REFRESH_SECONDS)
     def watch() -> None:
         pair = newest_pair()
         # A new run, or the Statistics card has finished loading.
-        arrived = st.session_state.get("markets_track_loading") and loader.ready_key(track_key)
+        arrived = track_loading and not dash.toggle_loading(
+            st, "markets_longshots", loader, track_key, loader.results.get(track_key)
+        )
         if pair != st.session_state.get("markets_drawn") or arrived:
             st.rerun(scope="app")
 
@@ -507,9 +512,6 @@ def render_markets(st, dash: Any = None) -> None:
         [by_name["Polymarket"]],
         [by_name["Kalshi"]],
     ])
-    record = loader.request_key(track_key, wait=dash.TRACK_WAIT_SECONDS)
-    track_loading = record is None and loader.error is None
-    st.session_state["markets_track_loading"] = track_loading
     track = market_track_card(dash, record, min_ev, loader.error)
     # The Tennis page's heading (user, 22 Nov 2026): Last run overview with the run's
     # state and time; the Pinnacle age is in Data flow and age.

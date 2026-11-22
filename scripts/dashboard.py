@@ -709,9 +709,14 @@ OVERVIEW_STYLE = """<style>
     color: #1f9d55;
     font-weight: 700;
     font-size: 18px;
-    animation: tick-fade 3s ease-in forwards;
+    opacity: 0;
+    animation: tick-fade 3s ease-in 0.9s forwards;
 }
-@keyframes tick-fade { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes tick-fade { 0% { opacity: 0; } 5%, 60% { opacity: 1; } 100% { opacity: 0; } }
+/* Even when the new numbers come at once, the spinner shows for about a second first
+   (user, 22 Nov 2026: to see that the card was worked out again). */
+.toggle-status .spinner.brief { animation: spin 0.8s linear infinite, vanish 0.9s step-end forwards; }
+@keyframes vanish { to { width: 0; height: 0; border-width: 0; } }
 </style>"""
 
 # Installed once. Streamlit runs a script before inserting the HTML sent with it, and
@@ -2069,6 +2074,8 @@ class TrackLoader:
         self.error: str | None = None
         self.wanted: tuple | None = None
         self.finished: tuple | None = None
+        # When each choice was last worked out (time.time()), for done_since.
+        self.computed: dict[tuple, float] = {}
         self.thread: threading.Thread | None = None
         self.done = threading.Condition()
 
@@ -2097,6 +2104,12 @@ class TrackLoader:
     def ready_key(self, key: tuple) -> bool:
         with self.done:
             return key in self.results or self.error is not None
+
+    def done_since(self, key: tuple, since: float) -> bool:
+        """Whether this choice was worked out afresh after since (or failed), so a
+        tick after a click means new numbers, not the ones saved before."""
+        with self.done:
+            return self.computed.get(key, 0.0) >= since or self.error is not None
 
     def compute(self, key: tuple, sources: dict) -> dict:
         """The record for one choice; a subclass works out another card."""
@@ -2138,6 +2151,7 @@ class TrackLoader:
                 changed = record is not None and self.results.get(key) != record
                 if record is not None:
                     self.results[key] = record
+                    self.computed[key] = time.time()
                 self.error = error
                 self.finished = key
                 self.done.notify_all()
@@ -3334,6 +3348,28 @@ def longshots_setting(st: Any, key: str) -> bool:
     return bool(st.session_state.setdefault(key, True))
 
 
+# After a click the spinner waits at most this long for fresh numbers (another tab
+# asking for another choice could keep the loader busy elsewhere).
+TOGGLE_MAX_WAIT_SECONDS = 20
+
+
+def toggle_loading(
+    st: Any, key: str, loader: TrackLoader, track_key: tuple, record: dict | None
+) -> bool:
+    """Whether the Statistics card is loading: nothing to show yet, or the long-shot
+    box was clicked and the loader has not worked that choice out afresh since (user,
+    22 Nov 2026: saved numbers showed at once, so the spinner never showed and the
+    tick did not mean they had been recalculated)."""
+    if record is None and loader.error is None:
+        return True
+    if not st.session_state.get(f"{key}_pending"):
+        return False
+    since = st.session_state.get(f"{key}_since", 0.0)
+    if time.time() - since > TOGGLE_MAX_WAIT_SECONDS:
+        return False
+    return not loader.done_since(track_key, since)
+
+
 def statistics_section(st: Any, key: str, help_key: str, card: str, loading: bool) -> None:
     """Statistics (all runs) with Include long shots under its title (user, 22 Nov
     2026: out of the sidebar, easy to flip on a phone), a spinner beside it while the
@@ -3343,6 +3379,7 @@ def statistics_section(st: Any, key: str, help_key: str, card: str, loading: boo
 
     def changed() -> None:
         st.session_state[pending] = True
+        st.session_state[f"{key}_since"] = time.time()
         st.session_state[count] = st.session_state.get(count, 0) + 1
 
     st.html('<div class="overview-title">Statistics (all runs)</div>')
@@ -3359,7 +3396,7 @@ def statistics_section(st: Any, key: str, help_key: str, card: str, loading: boo
             # again; the same HTML twice would keep the old, already faded one.
             st.html(
                 f'<div class="toggle-status" data-change="{st.session_state.get(count, 0)}">'
-                '<span class="toggle-tick">✓</span></div>'
+                '<span class="spinner brief"></span><span class="toggle-tick">✓</span></div>'
             )
 
     st.html(f'<div class="overview"><div class="overview-cards">{card}</div></div>')
@@ -4411,7 +4448,8 @@ def render_tennis(st) -> None:
     loader = st.cache_resource(show_spinner=False)(track_loader)()
     longshots = longshots_setting(st, "track_longshots")
     record = loader.request(filters["min_ev"], books, wait=TRACK_WAIT_SECONDS, longshots=longshots)
-    track_loading = record is None and loader.error is None
+    track_key = (filters["min_ev"], tuple(books), longshots)
+    track_loading = toggle_loading(st, "track_longshots", loader, track_key, record)
     track = track_card(record, filters["min_ev"], books, loader.error)
 
     @st.fragment(run_every=REFRESH_SECONDS if running or track_loading else IDLE_REFRESH_SECONDS)
@@ -4424,7 +4462,9 @@ def render_tennis(st) -> None:
         fresh, signature = load_rows(st, newest_table) if newest_table else ([], None)
 
         still_running = bool(header_session) and is_running(header_session)
-        track_arrived = track_loading and loader.ready(filters["min_ev"], books, longshots)
+        track_arrived = track_loading and not toggle_loading(
+            st, "track_longshots", loader, track_key, loader.results.get(track_key)
+        )
 
         if signature != drawn or still_running != running or track_arrived:
             st.rerun(scope="app")

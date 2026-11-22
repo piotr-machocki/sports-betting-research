@@ -2092,3 +2092,28 @@ def test_sightings_come_back_from_their_file_after_a_restart(monkeypatch, tmp_pa
     os.utime(third, (past, past))
     dashboard.load_outcome_sources(sources)
     assert len(dashboard.load_sightings_cache(cache_file)["files"]) == 3
+
+
+def test_after_a_click_the_card_loads_until_fresh_numbers_are_in(monkeypatch):
+    import time
+    from types import SimpleNamespace
+
+    loader = dashboard.TrackLoader({}, cache_file=None, results_file=None)
+    key = (0.02, ("Betclic",), False)
+    saved = {"Betclic": {"signals": 1}}
+    page = SimpleNamespace(session_state={})
+
+    # Nothing clicked: saved numbers are not loading; nothing at all is.
+    assert not dashboard.toggle_loading(page, "box", loader, key, saved)
+    assert dashboard.toggle_loading(page, "box", loader, key, None)
+
+    # Clicked: loading until the loader has worked this choice out after the click.
+    page.session_state.update({"box_pending": True, "box_since": time.time()})
+    assert dashboard.toggle_loading(page, "box", loader, key, saved)
+    loader.computed[key] = time.time() + 1
+    assert not dashboard.toggle_loading(page, "box", loader, key, saved)
+
+    # A loader busy elsewhere does not keep the spinner forever.
+    loader.computed.clear()
+    page.session_state["box_since"] = time.time() - dashboard.TOGGLE_MAX_WAIT_SECONDS - 1
+    assert not dashboard.toggle_loading(page, "box", loader, key, saved)
