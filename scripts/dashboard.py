@@ -410,9 +410,14 @@ SUPERBET_NO_EV_LABEL = "FOUND on Superbet but no EV"
 OVERVIEW_NOT_MATCHED = "rgba(128, 128, 128, 0.65)"
 OVERVIEW_WAITING = "rgba(128, 128, 128, 0.2)"
 OVERVIEW_STARTED = "rgba(160, 120, 200, 0.55)"
-STATUS_COLOURS = {"finished": "#1f9d55", "failed": "#d64545", "interrupted": OVERVIEW_NO_EV}
-# The pill's words (user, 22 Nov 2026): a finished run whose book failed is Failed too.
-STATUS_LABELS = {"finished": "Successful", "failed": "Failed"}
+STATUS_COLOURS = {
+    "finished": "#1f9d55", "failed": "#d64545", "interrupted": OVERVIEW_NO_EV,
+    "stale": OVERVIEW_NO_EV,
+}
+# The pill's words (user, 22 Nov 2026): a finished run whose book failed is Failed
+# too, and one whose Pinnacle prices are past STALE_MINUTES is Stale (no run since:
+# the Stale data Yes/No it replaced).
+STATUS_LABELS = {"finished": "Successful", "failed": "Failed", "stale": "Stale"}
 # Sources that make a finished run Failed; the markets are comparison only.
 PILL_SOURCES = {"betclic": "Betclic", "superbet": "Superbet"}
 OVERVIEW_STYLE = """<style>
@@ -839,19 +844,26 @@ TABLE_SCRIPT = """<script>
 
         if (age.firstChild.nodeValue !== shown) age.firstChild.nodeValue = shown;
 
-        // Green while fresh, red once stale: the age in Data flow and age, and the Stale data flag.
-        const flag = document.querySelector("[data-stale-flag]");
-        [age.parentElement, flag].forEach(element => {
-            if (!element || element.classList.contains("stale") === stale) return;
+        // Green while fresh, red once stale: the age in Data flow and age.
+        const element = age.parentElement;
+        if (element && element.classList.contains("stale") !== stale) {
             element.classList.toggle("stale", stale);
             element.classList.toggle("fresh", !stale);
-        });
-        if (flag && flag.firstChild && flag.firstChild.nodeValue !== (stale ? "Yes" : "No")) {
-            flag.firstChild.nodeValue = stale ? "Yes" : "No";
+        }
+
+        // A Successful run turns Stale once its Pinnacle odds pass the limit.
+        const pill = document.querySelector(".session-status[data-stale-at]");
+        if (pill && Date.now() / 1000 > Number(pill.dataset.staleAt) && pill.textContent !== "Stale") {
+            pill.textContent = "Stale";
+            pill.style.setProperty("--status", "STALE_COLOUR");
+            pill.title = "Pinnacle odds over STALE_LIMIT min old: no run since this one";
         }
     }, 250);
 })();
 </script>"""
+TABLE_SCRIPT = TABLE_SCRIPT.replace("STALE_COLOUR", OVERVIEW_NO_EV).replace(
+    "STALE_LIMIT", f"{STALE_MINUTES:g}"
+)
 
 
 # ------------------------------------------------------------------- data ---
@@ -3124,27 +3136,9 @@ def flow_steps(gaps: list[tuple[float | None, str]]) -> list[str]:
     return steps
 
 
-def stale_fact(summary: dict) -> str:
-    """Whether the Pinnacle odds are past STALE_MINUTES, under the heading beside the
-    run time (user, 15 Nov 2026): green No, red Yes, its limit in a tip shown on hover
-    or a tap. TABLE_SCRIPT flips it between server ticks, like the Data flow age."""
-    age = summary.get("pinnacle_age")
-    stale = age is not None and age > STALE_MINUTES * 60
-    value = "--" if age is None else "Yes" if stale else "No"
-    css = "" if age is None else (" stale" if stale else " fresh")
-    flag = "" if age is None else ' data-stale-flag=""'
-
-    return (
-        '<div class="session-stale has-tip" tabindex="0">'
-        f'<div class="value{css}"{flag}>{value}</div>'
-        '<div class="label">Stale data</div>'
-        f'<div class="tip">Pinnacle odds over {STALE_MINUTES:g} min old</div></div>'
-    )
-
-
 def overview_checks(summary: dict, stats: dict, books: list[str] = BOOKS) -> str:
     """The collection flow (overview_flow), then Errors in amber when there are any
-    (Stale data is in the session bar)."""
+    (staleness is the session bar's pill)."""
     flow = overview_flow(summary, books)
 
     # Only in the stats when it matters: see session_summary. They are Betclic's.
@@ -3156,6 +3150,39 @@ def overview_checks(summary: dict, stats: dict, books: list[str] = BOOKS) -> str
         flow += f'<div class="overview-tiles">{tile}</div>'
 
     return flow
+
+
+def later_failure(session_id: str) -> str | None:
+    """A run after this session that failed without one of its own (Pinnacle failed,
+    so run_once saved only the books): the pill says Failed, not the older run's state.
+    None when the newest run is this session or worked."""
+    import run_ledger
+
+    found = run_ledger.last() or {}
+    started = session_started(session_id)
+    at = parse_timestamp(found.get("started_at"))
+
+    if not found or found.get("run_id") == session_id or not at or not started:
+        return None
+    if at <= started or found.get("kind") not in ("books", "session"):
+        return None
+
+    pinnacle = (found.get("sources") or {}).get("pinnacle") or {}
+    if found.get("status") != "failed" and pinnacle.get("state") != "failed":
+        return None
+
+    detail = str(pinnacle.get("detail") or "").split(",")[0][:120]
+    when = at.astimezone().strftime("%H:%M")
+    return f"The run at {when} failed" + (f": Pinnacle {detail}" if detail else "")
+
+
+def pill_state(summary: dict, session_id: str) -> None:
+    """What the pill needs beyond session_summary: the failed books of a finished
+    run and a later failed run (both from the run ledger)."""
+    summary["failed_sources"] = (
+        failed_sources(session_id) if summary["status"] == "finished" else []
+    )
+    summary["later_failure"] = later_failure(session_id)
 
 
 def failed_sources(session_id: str) -> list[str]:
@@ -3173,17 +3200,29 @@ def failed_sources(session_id: str) -> list[str]:
 
 def session_bar_html(summary: dict, session_id: str) -> str:
     """The overview's heading (user, 15 Nov 2026): "Last run overview" with the run's
-    status on its right, then when it ran and whether its Pinnacle prices are stale,
-    each a value over a small grey label. Their age is in the Data flow card."""
+    state on its right, then when it ran. The pill (user, 22 Nov 2026): Failed (red)
+    when this run, one of its books or a later run failed; Stale (yellow) when it
+    worked but its Pinnacle prices are over STALE_MINUTES old, i.e. no run since;
+    else Successful (green), or Running. TABLE_SCRIPT turns Successful into Stale in
+    the browser once the time comes (data-stale-at)."""
     status = summary["status"]
     failed = summary.get("failed_sources") or []
-    tip = ""
+    later = summary.get("later_failure")
+    age = summary.get("pinnacle_age")
+    tip, stale_at = "", ""
 
-    if status == "finished" and failed:
+    if later:
+        status, tip = "failed", later
+    elif status == "finished" and failed:
         status = "failed"
         tip = f"{' and '.join(failed)} failed in this run"
     elif status == "failed":
         tip = "The run failed"
+    elif status == "finished" and age is not None and age > STALE_MINUTES * 60:
+        status = "stale"
+        tip = f"Pinnacle odds over {STALE_MINUTES:g} min old: no run since this one"
+    elif status == "finished" and summary.get("pinnacle_captured") is not None:
+        stale_at = f' data-stale-at="{summary["pinnacle_captured"] + STALE_MINUTES * 60:g}"'
 
     colour = STATUS_COLOURS.get(status, OVERVIEW_BLUE)
     label = STATUS_LABELS.get(status, status.capitalize())
@@ -3198,12 +3237,11 @@ def session_bar_html(summary: dict, session_id: str) -> str:
     return (
         '<div class="session-head"><div class="session-title">'
         '<span class="overview-title">Last run overview</span>'
-        f'<span class="session-status" style="--status: {colour}"{title}>'
+        f'<span class="session-status" style="--status: {colour}"{title}{stale_at}>'
         f"{html.escape(label)}</span></div>"
         '<div class="session-facts">'
         f'<div class="session-fact"><div class="value">{run_on}</div>'
-        '<div class="label">Last run on</div></div>'
-        f"{stale_fact(summary)}</div></div>"
+        '<div class="label">Last run on</div></div></div></div>'
     )
 
 
@@ -3419,7 +3457,7 @@ def render_header(
     now = datetime.now(timezone.utc)
     waiting = table_session != session_id
     summary = session_summary([] if waiting else rows, info, min_ev, now)
-    summary["failed_sources"] = failed_sources(session_id) if summary["status"] == "finished" else []
+    pill_state(summary, session_id)
 
     st.html(session_bar_html(summary, session_id))
 
@@ -3940,9 +3978,10 @@ Pinnacle's price is fair, and it is measured against results as they come in
   for the first alert's book, price and time (on phones, the card's Alerted line). A
   shaded Bet on name is the bet already placed, so a later, smaller EV there is not a
   new bet; a grey bell on the Opponent means the alert was on the other player.
-* **Last run overview**: the run's status beside the heading; under it when the run
-  started and whether its Pinnacle prices are stale (Stale data: Yes once they are over
-  15 minutes old).
+* **Last run overview**: the run's state beside the heading (Successful; Stale in yellow
+  once its Pinnacle prices are over 15 minutes old, meaning no run since; Failed in red
+  when the run, one of its bookmakers or a later run failed), and under it when the run
+  started.
 * **Data flow and age**: the order the prices were collected in. The Pinnacle box shows how
   long ago its prices were captured (green, red once over 15 minutes); each arrow, how
   much later the next bookmaker's prices were read.

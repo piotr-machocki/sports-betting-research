@@ -146,6 +146,26 @@ def read(ledger: Path | None = None) -> list[dict]:
     return sorted(out, key=lambda each: each.get("started_at") or "")
 
 
+def last(ledger: Path | None = None, tail_bytes: int = 8192) -> dict | None:
+    """The newest record, read from the end of the file."""
+    ledger = ledger or LEDGER_FILE
+    try:
+        with ledger.open("rb") as file:
+            file.seek(0, 2)
+            file.seek(max(0, file.tell() - tail_bytes))
+            text = file.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+
+    for line in reversed(text.splitlines()):
+        try:
+            return json.loads(line)
+        except ValueError:
+            continue
+
+    return None
+
+
 def find(run_id: str, ledger: Path | None = None, tail_bytes: int = 65536) -> dict | None:
     """One run's record, looked for only in the end of the file (a recent run is
     there; about 280 bytes a run), so it stays cheap to call every second."""

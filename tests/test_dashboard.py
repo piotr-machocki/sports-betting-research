@@ -780,19 +780,58 @@ def test_flow_gives_the_browser_the_capture_time_to_count_from():
     assert f'data-since="{captured}" data-stale-after="900"' in dashboard.overview_html(summary)
 
 
-def test_checks_card_says_whether_the_data_is_stale():
+def test_pill_turns_stale_once_the_pinnacle_odds_pass_the_limit():
     at_limit = "2026-11-03T17:45:00+00:00"
     past_limit = "2026-11-03T17:44:59+00:00"
 
-    def bar(captured_at):
+    def bar(captured_at, **extra):
         summary = dashboard.session_summary([row(pinnacle_captured_at=captured_at)], {}, 0.02, NOW)
-        summary["status"] = "finished"
+        summary.update(status="finished", **extra)
         return dashboard.session_bar_html(summary, "session_20261105_151211_abcdef")
 
-    # The value over its small grey label, like "Last run on".
-    assert '<div class="value fresh" data-stale-flag="">No</div><div class="label">Stale data</div>' in bar(at_limit)
-    assert '<div class="value stale" data-stale-flag="">Yes</div>' in bar(past_limit)
-    assert '<div class="tip">Pinnacle odds over 15 min old</div>' in bar(at_limit)
+    fresh = bar(at_limit)
+    assert ">Successful</span>" in fresh and "Stale data" not in fresh
+    # The browser turns it Stale at the limit, without waiting for the server.
+    limit = dashboard.parse_timestamp(at_limit).timestamp() + 900
+    assert f'data-stale-at="{limit:g}"' in fresh
+
+    stale = bar(past_limit)
+    assert ">Stale</span>" in stale and dashboard.STATUS_COLOURS["stale"] in stale
+    assert 'title="Pinnacle odds over 15 min old: no run since this one"' in stale
+    # A failure wins over staleness.
+    failed = bar(past_limit, failed_sources=["Betclic"])
+    assert ">Failed</span>" in failed and "data-stale-at" not in failed
+
+
+def test_a_later_run_that_failed_without_a_session_makes_the_pill_failed(monkeypatch, tmp_path):
+    import json
+
+    import run_ledger
+
+    ledger = tmp_path / "runs.jsonl"
+    monkeypatch.setattr(run_ledger, "LEDGER_FILE", ledger)
+    shown = "session_20261105_151211_abcdef"
+
+    def write(record):
+        ledger.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    write({"run_id": shown, "kind": "session", "started_at": "2026-11-05T15:12:11Z",
+           "status": "finished", "sources": {"pinnacle": {"state": "ok"}}})
+    assert dashboard.later_failure(shown) is None
+
+    write({"run_id": "books_20261105_151700_aaaaaa", "kind": "books",
+           "started_at": "2026-11-05T15:17:00Z", "status": "failed",
+           "sources": {"pinnacle": {"state": "failed", "detail": "RuntimeError: No matches parsed"}}})
+    text = dashboard.later_failure(shown)
+    assert text.startswith("The run at ") and text.endswith("failed: Pinnacle RuntimeError: No matches parsed")
+
+    # Skipped (lock held) is not a failure.
+    write({"run_id": "", "kind": "skipped", "started_at": "2026-11-05T15:17:00Z",
+           "status": "skipped", "sources": {}})
+    assert dashboard.later_failure(shown) is None
+
+    summary = {"status": "finished", "later_failure": "The run at 16:17 failed"}
+    assert ">Failed</span>" in dashboard.session_bar_html(summary, shown)
 
 
 def test_checks_card_without_prices():
@@ -800,8 +839,6 @@ def test_checks_card_without_prices():
 
     assert "Pinnacle -- -- Betclic -- Superbet" in text
     assert "Stale data" not in text
-    no_age = dashboard.stale_fact({"pinnacle_age": None})
-    assert ">--<" in no_age and "data-stale-flag" not in no_age
 
     # With no signal: no heading, "None" over a "Signals" label.
     page = dashboard.overview_html(dashboard.session_summary([], {}, 0.02, NOW))
@@ -1460,10 +1497,7 @@ def test_pinnacle_age_and_stale_flag_are_green_while_fresh_and_red_once_stale(
     summary = dashboard.session_summary([row(pinnacle_captured_at=captured_at)], {}, 0.02, NOW)
     summary["status"] = "finished"
     overview = dashboard.overview_html(summary)
-    bar = dashboard.session_bar_html(summary, "session_20261105_151211_abcdef")
-
     assert f'class="flow-age {freshness}"' in overview
-    assert f'class="value {freshness}" data-stale-flag=""' in bar
 
 
 def test_calendar_shows_each_days_session_count_in_its_month_only():

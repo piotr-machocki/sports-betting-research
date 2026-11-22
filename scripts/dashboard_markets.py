@@ -516,11 +516,9 @@ def render_markets(st, dash: Any = None) -> None:
     st.session_state["markets_track_loading"] = record is None and loader.error is None
     track = market_track_card(dash, record, min_ev, loader.error)
     # The Tennis page's heading (user, 22 Nov 2026): Last run overview with the run's
-    # status, its time and Stale data; the Pinnacle age is in Data flow and age.
+    # state and time; the Pinnacle age is in Data flow and age.
     summary["status"] = str(info.get("status", "running")).lower()
-    summary["failed_sources"] = (
-        dash.failed_sources(session_id) if summary["status"] == "finished" else []
-    )
+    dash.pill_state(summary, session_id)
 
     st.html(
         dash.session_bar_html(summary, session_id)
