@@ -327,13 +327,15 @@ def test_failed_sources_come_from_the_run_ledger(monkeypatch, tmp_path):
 def test_session_bar_shows_the_status_and_run_time():
     bar = session_bar()
 
-    # "Last run overview" with the status pill on its right, then the facts.
+    # "Last run overview", the status pill, then the run's time on the same line.
     assert '<span class="overview-title">Last run overview</span><span class="session-status"' in bar
-    assert ">Successful</span>" in bar
-    assert '<div class="label">Last run on</div>' in bar
+    assert ">Successful</span>" in bar and "Last run on</div>" not in bar
     started = dashboard.session_started("session_20261105_151211_abcdef")
     # The year has its own span, so phones can hide it.
-    assert f'<span class="year">{started:%Y-}</span>{started:%m-%d %H:%M}' in bar
+    assert (
+        '</span><span class="session-time" title="Last run on">'
+        f'<span class="year">{started:%Y-}</span>{started:%m-%d %H:%M}</span>'
+    ) in bar
 
 
 @pytest.mark.parametrize(

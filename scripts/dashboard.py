@@ -425,20 +425,15 @@ OVERVIEW_STYLE = """<style>
    its right, then its facts as values over small grey labels. */
 /* Equal space over and under the facts (user, 16 Nov 2026): 16 px each, the gap
    Streamlit leaves between this and the overview below. */
-.session-head { margin-bottom: 0; }
+.session-head { margin-bottom: 14px; }
 .session-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .session-title .overview-title { margin-bottom: 0; }
-.session-facts { display: flex; flex-wrap: wrap; gap: 4px 28px; margin-top: 16px; }
-.session-facts .value {
-    font-size: 17px;
-    line-height: 22px;
+/* The run's time right after the pill (user, 22 Nov 2026), no label. */
+.session-time {
+    font-size: 15px;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
-}
-.session-facts .label {
-    font-size: 12px;
-    line-height: 16px;
-    color: color-mix(in srgb, currentColor 60%, transparent);
+    color: color-mix(in srgb, currentColor 70%, transparent);
 }
 .session-status {
     font-size: 14px;
@@ -525,7 +520,7 @@ OVERVIEW_STYLE = """<style>
     .flow-gap { font-size: 13px; }
     .flow-arrow { min-width: 46px; padding: 0 4px; }
     .session-status { padding: 0 9px; }
-    .session-facts .year { display: none; }
+    .session-time .year { display: none; }
 }
 .fresh { color: #1f9d55; }
 .stale { color: #d64545; }
@@ -3238,10 +3233,8 @@ def session_bar_html(summary: dict, session_id: str) -> str:
         '<div class="session-head"><div class="session-title">'
         '<span class="overview-title">Last run overview</span>'
         f'<span class="session-status" style="--status: {colour}"{title}{stale_at}>'
-        f"{html.escape(label)}</span></div>"
-        '<div class="session-facts">'
-        f'<div class="session-fact"><div class="value">{run_on}</div>'
-        '<div class="label">Last run on</div></div></div></div>'
+        f"{html.escape(label)}</span>"
+        f'<span class="session-time" title="Last run on">{run_on}</span></div></div>'
     )
 
 
