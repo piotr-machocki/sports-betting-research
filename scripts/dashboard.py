@@ -531,6 +531,13 @@ OVERVIEW_STYLE = """<style>
     .session-title .session-status { font-size: 13px; padding: 0 8px; gap: 5px; }
     .session-time { font-size: 13px; padding: 0 8px; }
 }
+/* Narrow phones: a bit tighter still, so both tags stay beside the title. */
+@media (max-width: 390px) {
+    .session-title { gap: 4px 6px; }
+    .session-title .overview-title { font-size: 16px; }
+    .session-title .session-status, .session-time { padding: 0 6px; }
+    .session-title .session-status::before { display: none; }
+}
 .fresh { color: #1f9d55; }
 .stale { color: #d64545; }
 .overview { margin-bottom: 4px; }
