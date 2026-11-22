@@ -39,6 +39,7 @@ import gzip
 import json
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -270,15 +271,28 @@ def write_snapshot(rows: list[dict], run_id: str, now: datetime) -> Path:
     return path
 
 
+def fetch_all(now: datetime) -> dict[str, list[dict] | Exception]:
+    """Every source at once, one thread each (user, 22 Nov 2026): one after the other
+    the second was read about 2 s later (Polymarket 1.9 s, Kalshi 1.5 s on the VM).
+    A source that raises gives its exception, so the other is still kept."""
+    def one(fetch) -> list[dict] | Exception:
+        try:
+            return fetch(now)
+        except Exception as exc:  # noqa: BLE001 - one source never stops the other
+            return exc
+
+    with ThreadPoolExecutor(max_workers=len(SOURCES)) as pool:
+        futures = {name: pool.submit(one, fetch) for name, fetch in SOURCES.items()}
+        return {name: future.result() for name, future in futures.items()}
+
+
 def run(run_id: str, show: int = 0) -> int:
     now = utc_now()
     rows: list[dict] = []
 
-    for name, fetch in SOURCES.items():
-        try:
-            found = fetch(utc_now())  # each source's own capture time, for the flow
-        except Exception as exc:  # noqa: BLE001 - one source never stops the other
-            print(f"WARNING: {name} failed: {type(exc).__name__}: {exc}", flush=True)
+    for name, found in fetch_all(now).items():
+        if isinstance(found, Exception):
+            print(f"WARNING: {name} failed: {type(found).__name__}: {found}", flush=True)
             continue
         priced = sum(bool(row["ask1"] and row["ask2"]) for row in found)
         print(f"{name}: {len(found)} matches, {priced} with both asks", flush=True)

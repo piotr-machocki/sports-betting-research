@@ -192,3 +192,17 @@ def test_no_pinnacle_key_is_a_books_only_run_that_succeeds(monkeypatch, isolated
 
     assert isolated_run == [("feed", False)]
     assert exc.value.code == 0
+
+
+def test_markets_run_in_the_background_and_a_failure_only_warns(monkeypatch, tmp_path, capsys):
+    script = tmp_path / "markets.py"
+    monkeypatch.setattr(run_once, "MARKETS_SCRIPT", script)
+
+    script.write_text("import sys; sys.exit(0)")
+    process = run_once.start_markets("session_x")
+    assert process is not None and run_once.finish_markets(process)
+
+    script.write_text("import sys; sys.exit(1)")
+    assert not run_once.finish_markets(run_once.start_markets("session_x"))
+    assert "prediction markets failed: exit code 1" in capsys.readouterr().out
+    assert not run_once.finish_markets(None)

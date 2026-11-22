@@ -104,3 +104,22 @@ def test_no_rows_from_either_source_exits_1(monkeypatch, tmp_path):
 
     assert tm.run("x") == 1
     assert not any(tmp_path.iterdir())
+
+
+def test_sources_are_read_at_the_same_time(monkeypatch):
+    import threading
+
+    both = threading.Barrier(2, timeout=5)  # breaks unless both fetches run at once
+
+    def fetch(now):
+        both.wait()
+        return []
+
+    def broken(now):
+        both.wait()
+        raise OSError("down")
+
+    monkeypatch.setattr(tm, "SOURCES", {"polymarket": fetch, "kalshi": broken})
+    found = tm.fetch_all(tm.utc_now())
+
+    assert found["polymarket"] == [] and isinstance(found["kalshi"], OSError)

@@ -383,20 +383,42 @@ def collect_superbet(session_id: str, pinnacle_snapshot: Path) -> dict:
     return run_ledger.state("ok")
 
 
-def collect_markets(run_id: str) -> bool:
-    """Prediction-market prices (scripts/tennis_markets.py), saved for comparison only;
-    a failure never stops the run."""
+MARKETS_TIMEOUT_S = 90
+
+
+def start_markets(run_id: str) -> subprocess.Popen | None:
+    """Prediction-market prices (scripts/tennis_markets.py), saved for comparison only,
+    started in the background so they are read with the books, not a minute after
+    Pinnacle (user, 22 Nov 2026). Network-bound, about 2 s; finish_markets waits."""
     try:
-        subprocess.run(
-            [sys.executable, str(MARKETS_SCRIPT), "--run-id", run_id],
-            check=True,
-            timeout=90,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        print(f"WARNING: prediction markets failed: {exc}", flush=True)
+        return subprocess.Popen([sys.executable, str(MARKETS_SCRIPT), "--run-id", run_id])
+    except OSError as exc:
+        print(f"WARNING: prediction markets failed to start: {exc}", flush=True)
+        return None
+
+
+def finish_markets(process: subprocess.Popen | None) -> bool:
+    """Waits for start_markets' process; a failure never stops the run."""
+    if process is None:
+        return False
+
+    try:
+        code = process.wait(timeout=MARKETS_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        kill_process_tree(process)
+        print("WARNING: prediction markets timed out", flush=True)
+        return False
+
+    if code != 0:
+        print(f"WARNING: prediction markets failed: exit code {code}", flush=True)
         return False
 
     return True
+
+
+def collect_markets(run_id: str) -> bool:
+    """start_markets and finish_markets in one go."""
+    return finish_markets(start_markets(run_id))
 
 
 def collect_signal_results(session_id: str, min_ev: float) -> None:
@@ -1019,6 +1041,8 @@ def main() -> None:
 
     superbet_state = run_ledger.state("skipped")
     markets_tried = False
+    # Read alongside Superbet, so they are about as fresh as Pinnacle (22 Nov 2026).
+    markets = None if args.no_markets else start_markets(session_id)
 
     if not args.no_superbet:
         superbet_state = collect_superbet(session_id, pinnacle_snapshot)
@@ -1225,10 +1249,10 @@ def main() -> None:
         if session_status != "interrupted":
             build_ako(session_id, send=not args.no_notify)
 
-        # After Betclic and the alerts (20 Nov 2026): run before Betclic it delayed
-        # Betclic's prices by 2-12 s, and these are only kept for comparison.
-        if not args.no_markets and session_status != "interrupted":
-            collect_markets(session_id)
+        # Started with Superbet (22 Nov 2026; until then it ran here, since run
+        # before Betclic in turn it delayed Betclic's prices by 2-12 s).
+        if markets is not None:
+            finish_markets(markets)
             markets_tried = True
 
         # One line per run for the dashboard's run health (scripts/run_ledger.py).
