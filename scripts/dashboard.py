@@ -1908,6 +1908,10 @@ def track_record(
 # cache only (each entry is checked against its session file's size and time), so
 # backup_data.sh leaves data/cache out.
 TRACK_CACHE_FILE = ROOT / "data" / "cache" / "track_flags.pkl"
+# TrackLoader's finished records (a few KB), so a restarted server shows the last
+# numbers at once instead of a Loading card for the ~40 s cold read; they are
+# replaced as soon as the thread has worked out new ones.
+TRACK_RESULTS_FILE = ROOT / "data" / "cache" / "track_results.pkl"
 
 
 def load_flag_cache(path: Path = TRACK_CACHE_FILE) -> dict:
@@ -1932,6 +1936,16 @@ def save_flag_cache(cache: dict, path: Path = TRACK_CACHE_FILE) -> None:
     os.replace(partial, path)
 
 
+def save_results(results: dict, path: Path = TRACK_RESULTS_FILE) -> None:
+    """TrackLoader's records by (min EV, books), written like save_flag_cache."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_suffix(".tmp")
+
+    with open(partial, "wb") as handle:
+        pickle.dump(results, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    os.replace(partial, path)
+
+
 def flag_signatures(cache: dict) -> dict:
     return {key: value[0] for key, value in cache.items() if isinstance(key, str)}
 
@@ -1948,12 +1962,19 @@ class TrackLoader:
     read of every session. A full run asks for its minimum EV and books (request);
     the header fragment checks whether it is there yet (ready). One per server."""
 
-    def __init__(self, sources_cache: dict, cache_file: Path | None = TRACK_CACHE_FILE) -> None:
+    def __init__(
+        self,
+        sources_cache: dict,
+        cache_file: Path | None = TRACK_CACHE_FILE,
+        results_file: Path | None = TRACK_RESULTS_FILE,
+    ) -> None:
         self.sources_cache = sources_cache
         self.cache_file = cache_file
+        self.results_file = results_file
         # session_flags and settled_outcomes, used by the thread only
         self.cache: dict = load_flag_cache(cache_file) if cache_file else {}
-        self.results: dict[tuple, dict] = {}
+        # The last saved records: shown at once, recomputed on the first request.
+        self.results: dict[tuple, dict] = load_flag_cache(results_file) if results_file else {}
         self.error: str | None = None
         self.wanted: tuple | None = None
         self.finished: tuple | None = None
@@ -2012,11 +2033,19 @@ class TrackLoader:
                 record, error = None, f"{type(exc).__name__}: {exc}"
 
             with self.done:
+                changed = record is not None and self.results.get(key) != record
                 if record is not None:
                     self.results[key] = record
                 self.error = error
                 self.finished = key
                 self.done.notify_all()
+                saved = dict(self.results)
+
+            if changed and self.results_file:
+                try:
+                    save_results(saved, self.results_file)
+                except Exception:
+                    pass  # only the next server start shows Loading again
 
 
 def track_loader() -> TrackLoader:

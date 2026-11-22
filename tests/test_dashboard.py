@@ -1640,7 +1640,7 @@ def test_track_loader_draws_a_placeholder_until_the_thread_is_done(monkeypatch):
     monkeypatch.setattr(dashboard, "load_outcome_sources", lambda cache: {})
     monkeypatch.setattr(dashboard, "list_sessions", lambda: [])
     monkeypatch.setattr(dashboard, "track_record", slow)
-    loader = dashboard.TrackLoader({}, cache_file=None)
+    loader = dashboard.TrackLoader({}, cache_file=None, results_file=None)
 
     assert loader.request(0.02, ["Betclic"], wait=0.05) is None  # cold: still loading
     assert not loader.ready(0.02, ["Betclic"])
@@ -1656,6 +1656,38 @@ def test_track_loader_draws_a_placeholder_until_the_thread_is_done(monkeypatch):
     assert calls == [(0.02, ["Betclic"])] * 2
 
 
+def test_track_loader_shows_saved_numbers_after_a_restart(monkeypatch, tmp_path):
+    import threading
+
+    gate = threading.Event()
+    values = iter([{"Betclic": {"signals": 1}}, {"Betclic": {"signals": 2}}])
+
+    def record(*args, **kwargs):
+        value = next(values)
+        if value["Betclic"]["signals"] == 2:
+            gate.wait(5)  # the second server's cold read
+        return value
+
+    monkeypatch.setattr(dashboard, "load_outcome_sources", lambda cache: {})
+    monkeypatch.setattr(dashboard, "list_sessions", lambda: [])
+    monkeypatch.setattr(dashboard, "track_record", record)
+    results_file = tmp_path / "track_results.pkl"
+
+    first = dashboard.TrackLoader({}, cache_file=None, results_file=results_file)
+    assert first.request(0.02, ["Betclic"], wait=2) == {"Betclic": {"signals": 1}}
+    first.thread.join(5)
+    assert results_file.exists()
+
+    # A restarted server shows the saved numbers at once, then the new ones.
+    second = dashboard.TrackLoader({}, cache_file=None, results_file=results_file)
+    assert second.request(0.02, ["Betclic"], wait=0.05) == {"Betclic": {"signals": 1}}
+    assert second.ready(0.02, ["Betclic"])
+    gate.set()
+    second.thread.join(5)
+    assert second.results[(0.02, ("Betclic",))] == {"Betclic": {"signals": 2}}
+    assert dashboard.load_flag_cache(results_file) == {(0.02, ("Betclic",)): {"Betclic": {"signals": 2}}}
+
+
 def test_track_loader_shows_a_failure_on_the_card(monkeypatch):
     def broken(*args, **kwargs):
         raise OSError("disk gone")
@@ -1663,7 +1695,7 @@ def test_track_loader_shows_a_failure_on_the_card(monkeypatch):
     monkeypatch.setattr(dashboard, "load_outcome_sources", lambda cache: {})
     monkeypatch.setattr(dashboard, "list_sessions", lambda: [])
     monkeypatch.setattr(dashboard, "track_record", broken)
-    loader = dashboard.TrackLoader({}, cache_file=None)
+    loader = dashboard.TrackLoader({}, cache_file=None, results_file=None)
 
     assert loader.request(0.02, ["Betclic"], wait=2) is None
     assert loader.ready(0.02, ["Betclic"]) and loader.error == "OSError: disk gone"
@@ -1830,11 +1862,11 @@ def test_track_flags_survive_a_server_restart(tmp_path, monkeypatch):
     monkeypatch.setattr(dashboard, "load_outcome_sources", lambda cache: outcome_sources())
     cache_file = tmp_path / "cache" / "track_flags.pkl"
 
-    first = dashboard.TrackLoader({}, cache_file=cache_file)
+    first = dashboard.TrackLoader({}, cache_file=cache_file, results_file=None)
     assert first.request(0.02, ["Betclic"], wait=10)["Betclic"]["signals"] == 1
     assert reads == ["session_20261103_170000_aaaaaa"] and cache_file.exists()
 
-    second = dashboard.TrackLoader({}, cache_file=cache_file)
+    second = dashboard.TrackLoader({}, cache_file=cache_file, results_file=None)
     assert second.request(0.02, ["Betclic"], wait=10)["Betclic"]["signals"] == 1
     assert reads == ["session_20261103_170000_aaaaaa"]  # read from the file, not the session
 
