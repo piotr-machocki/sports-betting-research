@@ -478,15 +478,14 @@ def render_markets(st, dash: Any = None) -> None:
             "Only matches on a market", value=True, key="markets_only",
         )
         player = st.text_input("Player", key="markets_player")
+        # At the bottom of the sidebar (user, 22 Nov 2026; it was a note over the page).
+        st.caption(
+            "Nothing is sent to Telegram or counts on the Tennis page until the markets "
+            "have proved themselves against closing lines and results. A market's "
+            "probability is the middle of its bid and ask."
+        )
 
     st.html(MARKETS_STYLE)
-    st.html(
-        '<div class="markets-note">Polymarket and Kalshi against Pinnacle, for '
-        "comparison only: their signals are logged under Statistics, but nothing is sent "
-        "to Telegram or counts on the Tennis page until they have proved themselves "
-        "against closing lines and results. A market's probability is the middle of its "
-        "bid and ask.</div>"
-    )
 
     loader = st.cache_resource(show_spinner=False)(dash.market_loader)()
     track_key = (min_ev, max_spread, longshots)
