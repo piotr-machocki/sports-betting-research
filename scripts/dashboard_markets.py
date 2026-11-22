@@ -66,6 +66,11 @@ MARKETS_STYLE = """<style>
    row wraps, an arrow staying with the box after it. */
 .markets-flow .flow-node { flex: 1 0 auto; min-width: max-content; }
 .markets-flow .flow-step { display: flex; flex: 1 0 auto; }
+/* Pinnacle as tall as the branches beside it; under them once they do not fit. */
+.markets-flow .flow-fork { flex-wrap: wrap; gap: 6px 0; }
+.markets-flow .flow-fork > .flow-node { flex: none; }
+.markets-flow .flow-branches { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; }
+.markets-flow .flow-branch { display: flex; }
 </style>"""
 
 GREEN = "color: #1f9d55; background-color: rgba(31, 157, 85, 0.16)"
@@ -457,7 +462,13 @@ def render_markets(st) -> None:
 
     summary, gaps = flow_summary(latest_per_match(rows), snapshot, now)
     summary["pinnacle_source"] = dashboard.pinnacle_source(dashboard.session_info(session_id))
-    flow = dashboard.flow_html(summary, gaps)
+    # Superbet then Betclic, and both markets at once, all started with Superbet.
+    by_name = {name: (seconds, name) for seconds, name in gaps}
+    flow = dashboard.fork_html(summary, [
+        [by_name["Superbet"], by_name["Betclic"]],
+        [by_name["Polymarket"]],
+        [by_name["Kalshi"]],
+    ])
     started = datetime.strptime(
         "".join(session_id.split("_")[1:3]), "%Y%m%d%H%M%S"
     ).replace(tzinfo=timezone.utc)

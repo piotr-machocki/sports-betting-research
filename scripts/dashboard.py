@@ -3000,8 +3000,33 @@ def overview_flow(summary: dict, books: list[str] = BOOKS) -> str:
 
 
 def flow_html(summary: dict, gaps: list[tuple[float | None, str]]) -> str:
-    """overview_flow's diagram for any sources after Pinnacle: (median seconds from
-    the Pinnacle capture or None, name). The Prediction markets tab uses it too."""
+    """overview_flow's diagram for any sources after Pinnacle, one after the other:
+    (median seconds from the Pinnacle capture or None, name)."""
+    return f'<div class="flow">{pinnacle_flow_node(summary)}{"".join(flow_steps(gaps))}</div>'
+
+
+def fork_html(summary: dict, branches: list[list[tuple[float | None, str]]]) -> str:
+    """Pinnacle, then sources read at the same time as branches beside it (the
+    Prediction markets tab, user 22 Nov 2026): one row per branch, its first arrow
+    the time from Pinnacle, the rest the time from the box before. Branches in the
+    order their first prices came."""
+    def first(branch: list) -> tuple:
+        seconds = branch[0][0] if branch else None
+        return (seconds is None, seconds or 0)
+
+    rows = "".join(
+        f'<div class="flow-branch">{"".join(flow_steps(branch))}</div>'
+        for branch in sorted(branches, key=first)
+    )
+    return (
+        f'<div class="flow flow-fork">{pinnacle_flow_node(summary)}'
+        f'<div class="flow-branches">{rows}</div></div>'
+    )
+
+
+def pinnacle_flow_node(summary: dict) -> str:
+    """The flow's first box: Pinnacle with the age of its prices, which TABLE_SCRIPT
+    counts on each second."""
     age = summary.get("pinnacle_age")
     age_html = "--"
 
@@ -3017,19 +3042,23 @@ def flow_html(summary: dict, gaps: list[tuple[float | None, str]]) -> str:
     source = summary.get("pinnacle_source")
 
     if source:
-        steps = [
+        return (
             '<div class="flow-node has-tip" tabindex="0">'
             f'<div class="flow-name label">Pinnacle</div><div class="flow-sub">{age_html}</div>'
             f'<div class="tip">{pinnacle_tip(source)}</div></div>'
-        ]
-    else:
-        steps = [
-            '<div class="flow-node">'
-            f'<div class="flow-name">Pinnacle</div><div class="flow-sub">{age_html}</div></div>'
-        ]
-    gaps = list(gaps)
-    gaps.sort(key=lambda pair: (pair[0] is None, pair[0] or 0))
+        )
+    return (
+        '<div class="flow-node">'
+        f'<div class="flow-name">Pinnacle</div><div class="flow-sub">{age_html}</div></div>'
+    )
+
+
+def flow_steps(gaps: list[tuple[float | None, str]]) -> list[str]:
+    """An arrow and a box per source in the order the prices came, each arrow the
+    time since the box before it; a source without data comes last."""
+    gaps = sorted(gaps, key=lambda pair: (pair[0] is None, pair[0] or 0))
     before = 0.0
+    steps = []
 
     for seconds, book in gaps:
         if seconds is None:
@@ -3046,7 +3075,7 @@ def flow_html(summary: dict, gaps: list[tuple[float | None, str]]) -> str:
             f'<div class="flow-node"><div class="flow-name">{html.escape(book)}</div></div></div>'
         )
 
-    return f'<div class="flow">{"".join(steps)}</div>'
+    return steps
 
 
 def stale_fact(summary: dict) -> str:

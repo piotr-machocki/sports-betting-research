@@ -226,3 +226,18 @@ def test_flow_names_each_market_after_pinnacle():
     assert "Data flow and age" in dm.overview(
         dm.market_stats([], 0.02), 0.02, flow=dashboard.flow_html(summary, gaps)
     )
+
+
+def test_fork_shows_parallel_reads_as_branches_from_pinnacle():
+    import dashboard
+
+    fork = dashboard.fork_html(
+        {"pinnacle_age": 60.0, "pinnacle_captured": 1.0},
+        [[(0.4, "Superbet"), (18.4, "Betclic")], [(0.8, "Polymarket")], [(None, "Kalshi")]],
+    )
+    branches = fork.split('<div class="flow-branch">')[1:]
+
+    assert [b.count("flow-step") for b in branches] == [2, 1, 1]
+    assert "Superbet" in branches[0] and "+0.4 s" in branches[0] and "+18.0 s" in branches[0]
+    assert "+0.8 s" in branches[1]  # from Pinnacle, not from Superbet
+    assert "Kalshi" in branches[2] and "No Kalshi prices" in branches[2]  # no data: last
