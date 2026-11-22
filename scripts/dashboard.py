@@ -521,6 +521,11 @@ OVERVIEW_STYLE = """<style>
     .flow-arrow { min-width: 46px; padding: 0 4px; }
     .session-status { padding: 0 9px; }
     .session-time .year { display: none; }
+    /* Title, pill and time on one line down to 360 px (user, 22 Nov 2026). */
+    .session-title { gap: 4px 8px; }
+    .session-title .overview-title { font-size: 17px; }
+    .session-title .session-status { font-size: 13px; padding: 0 8px; gap: 5px; }
+    .session-time { font-size: 13px; }
 }
 .fresh { color: #1f9d55; }
 .stale { color: #d64545; }
