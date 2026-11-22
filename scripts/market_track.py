@@ -25,6 +25,7 @@ from typing import Any
 
 from live_monitor import SESSIONS_DIR, latest_per_match, read_session_rows
 from market_compare import (
+    LONGSHOT_BELOW,
     MARKETS_DIR,
     far_from_pinnacle,
     SOURCE_LABELS,
@@ -37,9 +38,6 @@ from market_compare import (
 # Both markets at once (user, 22 Nov 2026; it replaced their average, which only
 # blended the two): a signal needs EV >= the minimum against each of them.
 BOTH = "Both"
-# Below this probability a signal is a long shot, which the sidebar can leave out:
-# markets overprice them, and a cent on a 5% price is already a fifth of it.
-LONGSHOT_BELOW = 0.15
 # Card rows in order: each market alone, then both agreeing.
 REFERENCES = [SOURCE_LABELS[source] for source in SOURCES] + [BOTH]
 

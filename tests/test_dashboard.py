@@ -1698,7 +1698,7 @@ def test_track_loader_draws_a_placeholder_until_the_thread_is_done(monkeypatch):
     gate = threading.Event()
     calls = []
 
-    def slow(sessions, cache, sources, min_ev, now, books, rechecks=None):
+    def slow(sessions, cache, sources, min_ev, now, books, rechecks=None, longshots=True):
         calls.append((min_ev, books))
         gate.wait(5)
         return {"Betclic": {"signals": 1}}
@@ -1750,8 +1750,10 @@ def test_track_loader_shows_saved_numbers_after_a_restart(monkeypatch, tmp_path)
     assert second.ready(0.02, ["Betclic"])
     gate.set()
     second.thread.join(5)
-    assert second.results[(0.02, ("Betclic",))] == {"Betclic": {"signals": 2}}
-    assert dashboard.load_flag_cache(results_file) == {(0.02, ("Betclic",)): {"Betclic": {"signals": 2}}}
+    assert second.results[(0.02, ("Betclic",), True)] == {"Betclic": {"signals": 2}}
+    assert dashboard.load_flag_cache(results_file) == {
+        (0.02, ("Betclic",), True): {"Betclic": {"signals": 2}}
+    }
 
 
 def test_track_loader_shows_a_failure_on_the_card(monkeypatch):
@@ -2020,3 +2022,24 @@ def test_donut_keeps_one_match_visible():
     empty = dashboard.overview_donut("Superbet", 0, 0, "", 0, 0)
     assert "conic-gradient" not in empty and "Waiting" not in empty
     assert "EV calculated <b>0</b>" in empty and "No EV" not in empty
+
+
+def test_track_loader_reads_results_saved_before_the_long_shot_switch(tmp_path):
+    results_file = tmp_path / "track_results.pkl"
+    dashboard.save_results({(0.02, ("Betclic",)): {"Betclic": {"signals": 3}}}, results_file)
+
+    loader = dashboard.TrackLoader({}, cache_file=None, results_file=results_file)
+    assert loader.results == {(0.02, ("Betclic",), True): {"Betclic": {"signals": 3}}}
+
+
+def test_long_shots_can_be_left_out_of_the_first_flags():
+    def flag(name, price, ev):
+        return {"Bet on": name, "Opponent": "X", "Tournament": "T", "Best EV": ev,
+                "_price": price, "_starts_at": "", "_captured_at": ""}
+
+    longshot = flag("Outsider", 11.0, 0.10)   # fair (1 + 0.10) / 11 = 10%
+    normal = flag("Favourite", 2.10, 0.05)    # fair 50%
+    both = dashboard.first_flags([longshot, normal], "Betclic", 0.02, {})
+    assert [f["Bet on"] for f in both] == ["Outsider", "Favourite"]
+    without = dashboard.first_flags([longshot, normal], "Betclic", 0.02, {}, longshots=False)
+    assert [f["Bet on"] for f in without] == ["Favourite"]

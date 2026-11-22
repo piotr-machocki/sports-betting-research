@@ -149,6 +149,7 @@ SETTING_DEFAULTS = {
     "draws": [ALL_PILL],
     "player": "",
     "player_all": False,
+    "track_longshots": True,
 }
 
 NAME_COLUMNS = {"Bet on", "Opponent"}
@@ -701,6 +702,16 @@ OVERVIEW_STYLE = """<style>
     animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* Beside Include long shots: a spinner while the card is worked out again, then a
+   green tick that fades once the new numbers are shown (user, 22 Nov 2026). */
+.toggle-status { display: flex; align-items: center; min-height: 24px; }
+.toggle-tick {
+    color: #1f9d55;
+    font-weight: 700;
+    font-size: 18px;
+    animation: tick-fade 3s ease-in forwards;
+}
+@keyframes tick-fade { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
 </style>"""
 
 # Installed once. Streamlit runs a script before inserting the HTML sent with it, and
@@ -1638,12 +1649,14 @@ def session_flags(session_id: str, cache: dict) -> dict[str, list[dict]]:
 
 
 def first_flags(
-    records: list[dict], book: str, min_ev: float, sightings: dict
+    records: list[dict], book: str, min_ev: float, sightings: dict, longshots: bool = True
 ) -> list[dict]:
     """Each match once, from the first (oldest) record that reached min_ev before the
     match's latest known start, so it could have been bet at that price. Betclic
-    prices below its minimum odds are not bets."""
+    prices below its minimum odds are not bets. longshots=False leaves out flags
+    whose reference probability, (1 + EV) / price, is under LONGSHOT_BELOW."""
     import evaluate_ev
+    from market_compare import LONGSHOT_BELOW
 
     seen, first = set(), []
 
@@ -1651,6 +1664,9 @@ def first_flags(
         key = match_key(record)
 
         if key in seen or record["Best EV"] < min_ev or not record["_price"]:
+            continue
+
+        if not longshots and (1 + record["Best EV"]) / record["_price"] < LONGSHOT_BELOW:
             continue
 
         if book == "Betclic" and record["_price"] < BETCLIC_MIN_ODDS:
@@ -1908,6 +1924,7 @@ def track_record(
     now: datetime,
     books: list[str] = BOOKS,
     rechecks: list[dict] | None = None,
+    longshots: bool = True,
 ) -> dict[str, dict]:
     """Each book shown with at least one first flag -> track_stats. sessions are
     newest first, as list_sessions gives them."""
@@ -1920,7 +1937,7 @@ def track_record(
             continue
 
         records = [flag for flags in oldest_first for flag in flags.get(book, [])]
-        flags = first_flags(records, book, min_ev, sources["sightings"])
+        flags = first_flags(records, book, min_ev, sources["sightings"], longshots)
 
         if flags:
             memo = cache.setdefault(("outcomes", book), {})
@@ -2003,17 +2020,23 @@ class TrackLoader:
         # session_flags and settled_outcomes, used by the thread only
         self.cache: dict = load_flag_cache(cache_file) if cache_file else {}
         # The last saved records: shown at once, recomputed on the first request.
-        self.results: dict[tuple, dict] = load_flag_cache(results_file) if results_file else {}
+        # Keys saved before the long-shot switch (22 Nov 2026) had it on.
+        saved = load_flag_cache(results_file) if results_file else {}
+        self.results: dict[tuple, dict] = {
+            (key if len(key) == 3 else (*key, True)): value for key, value in saved.items()
+        }
         self.error: str | None = None
         self.wanted: tuple | None = None
         self.finished: tuple | None = None
         self.thread: threading.Thread | None = None
         self.done = threading.Condition()
 
-    def request(self, min_ev: float, books: list[str], wait: float = 0.0) -> dict | None:
+    def request(
+        self, min_ev: float, books: list[str], wait: float = 0.0, longshots: bool = True
+    ) -> dict | None:
         """Works the record out again (the sessions may have changed) and returns it
         if that takes at most wait, else the last one for this choice, or None."""
-        return self.request_key((min_ev, tuple(books)), wait)
+        return self.request_key((min_ev, tuple(books), longshots), wait)
 
     def request_key(self, key: tuple, wait: float = 0.0) -> dict | None:
         with self.done:
@@ -2027,8 +2050,8 @@ class TrackLoader:
             self.done.wait_for(lambda: self.finished == key, timeout=wait)
             return self.results.get(key)
 
-    def ready(self, min_ev: float, books: list[str]) -> bool:
-        return self.ready_key((min_ev, tuple(books)))
+    def ready(self, min_ev: float, books: list[str], longshots: bool = True) -> bool:
+        return self.ready_key((min_ev, tuple(books), longshots))
 
     def ready_key(self, key: tuple) -> bool:
         with self.done:
@@ -2042,6 +2065,7 @@ class TrackLoader:
             list_sessions(), self.cache, sources, key[0],
             datetime.now(timezone.utc), list(key[1]),
             rechecks=recheck_signals.load_rechecks(),
+            longshots=key[2] if len(key) > 2 else True,
         )
 
     def work(self) -> None:
@@ -3254,6 +3278,45 @@ def session_bar_html(summary: dict, session_id: str) -> str:
     )
 
 
+LONGSHOT_HELP = {
+    "tennis": "Count signals where Pinnacle's fair probability for the side bet is "
+    "under 15% (odds above about 6.5). Untick to see the record without them.",
+    "markets": "Count signals whose market probability is under 15% (odds above about "
+    "6.5). Markets tend to overprice outsiders, and a cent on a 5% price is a fifth of "
+    "it, so these can look like value that is not.",
+}
+
+
+def longshots_setting(st: Any, key: str) -> bool:
+    """The Include long shots value before its checkbox is drawn (statistics_section
+    draws it under the Statistics title, after the card's record was asked for)."""
+    return bool(st.session_state.setdefault(key, True))
+
+
+def statistics_section(st: Any, key: str, help_key: str, card: str, loading: bool) -> None:
+    """Statistics (all runs) with Include long shots under its title (user, 22 Nov
+    2026: out of the sidebar, easy to flip on a phone), a spinner beside it while the
+    card is worked out again and a fading green tick once the new numbers are in."""
+    pending = f"{key}_pending"
+
+    def changed() -> None:
+        st.session_state[pending] = True
+
+    st.html('<div class="overview-title">Statistics (all runs)</div>')
+
+    with st.container(horizontal=True, vertical_alignment="center", gap="small"):
+        st.checkbox(
+            "Include long shots", key=key, on_change=changed, help=LONGSHOT_HELP[help_key]
+        )
+        if loading:
+            st.html('<div class="toggle-status"><span class="spinner"></span></div>')
+        elif st.session_state.get(pending):
+            st.session_state[pending] = False
+            st.html('<div class="toggle-status"><span class="toggle-tick">✓</span></div>')
+
+    st.html(f'<div class="overview"><div class="overview-cards">{card}</div></div>')
+
+
 def track_section(track: str) -> str:
     """The Track record card under its own title: it counts every run, not this one."""
     if not track:
@@ -4274,6 +4337,7 @@ def render_tennis(st) -> None:
     }
 
     header_box = st.container()
+    track_box = st.container()
     table_box = st.container()
 
     first_header, table_session = current_sessions(selected)
@@ -4297,7 +4361,8 @@ def render_tennis(st) -> None:
     # Worked out in a thread: until it is there the card says so and the header
     # checks every second, then asks for the full run that draws it.
     loader = st.cache_resource(show_spinner=False)(track_loader)()
-    record = loader.request(filters["min_ev"], books, wait=TRACK_WAIT_SECONDS)
+    longshots = longshots_setting(st, "track_longshots")
+    record = loader.request(filters["min_ev"], books, wait=TRACK_WAIT_SECONDS, longshots=longshots)
     track_loading = record is None and loader.error is None
     track = track_card(record, filters["min_ev"], books, loader.error)
 
@@ -4311,7 +4376,7 @@ def render_tennis(st) -> None:
         fresh, signature = load_rows(st, newest_table) if newest_table else ([], None)
 
         still_running = bool(header_session) and is_running(header_session)
-        track_arrived = track_loading and loader.ready(filters["min_ev"], books)
+        track_arrived = track_loading and loader.ready(filters["min_ev"], books, longshots)
 
         if signature != drawn or still_running != running or track_arrived:
             st.rerun(scope="app")
@@ -4326,12 +4391,16 @@ def render_tennis(st) -> None:
                 filters["with_ev"],
                 ev_stats,
                 books,
-                track,
             )
 
     # Header first: it is quick, and the table can take a second or two.
     with header_box:
         live_header()
+
+    # Statistics (all runs) outside the header's fragment, so its checkbox is drawn
+    # once per full run; a full run follows any change and the card's arrival.
+    with track_box:
+        statistics_section(st, "track_longshots", "tennis", track, track_loading)
 
     if table_session:
         render_table(table_box, table_session, rows, filters, all_records, outcomes)

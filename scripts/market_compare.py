@@ -46,6 +46,10 @@ DEFAULT_MAX_SPREAD = 0.04  # 4 cents on the wider side
 # 0.49 when Kalshi said 0.07 and Pinnacle 0.04). Of the other signals checked that
 # day, none was more than 9 pp away.
 MAX_PINNACLE_GAP = 0.10
+# Below this probability a signal is a long shot, which both Statistics cards can
+# leave out (user, 22 Nov 2026): markets overprice them, and a cent on a 5% price is
+# already a fifth of it. About odds 6.5 and up.
+LONGSHOT_BELOW = 0.15
 SUPERBET_TAX_FACTOR = 0.88
 
 

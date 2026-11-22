@@ -455,12 +455,6 @@ def render_markets(st, dash: Any = None) -> None:
             help="A market whose wider side's bid-ask spread is above this is shown in "
             "grey and its EV is not trusted: a thin market can sit on a stale quote.",
         ) / 100
-        longshots = st.checkbox(
-            "Include long shots", value=True, key="markets_longshots",
-            help="In Statistics, count signals whose market probability is below 15% "
-            "(odds above about 6.5). Markets tend to overprice outsiders, and a cent "
-            "on a 5% price is a fifth of it, so these can look like value that is not.",
-        )
         on_market = st.checkbox(
             "Only matches on a market", value=True, key="markets_only",
         )
@@ -475,6 +469,7 @@ def render_markets(st, dash: Any = None) -> None:
     st.html(MARKETS_STYLE)
 
     loader = st.cache_resource(show_spinner=False)(dash.market_loader)()
+    longshots = dash.longshots_setting(st, "markets_longshots")
     track_key = (min_ev, max_spread, longshots)
 
     @st.fragment(run_every=IDLE_REFRESH_SECONDS)
@@ -513,7 +508,8 @@ def render_markets(st, dash: Any = None) -> None:
         [by_name["Kalshi"]],
     ])
     record = loader.request_key(track_key, wait=dash.TRACK_WAIT_SECONDS)
-    st.session_state["markets_track_loading"] = record is None and loader.error is None
+    track_loading = record is None and loader.error is None
+    st.session_state["markets_track_loading"] = track_loading
     track = market_track_card(dash, record, min_ev, loader.error)
     # The Tennis page's heading (user, 22 Nov 2026): Last run overview with the run's
     # state and time; the Pinnacle age is in Data flow and age.
@@ -522,8 +518,9 @@ def render_markets(st, dash: Any = None) -> None:
 
     st.html(
         dash.session_bar_html(summary, session_id)
-        + overview(stats, max_spread, flow, track)
+        + overview(stats, max_spread, flow)
     )
+    dash.statistics_section(st, "markets_longshots", "markets", track, track_loading)
 
     shown = [m for m in matches if m["markets"]] if on_market else matches
     needle = player.strip().lower()
