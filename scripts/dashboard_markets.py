@@ -62,15 +62,28 @@ MARKETS_STYLE = """<style>
 .markets-tiles + .markets-source { margin-top: 6px; }
 /* A phone gets the table too (sideways scroll): there are no cards for this tab. */
 @media (max-width: 700px) { table.matches.markets { display: table; } }
-/* Five boxes do not fit the half-width card: each keeps its text's width and the
-   row wraps, an arrow staying with the box after it. */
-.markets-flow .flow-node { flex: 1 0 auto; min-width: max-content; }
-.markets-flow .flow-step { display: flex; flex: 1 0 auto; }
-/* Pinnacle as tall as the branches beside it; under them once they do not fit. */
+/* The fork (user, 22 Nov 2026: boxes stretched to fill a row looked odd): the
+   branches share a grid, so the boxes of one column are one size, as wide as the
+   longest name in it, and spare room stays empty on the right. Pinnacle is as tall
+   as the branches; under them on screens too narrow for both. */
 .markets-flow .flow-fork { flex-wrap: wrap; gap: 6px 0; }
-.markets-flow .flow-fork > .flow-node { flex: none; }
-.markets-flow .flow-branches { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; }
-.markets-flow .flow-branch { display: flex; }
+.markets-flow .flow-fork > .flow-node { flex: none; min-width: max-content; }
+.markets-flow .flow-branches {
+    display: grid;
+    grid-template-columns: repeat(4, auto);
+    justify-content: start;
+    align-items: stretch;
+    gap: 6px 0;
+}
+.markets-flow .flow-branch, .markets-flow .flow-step { display: contents; }
+/* Each branch on its own row. */
+.markets-flow .flow-step:first-child > .flow-arrow { grid-column: 1; }
+.markets-flow .flow-branches .flow-node { max-width: none; min-width: max-content; padding: 6px 12px; }
+@media (max-width: 700px) {
+    .markets-flow .flow-branches .flow-node { padding: 6px 8px; }
+    .markets-flow .flow-fork .flow-arrow { min-width: 40px; padding: 0 3px; }
+    .markets-flow .flow-fork > .flow-node { padding: 6px 6px; }
+}
 </style>"""
 
 GREEN = "color: #1f9d55; background-color: rgba(31, 157, 85, 0.16)"
