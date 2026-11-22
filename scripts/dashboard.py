@@ -411,6 +411,10 @@ OVERVIEW_NOT_MATCHED = "rgba(128, 128, 128, 0.65)"
 OVERVIEW_WAITING = "rgba(128, 128, 128, 0.2)"
 OVERVIEW_STARTED = "rgba(160, 120, 200, 0.55)"
 STATUS_COLOURS = {"finished": "#1f9d55", "failed": "#d64545", "interrupted": OVERVIEW_NO_EV}
+# The pill's words (user, 22 Nov 2026): a finished run whose book failed is Failed too.
+STATUS_LABELS = {"finished": "Successful", "failed": "Failed"}
+# Sources that make a finished run Failed; the markets are comparison only.
+PILL_SOURCES = {"betclic": "Betclic", "superbet": "Superbet"}
 OVERVIEW_STYLE = """<style>
 /* The run's heading (user, 15 Nov 2026): "Last run overview" with the status pill on
    its right, then its facts as values over small grey labels. */
@@ -3112,11 +3116,36 @@ def overview_checks(summary: dict, stats: dict, books: list[str] = BOOKS) -> str
     return flow
 
 
+def failed_sources(session_id: str) -> list[str]:
+    """The books that failed in this run, from the run ledger (run_once writes the
+    record a few seconds after the run's status says finished)."""
+    import run_ledger
+
+    found = run_ledger.find(session_id) or {}
+    sources = found.get("sources") or {}
+    return [
+        label for key, label in PILL_SOURCES.items()
+        if (sources.get(key) or {}).get("state") == "failed"
+    ]
+
+
 def session_bar_html(summary: dict, session_id: str) -> str:
     """The overview's heading (user, 15 Nov 2026): "Last run overview" with the run's
     status on its right, then when it ran and whether its Pinnacle prices are stale,
     each a value over a small grey label. Their age is in the Data flow card."""
-    colour = STATUS_COLOURS.get(summary["status"], OVERVIEW_BLUE)
+    status = summary["status"]
+    failed = summary.get("failed_sources") or []
+    tip = ""
+
+    if status == "finished" and failed:
+        status = "failed"
+        tip = f"{' and '.join(failed)} failed in this run"
+    elif status == "failed":
+        tip = "The run failed"
+
+    colour = STATUS_COLOURS.get(status, OVERVIEW_BLUE)
+    label = STATUS_LABELS.get(status, status.capitalize())
+    title = f' title="{html.escape(tip)}"' if tip else ""
     started = session_started(session_id)
     # Phones hide the year.
     run_on = (
@@ -3127,8 +3156,8 @@ def session_bar_html(summary: dict, session_id: str) -> str:
     return (
         '<div class="session-head"><div class="session-title">'
         '<span class="overview-title">Last run overview</span>'
-        f'<span class="session-status" style="--status: {colour}">'
-        f"{html.escape(summary['status'].capitalize())}</span></div>"
+        f'<span class="session-status" style="--status: {colour}"{title}>'
+        f"{html.escape(label)}</span></div>"
         '<div class="session-facts">'
         f'<div class="session-fact"><div class="value">{run_on}</div>'
         '<div class="label">Last run on</div></div>'
@@ -3348,6 +3377,7 @@ def render_header(
     now = datetime.now(timezone.utc)
     waiting = table_session != session_id
     summary = session_summary([] if waiting else rows, info, min_ev, now)
+    summary["failed_sources"] = failed_sources(session_id) if summary["status"] == "finished" else []
 
     st.html(session_bar_html(summary, session_id))
 

@@ -294,12 +294,42 @@ def session_bar(status="finished") -> str:
     return dashboard.session_bar_html(summary, "session_20261105_151211_abcdef")
 
 
+def test_a_finished_run_with_a_failed_book_is_failed_in_red():
+    bar = dashboard.session_bar_html(
+        {"status": "finished", "failed_sources": ["Superbet"]}, "session_20261105_151211_abcdef"
+    )
+    assert ">Failed</span>" in bar and dashboard.STATUS_COLOURS["failed"] in bar
+    assert 'title="Superbet failed in this run"' in bar
+    assert ">Failed</span>" in session_bar("failed") and ">Running</span>" in session_bar("running")
+
+
+def test_failed_sources_come_from_the_run_ledger(monkeypatch, tmp_path):
+    import json
+
+    import run_ledger
+
+    ledger = tmp_path / "runs.jsonl"
+    monkeypatch.setattr(run_ledger, "LEDGER_FILE", ledger)
+    assert dashboard.failed_sources("session_a") == []  # no ledger yet
+
+    lines = [
+        {"run_id": "session_a", "sources": {"betclic": {"state": "failed"}, "superbet": {"state": "ok"},
+                                            "kalshi": {"state": "failed"}}},
+        {"run_id": "session_b", "sources": {"betclic": {"state": "partial"}, "superbet": {"state": "ok"}}},
+    ]
+    ledger.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+
+    assert dashboard.failed_sources("session_a") == ["Betclic"]  # markets do not count
+    assert dashboard.failed_sources("session_b") == []  # partial worked
+    assert dashboard.failed_sources("session_c") == []
+
+
 def test_session_bar_shows_the_status_and_run_time():
     bar = session_bar()
 
     # "Last run overview" with the status pill on its right, then the facts.
     assert '<span class="overview-title">Last run overview</span><span class="session-status"' in bar
-    assert ">Finished</span>" in bar
+    assert ">Successful</span>" in bar
     assert '<div class="label">Last run on</div>' in bar
     started = dashboard.session_started("session_20261105_151211_abcdef")
     # The year has its own span, so phones can hide it.
