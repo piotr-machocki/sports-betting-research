@@ -793,7 +793,7 @@ def test_pill_turns_stale_once_the_pinnacle_odds_pass_the_limit():
     assert ">Successful</span>" in fresh and "Stale data" not in fresh
     # The browser turns it Stale at the limit, without waiting for the server.
     limit = dashboard.parse_timestamp(at_limit).timestamp() + 900
-    assert f'data-stale-at="{limit:g}"' in fresh
+    assert f'data-stale-at="{limit:.0f}"' in fresh  # whole seconds, not 1.79e+09
 
     stale = bar(past_limit)
     assert ">Stale</span>" in stale and dashboard.STATUS_COLOURS["stale"] in stale

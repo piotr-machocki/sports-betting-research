@@ -3222,7 +3222,7 @@ def session_bar_html(summary: dict, session_id: str) -> str:
         status = "stale"
         tip = f"Pinnacle odds over {STALE_MINUTES:g} min old: no run since this one"
     elif status == "finished" and summary.get("pinnacle_captured") is not None:
-        stale_at = f' data-stale-at="{summary["pinnacle_captured"] + STALE_MINUTES * 60:g}"'
+        stale_at = f' data-stale-at="{summary["pinnacle_captured"] + STALE_MINUTES * 60:.0f}"'
 
     colour = STATUS_COLOURS.get(status, OVERVIEW_BLUE)
     label = STATUS_LABELS.get(status, status.capitalize())
