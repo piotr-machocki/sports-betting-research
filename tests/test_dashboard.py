@@ -760,7 +760,7 @@ def test_session_bar_shows_the_start_to_the_minute_without_the_pinnacle_age():
     bar = dashboard.session_bar_html(summary, "session_20261105_151211_abcdef")
     started = dashboard.session_started("session_20261105_151211_abcdef")
 
-    assert f"</span>{started:%m-%d %H:%M}</div>" in bar
+    assert f"</span>{started:%m-%d %H:%M}</span>" in bar
     assert f"{started:%H:%M:%S}" not in bar
     assert " ago" not in bar and "data-since" not in bar
 
