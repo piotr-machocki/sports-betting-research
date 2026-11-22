@@ -176,7 +176,8 @@ def test_coverage_card_lists_pinnacle_books_and_markets():
     stats["matches"] = 38
     card = dm.meters(stats)
     assert '35 <span class="overview-note has-tip" tabindex="0">(3)' in card
-    assert "3 of 35 with a spread wider than the limit" in card
+    assert "3 of 35 with a spread wider than the limit (4 cents)." in card
+    assert "(7 cents)." in dm.meters(stats, 0.07)
     assert "</span></span> / 38" in card
     assert "1 / 38" in card.split("<div>Betclic</div>")[1]
 

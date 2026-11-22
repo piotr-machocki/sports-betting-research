@@ -218,14 +218,14 @@ MARKET_COLOUR, MARKET_LIGHT = "#1f9d55", "rgba(31, 157, 85, 0.4)"
 BOOK_COLOUR = "#2a78d6"
 
 
-def market_count(part: dict, total: int) -> str:
+def market_count(part: dict, total: int, max_spread: float = DEFAULT_MAX_SPREAD) -> str:
     """A market's count as "33 (3) / 38": matches found, the loose ones (spread over
     the limit) greyed in brackets with a tap/hover explanation, then Pinnacle's
     prematch total."""
     loose = part["matched"] - part["tight"]
     tip = (
-        f"{loose} of {part['matched']} with a spread wider than the limit: "
-        "greyed out in the table, EV not trusted."
+        f"{loose} of {part['matched']} with a spread wider than the limit "
+        f"({round(max_spread * 100)} cents)."
     )
     # A tap (tabindex) or hover opens the tip; it opens leftwards from the right edge.
     return (
@@ -235,7 +235,7 @@ def market_count(part: dict, total: int) -> str:
     )
 
 
-def meters(stats: dict) -> str:
+def meters(stats: dict, max_spread: float = DEFAULT_MAX_SPREAD) -> str:
     """Coverage of the matches on Pinnacle's prematch list: Pinnacle (the 100%, yellow),
     each market (green, bright part = tight spread), then each book that priced it (blue)."""
     total = stats["matches"]
@@ -260,7 +260,7 @@ def meters(stats: dict) -> str:
             f'background-color: {MARKET_LIGHT}"></div>'
             f'<div style="position: absolute; width: {share(part["tight"]):.1f}%; '
             f'background-color: {MARKET_COLOUR}"></div></div>'
-            f'<div class="count">{market_count(part, total)}</div>'
+            f'<div class="count">{market_count(part, total, max_spread)}</div>'
         )
     for book, count in stats.get("books", {}).items():
         cells.append(
@@ -323,7 +323,7 @@ def signal_tiles(stats: dict, min_ev: float) -> str:
     return f'<div class="overview-tiles">{"".join(tiles)}</div>'
 
 
-def overview(stats: dict, min_ev: float) -> str:
+def overview(stats: dict, min_ev: float, max_spread: float = DEFAULT_MAX_SPREAD) -> str:
     def card(heading: str, body: str) -> str:
         return (
             f'<div class="overview-card wide"><div class="overview-heading">'
@@ -332,7 +332,7 @@ def overview(stats: dict, min_ev: float) -> str:
 
     return (
         '<section class="overview"><div class="overview-cards">'
-        + card("Matches found", meters(stats))
+        + card("Matches found", meters(stats, max_spread))
         + card("Agreement with Pinnacle", agreement_tiles(stats))
         + "</div><div class=\"overview-cards\">"
         + card("Signals (comparison only, nothing is sent)", signal_tiles(stats, min_ev))
@@ -408,7 +408,7 @@ def render_markets(st) -> None:
         '<div class="label">Run on</div></div>'
         f'<div><div class="value">{age_text(snapshot_time(snapshot), now)}</div>'
         '<div class="label">Markets read</div></div></div>'
-        + overview(stats, min_ev)
+        + overview(stats, min_ev, max_spread)
     )
 
     shown = [m for m in matches if m["markets"]] if on_market else matches
