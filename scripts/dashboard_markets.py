@@ -11,6 +11,7 @@ Tennis page during a run).
 from __future__ import annotations
 
 import html
+import statistics
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -323,7 +324,42 @@ def signal_tiles(stats: dict, min_ev: float) -> str:
     return f'<div class="overview-tiles">{"".join(tiles)}</div>'
 
 
-def overview(stats: dict, min_ev: float, max_spread: float = DEFAULT_MAX_SPREAD) -> str:
+def source_times(snapshot: list[dict]) -> dict[str, datetime]:
+    """Each market's capture time in the file (the newest, should one differ)."""
+    times: dict[str, datetime] = {}
+    for row in snapshot:
+        moment = parse_time(row.get("captured_at"))
+        source = row.get("source")
+        if moment and source in SOURCES and (source not in times or moment > times[source]):
+            times[source] = moment
+    return times
+
+
+def flow_summary(rows: list[dict], snapshot: list[dict], now: datetime) -> tuple[dict, list]:
+    """The Tennis page's Data flow and age, for the markets (user, 22 Nov 2026): the
+    run's Pinnacle age, then each market's median time from a match's Pinnacle
+    capture to the market's. Files before 22 Nov 2026 give both markets one time."""
+    pinnacle = [t for t in (parse_time(row.get("pinnacle_captured_at")) for row in rows) if t]
+    summary: dict[str, Any] = {}
+    if pinnacle:
+        summary["pinnacle_age"] = (now - min(pinnacle)).total_seconds()
+        summary["pinnacle_captured"] = min(pinnacle).timestamp()
+
+    times = source_times(snapshot)
+    gaps = []
+    for source in SOURCES:
+        moment = times.get(source)
+        seconds = (
+            statistics.median((moment - start).total_seconds() for start in pinnacle)
+            if moment and pinnacle else None
+        )
+        gaps.append((seconds, SOURCE_LABELS[source]))
+    return summary, gaps
+
+
+def overview(
+    stats: dict, min_ev: float, max_spread: float = DEFAULT_MAX_SPREAD, flow: str = ""
+) -> str:
     def card(heading: str, body: str) -> str:
         return (
             f'<div class="overview-card wide"><div class="overview-heading">'
@@ -335,6 +371,7 @@ def overview(stats: dict, min_ev: float, max_spread: float = DEFAULT_MAX_SPREAD)
         + card("Matches found", meters(stats, max_spread))
         + card("Agreement with Pinnacle", agreement_tiles(stats))
         + "</div><div class=\"overview-cards\">"
+        + (card("Data flow and age", flow) if flow else "")
         + card("Signals (comparison only, nothing is sent)", signal_tiles(stats, min_ev))
         + "</div></section>"
     )
@@ -398,6 +435,11 @@ def render_markets(st) -> None:
     matches = compare_session(latest_per_match(rows), snapshot, max_spread)
     stats = market_stats(matches, min_ev)
     now = datetime.now(timezone.utc)
+    import dashboard  # loaded already: it runs this page
+
+    summary, gaps = flow_summary(latest_per_match(rows), snapshot, now)
+    summary["pinnacle_source"] = dashboard.pinnacle_source(dashboard.session_info(session_id))
+    flow = dashboard.flow_html(summary, gaps)
     started = datetime.strptime(
         "".join(session_id.split("_")[1:3]), "%Y%m%d%H%M%S"
     ).replace(tzinfo=timezone.utc)
@@ -408,7 +450,7 @@ def render_markets(st) -> None:
         '<div class="label">Run on</div></div>'
         f'<div><div class="value">{age_text(snapshot_time(snapshot), now)}</div>'
         '<div class="label">Markets read</div></div></div>'
-        + overview(stats, min_ev, max_spread)
+        + overview(stats, min_ev, max_spread, flow)
     )
 
     shown = [m for m in matches if m["markets"]] if on_market else matches

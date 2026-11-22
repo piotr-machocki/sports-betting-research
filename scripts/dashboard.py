@@ -2993,6 +2993,13 @@ def overview_flow(summary: dict, books: list[str] = BOOKS) -> str:
     prices, which TABLE_SCRIPT counts on each second, then each book in the order its
     prices came, the arrow giving the time since the box before it. Each gap is the
     median per match from the Pinnacle capture; a book without data comes last."""
+    gaps = [(summary.get(f"{book.lower()}_gap"), book) for book in BOOKS if book in books]
+    return flow_html(summary, gaps)
+
+
+def flow_html(summary: dict, gaps: list[tuple[float | None, str]]) -> str:
+    """overview_flow's diagram for any sources after Pinnacle: (median seconds from
+    the Pinnacle capture or None, name). The Prediction markets tab uses it too."""
     age = summary.get("pinnacle_age")
     age_html = "--"
 
@@ -3018,7 +3025,7 @@ def overview_flow(summary: dict, books: list[str] = BOOKS) -> str:
             '<div class="flow-node">'
             f'<div class="flow-name">Pinnacle</div><div class="flow-sub">{age_html}</div></div>'
         ]
-    gaps = [(summary.get(f"{book.lower()}_gap"), book) for book in BOOKS if book in books]
+    gaps = list(gaps)
     gaps.sort(key=lambda pair: (pair[0] is None, pair[0] or 0))
     before = 0.0
 

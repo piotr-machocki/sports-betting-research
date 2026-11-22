@@ -193,3 +193,33 @@ def test_superbet_price_is_shown_as_the_app_shows_it():
 def test_age_text():
     now = datetime(2026, 11, 20, 16, 25, tzinfo=timezone.utc)
     assert dm.age_text(datetime(2026, 11, 20, 16, 20, 55, tzinfo=timezone.utc), now) == "4 min 5 s ago"
+
+
+def test_flow_names_each_market_after_pinnacle():
+    from datetime import datetime, timezone
+
+    import dashboard
+
+    rows = [
+        {"pinnacle_captured_at": "2026-11-22T13:10:00Z"},
+        {"pinnacle_captured_at": "2026-11-22T13:10:02Z"},
+    ]
+    snapshot = [
+        {"source": "polymarket", "captured_at": "2026-11-22T13:11:01Z"},
+        {"source": "kalshi", "captured_at": "2026-11-22T13:11:03Z"},
+    ]
+    now = datetime(2026, 11, 22, 13, 12, tzinfo=timezone.utc)
+    summary, gaps = dm.flow_summary(rows, snapshot, now)
+
+    assert summary["pinnacle_age"] == 120.0
+    assert gaps == [(60.0, "Polymarket"), (62.0, "Kalshi")]
+    flow = dashboard.flow_html(summary, gaps)
+    assert flow.index("Polymarket") < flow.index("Kalshi")
+    assert "+1m00s" in flow
+    assert "+2.0 s" in flow
+
+    summary, gaps = dm.flow_summary(rows, snapshot[:1], now)
+    assert gaps[1] == (None, "Kalshi") and "No Kalshi prices" in dashboard.flow_html(summary, gaps)
+    assert "Data flow and age" in dm.overview(
+        dm.market_stats([], 0.02), 0.02, flow=dashboard.flow_html(summary, gaps)
+    )

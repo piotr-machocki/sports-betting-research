@@ -276,7 +276,7 @@ def run(run_id: str, show: int = 0) -> int:
 
     for name, fetch in SOURCES.items():
         try:
-            found = fetch(now)
+            found = fetch(utc_now())  # each source's own capture time, for the flow
         except Exception as exc:  # noqa: BLE001 - one source never stops the other
             print(f"WARNING: {name} failed: {type(exc).__name__}: {exc}", flush=True)
             continue
