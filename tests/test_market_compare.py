@@ -192,11 +192,6 @@ def test_superbet_price_is_shown_as_the_app_shows_it():
     assert (record["Book"], record["Price"]) == ("Superbet", "2.50")
 
 
-def test_age_text():
-    now = datetime(2026, 11, 20, 16, 25, tzinfo=timezone.utc)
-    assert dm.age_text(datetime(2026, 11, 20, 16, 20, 55, tzinfo=timezone.utc), now) == "4 min 5 s ago"
-
-
 def test_flow_names_each_market_after_pinnacle():
     from datetime import datetime, timezone
 

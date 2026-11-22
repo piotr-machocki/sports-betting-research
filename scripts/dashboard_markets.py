@@ -28,7 +28,6 @@ from market_compare import (
     market_stats,
     parse_time,
     read_snapshot,
-    snapshot_time,
     trusted_evs,
 )
 
@@ -55,9 +54,6 @@ COLUMN_HELP = {
 
 MARKETS_STYLE = """<style>
 .markets-note { font-size: 13px; color: color-mix(in srgb, currentColor 65%, transparent); }
-.markets-bar { display: flex; flex-wrap: wrap; gap: 4px 28px; margin: 6px 0 10px; }
-.markets-bar .value { font-size: 17px; font-weight: 600; }
-.markets-bar .label { font-size: 12px; color: color-mix(in srgb, currentColor 65%, transparent); }
 /* A phone gets the table too (sideways scroll): there are no cards for this tab. */
 @media (max-width: 700px) { table.matches.markets { display: table; } }
 /* The fork (user, 22 Nov 2026: boxes stretched to fill a row looked odd): the
@@ -444,15 +440,6 @@ def overview(
     )
 
 
-def age_text(moment: datetime | None, now: datetime) -> str:
-    if moment is None:
-        return "--"
-    seconds = max(0, (now - moment).total_seconds())
-    if seconds < 3600:
-        return f"{int(seconds // 60)} min {int(seconds % 60)} s ago"
-    return f"{seconds / 3600:.1f} h ago"
-
-
 def render_markets(st, dash: Any = None) -> None:
     if dash is None:
         import dashboard as dash
@@ -516,7 +503,8 @@ def render_markets(st, dash: Any = None) -> None:
     stats = market_stats(matches, min_ev)
     now = datetime.now(timezone.utc)
     summary, gaps = flow_summary(latest_per_match(rows), snapshot, now)
-    summary["pinnacle_source"] = dash.pinnacle_source(dash.session_info(session_id))
+    info = dash.session_info(session_id)
+    summary["pinnacle_source"] = dash.pinnacle_source(info)
     # Superbet then Betclic, and both markets at once, all started with Superbet.
     by_name = {name: (seconds, name) for seconds, name in gaps}
     flow = dash.fork_html(summary, [
@@ -527,16 +515,15 @@ def render_markets(st, dash: Any = None) -> None:
     record = loader.request_key(track_key, wait=dash.TRACK_WAIT_SECONDS)
     st.session_state["markets_track_loading"] = record is None and loader.error is None
     track = market_track_card(dash, record, min_ev, loader.error)
-    started = datetime.strptime(
-        "".join(session_id.split("_")[1:3]), "%Y%m%d%H%M%S"
-    ).replace(tzinfo=timezone.utc)
+    # The Tennis page's heading (user, 22 Nov 2026): Last run overview with the run's
+    # status, its time and Stale data; the Pinnacle age is in Data flow and age.
+    summary["status"] = str(info.get("status", "running")).lower()
+    summary["failed_sources"] = (
+        dash.failed_sources(session_id) if summary["status"] == "finished" else []
+    )
 
     st.html(
-        '<div class="markets-bar">'
-        f'<div><div class="value">{started.astimezone():%Y-%m-%d %H:%M}</div>'
-        '<div class="label">Run on</div></div>'
-        f'<div><div class="value">{age_text(snapshot_time(snapshot), now)}</div>'
-        '<div class="label">Markets read</div></div></div>'
+        dash.session_bar_html(summary, session_id)
         + overview(stats, max_spread, flow, track)
     )
 
