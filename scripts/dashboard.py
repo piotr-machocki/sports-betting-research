@@ -1990,8 +1990,9 @@ class TrackLoader:
     def request(self, min_ev: float, books: list[str], wait: float = 0.0) -> dict | None:
         """Works the record out again (the sessions may have changed) and returns it
         if that takes at most wait, else the last one for this choice, or None."""
-        key = (min_ev, tuple(books))
+        return self.request_key((min_ev, tuple(books)), wait)
 
+    def request_key(self, key: tuple, wait: float = 0.0) -> dict | None:
         with self.done:
             self.wanted = key
             self.finished = None
@@ -2004,8 +2005,21 @@ class TrackLoader:
             return self.results.get(key)
 
     def ready(self, min_ev: float, books: list[str]) -> bool:
+        return self.ready_key((min_ev, tuple(books)))
+
+    def ready_key(self, key: tuple) -> bool:
         with self.done:
-            return (min_ev, tuple(books)) in self.results or self.error is not None
+            return key in self.results or self.error is not None
+
+    def compute(self, key: tuple, sources: dict) -> dict:
+        """The record for one choice; a subclass works out another card."""
+        import recheck_signals
+
+        return track_record(
+            list_sessions(), self.cache, sources, key[0],
+            datetime.now(timezone.utc), list(key[1]),
+            rechecks=recheck_signals.load_rechecks(),
+        )
 
     def work(self) -> None:
         while True:
@@ -2021,13 +2035,7 @@ class TrackLoader:
                     sources = load_outcome_sources(self.sources_cache)
 
                 held = flag_signatures(self.cache)
-                import recheck_signals
-
-                record = track_record(
-                    list_sessions(), self.cache, sources, key[0],
-                    datetime.now(timezone.utc), list(key[1]),
-                    rechecks=recheck_signals.load_rechecks(),
-                )
+                record = self.compute(key, sources)
                 error = None
 
                 if self.cache_file and flag_signatures(self.cache) != held:
@@ -2059,6 +2067,39 @@ def track_loader() -> TrackLoader:
     import streamlit as st
 
     return TrackLoader(st.cache_resource(show_spinner=False)(outcomes_cache)())
+
+
+# The Prediction markets tab's Statistics (scripts/market_track.py), kept like the
+# track record's: matching a run to its market file costs about 0.5 s on the VM.
+MARKET_CACHE_FILE = ROOT / "data" / "cache" / "market_flags.pkl"
+MARKET_RESULTS_FILE = ROOT / "data" / "cache" / "market_results.pkl"
+
+
+class MarketTrackLoader(TrackLoader):
+    """TrackLoader for the markets' signals; a key is (minimum EV, maximum spread)."""
+
+    def __init__(
+        self,
+        sources_cache: dict,
+        cache_file: Path | None = MARKET_CACHE_FILE,
+        results_file: Path | None = MARKET_RESULTS_FILE,
+    ) -> None:
+        super().__init__(sources_cache, cache_file, results_file)
+
+    def compute(self, key: tuple, sources: dict) -> dict:
+        import market_track
+
+        return market_track.market_record(
+            sys.modules[__name__], market_track.market_sessions(), self.cache, sources,
+            key[0], key[1], datetime.now(timezone.utc),
+        )
+
+
+def market_loader() -> MarketTrackLoader:
+    """Held by st.cache_resource; shares the outcome sources with the track record."""
+    import streamlit as st
+
+    return MarketTrackLoader(st.cache_resource(show_spinner=False)(outcomes_cache)())
 
 
 def filter_records(
@@ -4078,7 +4119,9 @@ def render_markets(st) -> None:
     """Polymarket and Kalshi against Pinnacle and the books (dashboard_markets.py)."""
     from dashboard_markets import render_markets as render
 
-    render(st)
+    # This module, so the markets page shares its caches and lock (run by streamlit,
+    # it is __main__, and "import dashboard" there would load a second copy).
+    render(st, sys.modules[__name__])
 
 
 def render_basketball(st) -> None:

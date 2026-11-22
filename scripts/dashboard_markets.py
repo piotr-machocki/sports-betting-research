@@ -58,8 +58,6 @@ MARKETS_STYLE = """<style>
 .markets-bar { display: flex; flex-wrap: wrap; gap: 4px 28px; margin: 6px 0 10px; }
 .markets-bar .value { font-size: 17px; font-weight: 600; }
 .markets-bar .label { font-size: 12px; color: color-mix(in srgb, currentColor 65%, transparent); }
-.markets-source { font-weight: 600; margin: 2px 0 0; }
-.markets-tiles + .markets-source { margin-top: 6px; }
 /* A phone gets the table too (sideways scroll): there are no cards for this tab. */
 @media (max-width: 700px) { table.matches.markets { display: table; } }
 /* The fork (user, 22 Nov 2026: boxes stretched to fill a row looked odd): the
@@ -226,15 +224,6 @@ def table_html(records: list[dict]) -> str:
     )
 
 
-def tile(label: str, value: str, help_text: str, style: str = "") -> str:
-    css = f' style="{style}"' if style else ""
-    return (
-        f'<div class="overview-tile" title="{html.escape(help_text)}">'
-        f'<div class="value"{css}>{html.escape(value)}</div>'
-        f'<div class="label">{html.escape(label)}</div></div>'
-    )
-
-
 # Bar colours by kind: sharp reference, prediction market, soft book.
 SHARP_COLOUR = "#e0a526"
 MARKET_COLOUR, MARKET_LIGHT = "#1f9d55", "rgba(31, 157, 85, 0.4)"
@@ -295,55 +284,89 @@ def meters(stats: dict, max_spread: float = DEFAULT_MAX_SPREAD) -> str:
     return f'<div class="overview-meters">{"".join(cells)}</div>'
 
 
-def agreement_tiles(stats: dict) -> str:
-    parts = []
-    for source in SOURCES:
-        part = stats["sources"][source]
-        compared = part["compared"]
-        gap = part["median_abs_gap"]
+def pct(value: float | None, signed: bool = True) -> str:
+    if value is None:
+        return "--"
+    return f"{value:+.1%}" if signed else f"{value:.0%}"
+
+
+def market_track_card(dash: Any, record: dict | None, min_ev: float, error: str | None) -> str:
+    """Statistics (all runs) for the market signals (scripts/market_track.py), one row
+    of tiles per reference, like the Tennis page's Track record (user, 22 Nov 2026:
+    it replaced the Agreement with Pinnacle and Signals cards)."""
+    if not record:
+        if record is not None:
+            text = f"No match has reached EV ≥ {min_ev:.1%} against a market before its start yet."
+            body = f'<div class="overview-empty">{html.escape(text)}</div>'
+        elif error:
+            body = f'<div class="overview-empty">Could not work it out: {html.escape(error)}</div>'
+        else:
+            body = (
+                '<div class="overview-empty overview-loading"><span class="spinner"></span>'
+                "<span>Loading (a few minutes the first time)…</span></div>"
+            )
+        return f'<div class="overview-card">{body}</div>'
+
+    rows = []
+    for reference, stats in record.items():
+        expected, margin = stats["expected"], stats["roi_margin"]
+        agree_share = stats["agree"] / stats["signals"] if stats["signals"] else None
+        what = (
+            "the mean of Polymarket and Kalshi, both within the spread limit"
+            if reference == "Average" else f"{reference}, within the spread limit"
+        )
         tiles = [
-            tile(
-                "Median gap",
-                "--" if gap is None else f"{gap * 100:.1f} pp",
-                "Median distance between the market's probability and Pinnacle's, "
-                f"over {compared} prematch matches with a tight spread.",
+            dash.tip_tile(
+                "Signals", str(stats["signals"]),
+                f"Betclic or Superbet prices with EV ≥ {min_ev:.1%} against {what}; "
+                "each match once, at its first flag before the start. Logged only, "
+                "nothing is sent.",
             ),
-            tile(
-                "Within 2 pp",
-                f"{part['within_2pp'] / compared:.0%}" if compared else "--",
-                f"{part['within_2pp']} of {compared} matches within 2 percentage points.",
+            dash.tip_tile(
+                "Agree w/ Pinnacle",
+                f"{stats['agree']} ({pct(agree_share, signed=False)})",
+                f"Signals where Pinnacle also gave the price EV ≥ {min_ev:.1%} at the flag. "
+                f"Mean CLV: agreeing {pct(stats['agree_clv'])}, market only "
+                f"{pct(stats['alone_clv'])}.",
             ),
-            tile(
-                "Favourite differs",
-                str(part["flips"]),
-                "Matches where the market and Pinnacle pick a different favourite.",
+            dash.overview_tile(
+                "Avg CLV", pct(stats["clv"]),
+                f"Mean CLV of the {stats['clv_count']} started matches: the flagged price "
+                "against Pinnacle's last power-devigged price before the start.",
+                dash.signed_css(stats["clv"]),
+            ),
+            dash.overview_tile(
+                "CLV > 0", pct(stats["clv_positive"], signed=False),
+                f"Share of the {stats['clv_count']} started matches whose price beat the close",
+            ),
+            dash.overview_tile(
+                "Won-Lost", f"{stats['won']}-{stats['lost']}", "Completed matches only",
+            ),
+            dash.overview_tile(
+                "Win rate" + (f" (exp. {expected:.0%})" if expected is not None else ""),
+                pct(stats["win_rate"], signed=False),
+                f"Won share of completed matches; expected = mean of {reference}'s "
+                "probability for the side bet",
+            ),
+            dash.overview_tile(
+                "ROI" + (f" ±{margin:.0%}" if margin is not None else ""), pct(stats["roi"]),
+                "Profit per stake of 1 on completed matches, with its 95% range.",
+                dash.signed_css(stats["roi"]),
+            ),
+            dash.overview_tile(
+                "Units", f"{stats['units']:+.2f}",
+                "Total profit at a stake of 1 per completed match",
+                dash.signed_css(stats["units"]),
+            ),
+            dash.overview_tile(
+                "Avg EV", pct(stats["ev"]), "Mean EV at the first flag, what the prices promised",
             ),
         ]
-        parts.append(
-            f'<div class="markets-source">{SOURCE_LABELS[source]}</div>'
-            f'<div class="overview-tiles markets-tiles">{"".join(tiles)}</div>'
+        rows.append(
+            f'<div class="track-book">{html.escape(reference)}</div>'
+            f'<div class="overview-tiles">{"".join(tiles)}</div>'
         )
-    return "".join(parts)
-
-
-def signal_tiles(stats: dict, min_ev: float) -> str:
-    threshold = f"EV ≥ {min_ev * 100:.1f}%"
-    tiles = [
-        tile("vs Pinnacle", str(stats["pinnacle_positive"]),
-             f"Matches where a book's price has {threshold} against Pinnacle."),
-    ]
-    for source in SOURCES:
-        tiles.append(
-            tile(f"vs {SOURCE_LABELS[source]}", str(stats["sources"][source]["positive"]),
-                 f"Matches where a book's price has {threshold} against "
-                 f"{SOURCE_LABELS[source]} (tight spreads only).")
-        )
-    tiles.append(
-        tile("Agree", str(stats["agreeing"]),
-             f"{threshold} against Pinnacle and every tight market, on the same side.",
-             "color: #1f9d55" if stats["agreeing"] else "")
-    )
-    return f'<div class="overview-tiles">{"".join(tiles)}</div>'
+    return f'<div class="overview-card"><div class="track-rows">{"".join(rows)}</div></div>'
 
 
 def source_times(snapshot: list[dict]) -> dict[str, datetime]:
@@ -394,7 +417,7 @@ def flow_summary(rows: list[dict], snapshot: list[dict], now: datetime) -> tuple
 
 
 def overview(
-    stats: dict, min_ev: float, max_spread: float = DEFAULT_MAX_SPREAD, flow: str = ""
+    stats: dict, max_spread: float = DEFAULT_MAX_SPREAD, flow: str = "", track: str = ""
 ) -> str:
     def card(heading: str, body: str) -> str:
         return (
@@ -406,10 +429,12 @@ def overview(
         '<section class="overview"><div class="overview-cards">'
         + card("Matches found", meters(stats, max_spread))
         + (card("Data flow and age", f'<div class="markets-flow">{flow}</div>') if flow else "")
-        + "</div><div class=\"overview-cards\">"
-        + card("Agreement with Pinnacle", agreement_tiles(stats))
-        + card("Signals (comparison only, nothing is sent)", signal_tiles(stats, min_ev))
-        + "</div></section>"
+        + "</div>"
+        + (
+            '<div class="overview-title">Statistics (all runs)</div>'
+            f'<div class="overview-cards">{track}</div>' if track else ""
+        )
+        + "</section>"
     )
 
 
@@ -422,7 +447,9 @@ def age_text(moment: datetime | None, now: datetime) -> str:
     return f"{seconds / 3600:.1f} h ago"
 
 
-def render_markets(st) -> None:
+def render_markets(st, dash: Any = None) -> None:
+    if dash is None:
+        import dashboard as dash
     with st.sidebar:
         min_ev = st.slider(
             "Minimum EV", 0.0, MAX_MIN_EV_PERCENT, DEFAULT_MIN_EV_PERCENT, 0.1,
@@ -443,15 +470,21 @@ def render_markets(st) -> None:
     st.html(MARKETS_STYLE)
     st.html(
         '<div class="markets-note">Polymarket and Kalshi against Pinnacle, for '
-        "comparison only: no Telegram alerts, and nothing here counts in the Tennis "
-        "page or its Track record until the markets have been checked against closing "
-        "lines and results. A market's probability is the middle of its bid and ask.</div>"
+        "comparison only: their signals are logged under Statistics, but nothing is sent "
+        "to Telegram or counts on the Tennis page until they have proved themselves "
+        "against closing lines and results. A market's probability is the middle of its "
+        "bid and ask.</div>"
     )
+
+    loader = st.cache_resource(show_spinner=False)(dash.market_loader)()
+    track_key = (min_ev, max_spread)
 
     @st.fragment(run_every=IDLE_REFRESH_SECONDS)
     def watch() -> None:
         pair = newest_pair()
-        if pair != st.session_state.get("markets_drawn"):
+        # A new run, or the Statistics card has finished loading.
+        arrived = st.session_state.get("markets_track_loading") and loader.ready_key(track_key)
+        if pair != st.session_state.get("markets_drawn") or arrived:
             st.rerun(scope="app")
 
     pair = newest_pair()
@@ -471,17 +504,18 @@ def render_markets(st) -> None:
     matches = compare_session(latest_per_match(rows), snapshot, max_spread)
     stats = market_stats(matches, min_ev)
     now = datetime.now(timezone.utc)
-    import dashboard  # loaded already: it runs this page
-
     summary, gaps = flow_summary(latest_per_match(rows), snapshot, now)
-    summary["pinnacle_source"] = dashboard.pinnacle_source(dashboard.session_info(session_id))
+    summary["pinnacle_source"] = dash.pinnacle_source(dash.session_info(session_id))
     # Superbet then Betclic, and both markets at once, all started with Superbet.
     by_name = {name: (seconds, name) for seconds, name in gaps}
-    flow = dashboard.fork_html(summary, [
+    flow = dash.fork_html(summary, [
         [by_name["Superbet"], by_name["Betclic"]],
         [by_name["Polymarket"]],
         [by_name["Kalshi"]],
     ])
+    record = loader.request_key(track_key, wait=dash.TRACK_WAIT_SECONDS)
+    st.session_state["markets_track_loading"] = record is None and loader.error is None
+    track = market_track_card(dash, record, min_ev, loader.error)
     started = datetime.strptime(
         "".join(session_id.split("_")[1:3]), "%Y%m%d%H%M%S"
     ).replace(tzinfo=timezone.utc)
@@ -492,7 +526,7 @@ def render_markets(st) -> None:
         '<div class="label">Run on</div></div>'
         f'<div><div class="value">{age_text(snapshot_time(snapshot), now)}</div>'
         '<div class="label">Markets read</div></div></div>'
-        + overview(stats, min_ev, max_spread, flow)
+        + overview(stats, max_spread, flow, track)
     )
 
     shown = [m for m in matches if m["markets"]] if on_market else matches

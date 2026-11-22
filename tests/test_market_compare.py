@@ -161,7 +161,9 @@ def test_dashboard_record_and_table():
     assert record["Agree"] == dm.CHECK
     html = dm.table_html([record])
     assert 'class="matches markets"' in html and "Jay Dylan Hara Friend" in html
-    assert "Agreement with Pinnacle" in dm.overview(mc.market_stats([match], 0.02), 0.02)
+    card = dm.overview(mc.market_stats([match], 0.02), 0.04, track="<i>stats</i>")
+    assert "Agreement with Pinnacle" not in card and "Signals (comparison" not in card
+    assert "Statistics (all runs)" in card and "<i>stats</i>" in card
 
 
 def test_coverage_card_lists_pinnacle_books_and_markets():
@@ -224,7 +226,7 @@ def test_flow_names_each_market_after_pinnacle():
     summary, gaps = dm.flow_summary(rows, snapshot[:1], now)
     assert gaps[3] == (None, "Kalshi") and "No Kalshi prices" in dashboard.flow_html(summary, gaps)
     assert "Data flow and age" in dm.overview(
-        dm.market_stats([], 0.02), 0.02, flow=dashboard.flow_html(summary, gaps)
+        dm.market_stats([], 0.02), 0.04, flow=dashboard.flow_html(summary, gaps)
     )
 
 
@@ -241,3 +243,63 @@ def test_fork_shows_parallel_reads_as_branches_from_pinnacle():
     assert "Superbet" in branches[0] and "+0.4 s" in branches[0] and "+18.0 s" in branches[0]
     assert "+0.8 s" in branches[1]  # from Pinnacle, not from Superbet
     assert "Kalshi" in branches[2] and "No Kalshi prices" in branches[2]  # no data: last
+
+
+def write_run(tmp_path, session_id, rows, markets):
+    """A session CSV and its market file, as run_once and tennis_markets save them."""
+    import csv
+    import gzip
+
+    sessions = tmp_path / "sessions"
+    sessions.mkdir(exist_ok=True)
+    with (sessions / f"{session_id}.csv").open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    folder = tmp_path / "markets" / "2026-11-20"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{session_id}.csv.gz"
+    with gzip.open(path, "wt", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=list(markets[0]))
+        writer.writeheader()
+        writer.writerows(markets)
+    return sessions, path
+
+
+def test_market_signals_are_judged_like_the_track_record(tmp_path, monkeypatch):
+    import dashboard
+    import market_track as mt
+
+    row = session_row(pinnacle_captured_at="2026-11-20T16:19:00Z", observation_id="obs-1")
+    kalshi = market(source="kalshi", bid1=0.40, ask1=0.50, bid2=0.50, ask2=0.60)  # 10 cents wide
+    sessions, path = write_run(tmp_path, "session_20261120_161900_aaaaaa", [row], [market(), kalshi])
+    monkeypatch.setattr(mt, "SESSIONS_DIR", sessions)
+
+    found = mt.market_sessions(tmp_path / "markets")
+    assert list(found) == ["session_20261120_161900_aaaaaa"]
+    cache = {}
+    (candidate,) = mt.session_candidates("session_20261120_161900_aaaaaa", path, cache)
+    assert candidate["Bet on"] == "Liam Broady" and candidate["_price"] == 2.30
+    assert set(candidate["_markets"]) == {"Polymarket", "Kalshi"}
+    assert mt.session_candidates("session_20261120_161900_aaaaaa", path, {**cache}) == [candidate]
+
+    sources = {"sightings": {}, "by_day": {}, "covered": None, "signature": 1}
+    now = datetime(2026, 11, 20, 18, tzinfo=timezone.utc)  # before the start: pending
+    record = mt.market_record(dashboard, found, cache, sources, 0.02, 0.04, now)
+
+    # Kalshi's spread is over 4 cents, so it and the average have no signal.
+    assert list(record) == ["Polymarket"]
+    stats = record["Polymarket"]
+    assert stats["signals"] == 1 and stats["pending"] == 1
+    assert stats["ev"] == pytest.approx(2.30 * 0.46 - 1)
+    assert stats["agree"] == 1  # Pinnacle: 2.30 x 0.458 - 1 = +5.3%
+
+    wide = mt.market_record(dashboard, found, cache, sources, 0.02, 0.10, now)
+    assert list(wide) == ["Polymarket", "Kalshi", "Average"]
+    assert wide["Average"]["ev"] == pytest.approx(2.30 * (0.46 + 0.45) / 2 - 1)
+
+    card = dm.market_track_card(dashboard, wide, 0.02, None)
+    assert card.count('class="track-book"') == 3 and "Agree w/ Pinnacle" in card
+    assert "Loading" in dm.market_track_card(dashboard, None, 0.02, None)
+    assert "No match has reached" in dm.market_track_card(dashboard, {}, 0.02, None)
