@@ -70,4 +70,5 @@ CITY_ALIASES = {
     "finaly": "finals",
     # --- added automatically: tournaments found under another name ---
     "trnawa": "trnava",
+    "playford": "sydney",
 }
