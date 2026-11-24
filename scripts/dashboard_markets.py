@@ -472,16 +472,19 @@ def render_markets(st, dash: Any = None) -> None:
     longshots = dash.longshots_setting(st, "markets_longshots")
     track_key = (min_ev, max_spread, longshots)
     record = loader.request_key(track_key, wait=dash.TRACK_WAIT_SECONDS)
-    track_loading = dash.toggle_loading(st, "markets_longshots", loader, track_key, record)
+    track_opening, track_clicked = dash.card_loading(
+        st, "markets_longshots", loader, track_key, record
+    )
+    track_loading = track_opening or track_clicked
 
     # Every second while the Statistics card loads, so its tick comes quickly.
     @st.fragment(run_every=1 if track_loading else IDLE_REFRESH_SECONDS)
     def watch() -> None:
         pair = newest_pair()
         # A new run, or the Statistics card has finished loading.
-        arrived = track_loading and not dash.toggle_loading(
+        arrived = track_loading and not any(dash.card_loading(
             st, "markets_longshots", loader, track_key, loader.results.get(track_key)
-        )
+        ))
         if pair != st.session_state.get("markets_drawn") or arrived:
             st.rerun(scope="app")
 
@@ -522,7 +525,9 @@ def render_markets(st, dash: Any = None) -> None:
         dash.session_bar_html(summary, session_id)
         + overview(stats, max_spread, flow)
     )
-    dash.statistics_section(st, "markets_longshots", "markets", track, track_loading)
+    dash.statistics_section(
+        st, "markets_longshots", "markets", track, track_clicked, track_opening
+    )
 
     shown = [m for m in matches if m["markets"]] if on_market else matches
     needle = player.strip().lower()

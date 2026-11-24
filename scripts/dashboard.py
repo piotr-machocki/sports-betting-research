@@ -705,6 +705,10 @@ OVERVIEW_STYLE = """<style>
 /* Beside Include long shots: a spinner while the card is worked out again, then a
    green tick that fades once the new numbers are shown (user, 22 Nov 2026). */
 .toggle-status { display: flex; align-items: center; min-height: 24px; }
+/* Beside the Statistics (all runs) title: the same while a newly opened tab waits for
+   numbers worked out after it opened (user, 24 Nov 2026). */
+.stats-title { display: flex; align-items: center; gap: 8px; }
+.title-status { display: inline-flex; align-items: center; }
 .toggle-tick {
     color: #1f9d55;
     font-weight: 700;
@@ -715,7 +719,7 @@ OVERVIEW_STYLE = """<style>
 @keyframes tick-fade { 0% { opacity: 0; } 5%, 60% { opacity: 1; } 100% { opacity: 0; } }
 /* Even when the new numbers come at once, the spinner shows for about a second first
    (user, 22 Nov 2026: to see that the card was worked out again). */
-.toggle-status .spinner.brief { animation: spin 0.8s linear infinite, vanish 0.9s step-end forwards; }
+.toggle-status .spinner.brief, .title-status .spinner.brief { animation: spin 0.8s linear infinite, vanish 0.9s step-end forwards; }
 @keyframes vanish { to { width: 0; height: 0; border-width: 0; } }
 /* The browser's own spinner right after a click (TABLE_SCRIPT adds .busy). */
 .st-key-track_longshots.busy, .st-key-markets_longshots.busy {
@@ -3385,56 +3389,93 @@ LONGSHOT_HELP = {
 
 def longshots_setting(st: Any, key: str) -> bool:
     """The Include long shots value before its checkbox is drawn (statistics_section
-    draws it under the Statistics title, after the card's record was asked for)."""
+    draws it under the Statistics title, after the card's record was asked for). Also
+    notes when this tab opened, before its first request (opening_loading)."""
+    st.session_state.setdefault(f"{key}_opened", time.time())
     return bool(st.session_state.setdefault(key, True))
 
 
 # After a click the spinner waits at most this long for fresh numbers (another tab
 # asking for another choice could keep the loader busy elsewhere).
 TOGGLE_MAX_WAIT_SECONDS = 20
-# When a tab first opens the card may show saved numbers from an earlier server; the
-# spinner waits this long for fresh ones (a cold read takes 25-45 s on the VM).
+# A newly opened tab may show saved numbers from before; the title's spinner waits this
+# long for fresh ones (a cold read after a restart takes 25-45 s on the VM).
 OPEN_MAX_WAIT_SECONDS = 60
+
+
+def opening_loading(
+    st: Any, key: str, loader: TrackLoader, track_key: tuple, record: dict | None
+) -> bool:
+    """Whether the whole Statistics card is loading, shown beside its title (user, 24
+    Nov 2026): nothing to show yet, or this tab has not yet seen numbers worked out
+    after it opened (the first ones may be the saved, out-of-date ones). Once that is
+    over it stays over for the tab, and the title gets its tick (statistics_section)."""
+    if record is None and loader.error is None:
+        return True
+    if st.session_state.get(f"{key}_fresh"):
+        return False
+    opened = st.session_state.get(f"{key}_opened", 0.0)
+    if time.time() - opened <= OPEN_MAX_WAIT_SECONDS and not loader.done_since(
+        track_key, opened
+    ):
+        return True
+    st.session_state[f"{key}_fresh"] = True
+    st.session_state[f"{key}_fresh_tick"] = True
+    return False
 
 
 def toggle_loading(
     st: Any, key: str, loader: TrackLoader, track_key: tuple, record: dict | None
 ) -> bool:
-    """Whether the Statistics card is loading: nothing to show yet, or the long-shot
-    box was clicked and the loader has not worked that choice out afresh since (user,
-    22 Nov 2026: saved numbers showed at once, so the spinner never showed and the
-    tick did not mean they had been recalculated). A newly opened tab counts as a
-    click (user, 24 Nov 2026: the first numbers shown may be out of date), with a
-    longer wait for the cold read."""
-    if f"{key}_since" not in st.session_state:
-        st.session_state[f"{key}_since"] = time.time()
-        st.session_state[f"{key}_pending"] = True
-        st.session_state[f"{key}_wait"] = OPEN_MAX_WAIT_SECONDS
-    if record is None and loader.error is None:
-        return True
+    """Whether the long-shot box was clicked and the loader has not worked that choice
+    out afresh since (user, 22 Nov 2026: saved numbers showed at once, so the spinner
+    never showed and the tick did not mean they had been recalculated). The card
+    loading as a whole is opening_loading's, beside the title."""
     if not st.session_state.get(f"{key}_pending"):
         return False
+    if record is None and loader.error is None:
+        return True
     since = st.session_state.get(f"{key}_since", 0.0)
-    wait = st.session_state.get(f"{key}_wait", TOGGLE_MAX_WAIT_SECONDS)
-    if time.time() - since > wait:
+    if time.time() - since > TOGGLE_MAX_WAIT_SECONDS:
         return False
     return not loader.done_since(track_key, since)
 
 
-def statistics_section(st: Any, key: str, help_key: str, card: str, loading: bool) -> None:
+def card_loading(
+    st: Any, key: str, loader: TrackLoader, track_key: tuple, record: dict | None
+) -> tuple[bool, bool]:
+    """(opening, clicked): the title's spinner and the long-shot box's."""
+    return (
+        opening_loading(st, key, loader, track_key, record),
+        toggle_loading(st, key, loader, track_key, record),
+    )
+
+
+def statistics_section(
+    st: Any, key: str, help_key: str, card: str, loading: bool, opening: bool = False
+) -> None:
     """Statistics (all runs) with Include long shots under its title (user, 22 Nov
-    2026: out of the sidebar, easy to flip on a phone), a spinner beside it while the
-    card is worked out again and a fading green tick once the new numbers are in."""
+    2026: out of the sidebar, easy to flip on a phone), a spinner beside the box while
+    the card is worked out again after a click and a fading green tick once the new
+    numbers are in; the same beside the title while a newly opened tab waits for
+    fresh numbers (opening, user 24 Nov 2026)."""
     pending = f"{key}_pending"
     count = f"{key}_changes"
 
     def changed() -> None:
         st.session_state[pending] = True
         st.session_state[f"{key}_since"] = time.time()
-        st.session_state[f"{key}_wait"] = TOGGLE_MAX_WAIT_SECONDS
         st.session_state[count] = st.session_state.get(count, 0) + 1
 
-    st.html('<div class="overview-title">Statistics (all runs)</div>')
+    status = ""
+    if opening:
+        status = '<span class="title-status"><span class="spinner"></span></span>'
+    elif st.session_state.pop(f"{key}_fresh_tick", False):
+        status = (
+            '<span class="title-status"><span class="spinner brief"></span>'
+            '<span class="toggle-tick">✓</span></span>'
+        )
+    st.html(f'<div class="overview-title stats-title">Statistics (all runs){status}</div>')
 
     with st.container(horizontal=True, vertical_alignment="center", gap="small"):
         st.checkbox(
@@ -4501,7 +4542,8 @@ def render_tennis(st) -> None:
     longshots = longshots_setting(st, "track_longshots")
     record = loader.request(filters["min_ev"], books, wait=TRACK_WAIT_SECONDS, longshots=longshots)
     track_key = (filters["min_ev"], tuple(books), longshots)
-    track_loading = toggle_loading(st, "track_longshots", loader, track_key, record)
+    track_opening, track_clicked = card_loading(st, "track_longshots", loader, track_key, record)
+    track_loading = track_opening or track_clicked
     track = track_card(record, filters["min_ev"], books, loader.error)
 
     @st.fragment(run_every=REFRESH_SECONDS if running or track_loading else IDLE_REFRESH_SECONDS)
@@ -4514,9 +4556,9 @@ def render_tennis(st) -> None:
         fresh, signature = load_rows(st, newest_table) if newest_table else ([], None)
 
         still_running = bool(header_session) and is_running(header_session)
-        track_arrived = track_loading and not toggle_loading(
+        track_arrived = track_loading and not any(card_loading(
             st, "track_longshots", loader, track_key, loader.results.get(track_key)
-        )
+        ))
 
         if signature != drawn or still_running != running or track_arrived:
             st.rerun(scope="app")
@@ -4540,7 +4582,9 @@ def render_tennis(st) -> None:
     # Statistics (all runs) outside the header's fragment, so its checkbox is drawn
     # once per full run; a full run follows any change and the card's arrival.
     with track_box:
-        statistics_section(st, "track_longshots", "tennis", track, track_loading)
+        statistics_section(
+            st, "track_longshots", "tennis", track, track_clicked, track_opening
+        )
 
     if table_session:
         render_table(table_box, table_session, rows, filters, all_records, outcomes)

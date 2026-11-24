@@ -2094,6 +2094,35 @@ def test_sightings_come_back_from_their_file_after_a_restart(monkeypatch, tmp_pa
     assert len(dashboard.load_sightings_cache(cache_file)["files"]) == 3
 
 
+def test_a_newly_opened_tab_spins_beside_the_title_until_fresh_numbers_are_in():
+    import time
+    from types import SimpleNamespace
+
+    loader = dashboard.TrackLoader({}, cache_file=None, results_file=None)
+    key = (0.02, ("Betclic",), False)
+    saved = {"Betclic": {"signals": 1}}
+    page = SimpleNamespace(session_state={})
+    dashboard.longshots_setting(page, "box")
+
+    # Nothing at all, or only numbers worked out before the tab opened: loading.
+    assert dashboard.card_loading(page, "box", loader, key, None) == (True, False)
+    loader.computed[key] = page.session_state["box_opened"] - 5
+    assert dashboard.card_loading(page, "box", loader, key, saved) == (True, False)
+
+    # Worked out after it opened: done for good, with one tick for the title.
+    loader.computed[key] = time.time() + 1
+    assert dashboard.card_loading(page, "box", loader, key, saved) == (False, False)
+    assert page.session_state.pop("box_fresh_tick")
+    loader.computed.clear()
+    assert not dashboard.opening_loading(page, "box", loader, key, saved)
+    assert "box_fresh_tick" not in page.session_state
+
+    # A loader that never gets to it does not keep the spinner forever.
+    other = SimpleNamespace(session_state={})
+    other.session_state["box_opened"] = time.time() - dashboard.OPEN_MAX_WAIT_SECONDS - 1
+    assert not dashboard.opening_loading(other, "box", loader, key, saved)
+
+
 def test_after_a_click_the_card_loads_until_fresh_numbers_are_in(monkeypatch):
     import time
     from types import SimpleNamespace
@@ -2103,24 +2132,14 @@ def test_after_a_click_the_card_loads_until_fresh_numbers_are_in(monkeypatch):
     saved = {"Betclic": {"signals": 1}}
     page = SimpleNamespace(session_state={})
 
-    # A newly opened tab: the saved numbers may be old, so loading until fresh ones.
-    assert dashboard.toggle_loading(page, "box", loader, key, saved)
-    assert page.session_state["box_wait"] == dashboard.OPEN_MAX_WAIT_SECONDS
-    loader.computed[key] = time.time() + 1
+    # Nothing clicked: the box has no spinner (the title has the loading one).
     assert not dashboard.toggle_loading(page, "box", loader, key, saved)
-    loader.computed.clear()
-
-    # Nothing clicked: saved numbers are not loading; nothing at all is.
-    page.session_state["box_pending"] = False
-    assert not dashboard.toggle_loading(page, "box", loader, key, saved)
-    assert dashboard.toggle_loading(page, "box", loader, key, None)
+    assert not dashboard.toggle_loading(page, "box", loader, key, None)
 
     # Clicked: loading until the loader has worked this choice out after the click.
-    page.session_state.update(
-        {"box_pending": True, "box_since": time.time(),
-         "box_wait": dashboard.TOGGLE_MAX_WAIT_SECONDS}
-    )
+    page.session_state.update({"box_pending": True, "box_since": time.time()})
     assert dashboard.toggle_loading(page, "box", loader, key, saved)
+    assert dashboard.toggle_loading(page, "box", loader, key, None)
     loader.computed[key] = time.time() + 1
     assert not dashboard.toggle_loading(page, "box", loader, key, saved)
 
