@@ -3392,6 +3392,9 @@ def longshots_setting(st: Any, key: str) -> bool:
 # After a click the spinner waits at most this long for fresh numbers (another tab
 # asking for another choice could keep the loader busy elsewhere).
 TOGGLE_MAX_WAIT_SECONDS = 20
+# When a tab first opens the card may show saved numbers from an earlier server; the
+# spinner waits this long for fresh ones (a cold read takes 25-45 s on the VM).
+OPEN_MAX_WAIT_SECONDS = 60
 
 
 def toggle_loading(
@@ -3400,13 +3403,20 @@ def toggle_loading(
     """Whether the Statistics card is loading: nothing to show yet, or the long-shot
     box was clicked and the loader has not worked that choice out afresh since (user,
     22 Nov 2026: saved numbers showed at once, so the spinner never showed and the
-    tick did not mean they had been recalculated)."""
+    tick did not mean they had been recalculated). A newly opened tab counts as a
+    click (user, 24 Nov 2026: the first numbers shown may be out of date), with a
+    longer wait for the cold read."""
+    if f"{key}_since" not in st.session_state:
+        st.session_state[f"{key}_since"] = time.time()
+        st.session_state[f"{key}_pending"] = True
+        st.session_state[f"{key}_wait"] = OPEN_MAX_WAIT_SECONDS
     if record is None and loader.error is None:
         return True
     if not st.session_state.get(f"{key}_pending"):
         return False
     since = st.session_state.get(f"{key}_since", 0.0)
-    if time.time() - since > TOGGLE_MAX_WAIT_SECONDS:
+    wait = st.session_state.get(f"{key}_wait", TOGGLE_MAX_WAIT_SECONDS)
+    if time.time() - since > wait:
         return False
     return not loader.done_since(track_key, since)
 
@@ -3421,6 +3431,7 @@ def statistics_section(st: Any, key: str, help_key: str, card: str, loading: boo
     def changed() -> None:
         st.session_state[pending] = True
         st.session_state[f"{key}_since"] = time.time()
+        st.session_state[f"{key}_wait"] = TOGGLE_MAX_WAIT_SECONDS
         st.session_state[count] = st.session_state.get(count, 0) + 1
 
     st.html('<div class="overview-title">Statistics (all runs)</div>')

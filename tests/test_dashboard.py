@@ -2103,12 +2103,23 @@ def test_after_a_click_the_card_loads_until_fresh_numbers_are_in(monkeypatch):
     saved = {"Betclic": {"signals": 1}}
     page = SimpleNamespace(session_state={})
 
+    # A newly opened tab: the saved numbers may be old, so loading until fresh ones.
+    assert dashboard.toggle_loading(page, "box", loader, key, saved)
+    assert page.session_state["box_wait"] == dashboard.OPEN_MAX_WAIT_SECONDS
+    loader.computed[key] = time.time() + 1
+    assert not dashboard.toggle_loading(page, "box", loader, key, saved)
+    loader.computed.clear()
+
     # Nothing clicked: saved numbers are not loading; nothing at all is.
+    page.session_state["box_pending"] = False
     assert not dashboard.toggle_loading(page, "box", loader, key, saved)
     assert dashboard.toggle_loading(page, "box", loader, key, None)
 
     # Clicked: loading until the loader has worked this choice out after the click.
-    page.session_state.update({"box_pending": True, "box_since": time.time()})
+    page.session_state.update(
+        {"box_pending": True, "box_since": time.time(),
+         "box_wait": dashboard.TOGGLE_MAX_WAIT_SECONDS}
+    )
     assert dashboard.toggle_loading(page, "box", loader, key, saved)
     loader.computed[key] = time.time() + 1
     assert not dashboard.toggle_loading(page, "box", loader, key, saved)
