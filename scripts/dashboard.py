@@ -4242,18 +4242,25 @@ Pinnacle's price is fair, and it is measured against results as they come in
   for a single). Its average CLV and share above 0 say first whether the edge is real;
   win rate, ROI and units need many more bets, and while ROI's 95% range covers 0 the
   results show nothing either way.
-* **Prediction markets** (a subtab of Tennis; Sharp vs soft, Pinnacle against the bookmakers, is the page described above): Polymarket and Kalshi prices next to Pinnacle's for the
+Tennis has two groups, **Moneyline** (the match winner) and **Props** (set and games
+markets), each with two views: **Sharp vs soft** (the books against Pinnacle; Moneyline's is
+the page described above) and **Prediction markets**.
+
+* **Moneyline, Prediction markets**: Polymarket and Kalshi prices next to Pinnacle's for the
   newest run, for comparison only (no alerts, not in the Track record). A market's
   probability is the middle of its bid and ask; a market whose spread is wider than
   the sidebar's limit is greyed out and its EV not trusted. **Agree** marks a side
   that reaches the minimum EV against Pinnacle and every tight market.
-* **Props** (a subtab of Tennis): set and games markets (set handicap, total sets,
+* **Props, Sharp vs soft**: set and games markets (set handicap, total sets,
   games handicap and total, first-set markets) of Superbet and Betclic against
   Pinnacle's devigged price for the same line, logged every 15 minutes for a later
   study; nothing is alerted. History counts each offer once, at its first run at or
   above the minimum EV, with its CLV against Pinnacle's last price before the start
   and, once the final set score is in, its result (W-L, ROI and units at the price
   paid; retirements and walkovers are void).
+* **Props, Prediction markets**: Polymarket and Kalshi on the same set and games lines,
+  next to Pinnacle's probability and the better book price, with the EV against each
+  (a market with a spread over the limit is greyed and not trusted). Comparison only.
 """
 
 
@@ -4312,21 +4319,28 @@ SPORT_TABS_STYLE = """<style>
     font-weight: 600;
 }
 /* The same shade Streamlit gives the page shown. */
-.st-key-sport_tab_parent a { background-color: rgba(172, 177, 195, 0.15) !important; }
+.st-key-sport_tab_parent a,
+.st-key-tennis_group_parent a { background-color: rgba(172, 177, 195, 0.15) !important; }
 /* Tennis's subtabs: smaller, under the sport row. */
 .st-key-tennis_tabs, .st-key-all_tabs { margin-bottom: 0.3rem; }
 .st-key-tennis_tabs a, .st-key-all_tabs a { padding: 0.25rem 0.8rem !important; }
 .st-key-tennis_tabs a p, .st-key-all_tabs a p { font-size: 0.95rem !important; }
+/* The two views of a tennis group (user, 25 Nov 2026): a third, smaller row. */
+.st-key-tennis_views { margin-bottom: 0.3rem; padding-left: 0.6rem;
+    border-left: 2px solid rgba(128, 128, 128, 0.25); }
+.st-key-tennis_views a { padding: 0.15rem 0.7rem !important; }
+.st-key-tennis_views a p { font-size: 0.85rem !important; }
 /* Phones: the three sport tabs stay on one row (user, 21 Nov 2026: Basketball wrapped
    under Tennis), smaller, and scroll sideways rather than wrap if still too wide. */
 @media (max-width: 700px) {
-    .st-key-sport_tabs, .st-key-tennis_tabs, .st-key-all_tabs {
+    .st-key-sport_tabs, .st-key-tennis_tabs, .st-key-tennis_views, .st-key-all_tabs {
         flex-wrap: nowrap !important;
         overflow-x: auto;
         scrollbar-width: none;
         gap: 0.25rem !important;
     }
-    .st-key-sport_tabs > div, .st-key-tennis_tabs > div, .st-key-all_tabs > div {
+    .st-key-sport_tabs > div, .st-key-tennis_tabs > div, .st-key-tennis_views > div,
+    .st-key-all_tabs > div {
         flex-shrink: 0;
         width: auto !important;
     }
@@ -4369,14 +4383,21 @@ def main() -> None:
     # "All" comes first but tennis stays the default page (user, 20 Nov 2026).
     tennis = st.Page(lambda: render_tennis(st), title="Tennis",
                      icon=":material/sports_tennis:", url_path="tennis", default=True)
-    # Prediction markets next to Pinnacle, comparison only (user, 20 Nov 2026): a
-    # subtab of Tennis, so it is left out of the sport row.
+    # Tennis has two groups (user, 25 Nov 2026): Moneyline (the match winner) and
+    # Props (set and games markets, logged since 25 Nov 2026), each with the same two
+    # views, Sharp vs soft (the books against Pinnacle) and Prediction markets
+    # (Polymarket and Kalshi, comparison only). Moneyline's Sharp vs soft is the
+    # Tennis page itself, so "/tennis" stays the default.
     markets = st.Page(lambda: render_markets(st), title="Prediction markets",
                       icon=":material/query_stats:", url_path="tennis-markets")
-    # Set and games markets against Pinnacle, logged for a later EV study (user,
-    # 25 Nov 2026): another subtab of Tennis.
     props = st.Page(lambda: render_props(st), title="Props",
                     icon=":material/stacked_bar_chart:", url_path="tennis-props")
+    props_markets = st.Page(lambda: render_props_markets(st), title="Props markets",
+                            icon=":material/query_stats:", url_path="tennis-props-markets")
+    tennis_groups = {
+        "Moneyline": (tennis, markets),
+        "Props": (props, props_markets),
+    }
     all_sports = st.Page(lambda: render_all(st), title="All", icon=":material/apps:",
                          url_path="all")
     sports = [
@@ -4385,22 +4406,32 @@ def main() -> None:
         st.Page(lambda: render_basketball(st), title="Basketball",
                 icon=":material/sports_basketball:", url_path="basketball"),
     ]
-    page = st.navigation([*sports, markets, props], position="hidden")
-    on_markets = page.title in (markets.title, props.title)
+    page = st.navigation([*sports, markets, props, props_markets], position="hidden")
+    group = next((name for name, pages in tennis_groups.items()
+                  if page.title in (each.title for each in pages)), None)
     st.html(SPORT_TABS_STYLE)
     with st.container(horizontal=True, key="sport_tabs", gap="small"):
         for each in sports:
-            if each is tennis and on_markets:
-                # Streamlit marks only the page shown; Tennis stays marked on its subtab.
+            if each is tennis and group and page.title != tennis.title:
+                # Streamlit marks only the page shown; Tennis stays marked on its subtabs.
                 with st.container(key="sport_tab_parent", width="content"):
                     st.page_link(each)
             else:
                 st.page_link(each)
-    if on_markets or page.title == tennis.title:
+    if group:
+        icons = {"Moneyline": ":material/sports_tennis:", "Props": ":material/stacked_bar_chart:"}
         with st.container(horizontal=True, key="tennis_tabs", gap="small"):
-            st.page_link(tennis, label="Sharp vs soft", icon=":material/compare_arrows:")
-            st.page_link(markets)
-            st.page_link(props)
+            for name, (first, _) in tennis_groups.items():
+                if name == group and page.title != first.title:
+                    # The group stays marked on its second view, like Tennis above.
+                    with st.container(key="tennis_group_parent", width="content"):
+                        st.page_link(first, label=name, icon=icons[name])
+                else:
+                    st.page_link(first, label=name, icon=icons[name])
+        sharp, versus_markets = tennis_groups[group]
+        with st.container(horizontal=True, key="tennis_views", gap="small"):
+            st.page_link(sharp, label="Sharp vs soft", icon=":material/compare_arrows:")
+            st.page_link(versus_markets, label="Prediction markets", icon=":material/query_stats:")
     # All's subtabs (user, 20 Nov 2026): Pipeline health is the first and the default,
     # drawn by the All page itself, like Sharp vs soft on Tennis.
     if page.title == all_sports.title:
@@ -4429,6 +4460,13 @@ def render_markets(st) -> None:
 def render_props(st) -> None:
     """Set and games markets of the books against Pinnacle (dashboard_props.py)."""
     from dashboard_props import render_props as render
+
+    render(st, sys.modules[__name__])
+
+
+def render_props_markets(st) -> None:
+    """Props against Polymarket and Kalshi (dashboard_props.py), comparison only."""
+    from dashboard_props import render_props_markets as render
 
     render(st, sys.modules[__name__])
 

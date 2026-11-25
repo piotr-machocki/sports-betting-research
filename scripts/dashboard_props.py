@@ -423,7 +423,7 @@ COLUMN_HELP = {
 TEXT_COLUMNS = {"Bet", "Match", "Market", "Starts", "Book"}
 
 
-def table_html(records: list[dict]) -> str:
+def table_html(records: list[dict], help_text: dict | None = None) -> str:
     columns = [c for c in records[0] if not c.startswith("_")]
 
     def attr(name: str, value: Any) -> str:
@@ -431,7 +431,7 @@ def table_html(records: list[dict]) -> str:
 
     heads = "".join(
         f"<th{attr('class', '' if c in TEXT_COLUMNS else 'number')}"
-        f"{attr('title', COLUMN_HELP.get(c))}>{html.escape(c)}</th>" for c in columns
+        f"{attr('title', (help_text or COLUMN_HELP).get(c))}>{html.escape(c)}</th>" for c in columns
     )
     body = "".join(
         "<tr>" + "".join(
@@ -596,3 +596,247 @@ def render_props(st, dash: Any) -> None:
         st.html(table_html([offer_record(o, min_ev) for o in shown]))
     else:
         st.info("No price reaches the minimum EV in the newest run.")
+
+
+# ------------------------------------------------- props vs prediction markets --
+
+DEFAULT_MAX_SPREAD = market_compare.DEFAULT_MAX_SPREAD
+AGREE_WITHIN = 0.02
+PAIRS = {"p1": "p2", "p2": "p1", "over": "under", "under": "over"}
+
+
+def exchange_quotes(rows: list[dict]) -> dict[tuple, dict[str, dict]]:
+    """(event, market, line, side) -> {exchange: {bid, ask, mid, spread, line}}. A
+    side's probability is the middle of its bid and ask; Kalshi's two sides are
+    separate books, so their mids are scaled to add up to 1 when both are quoted (as
+    on the moneyline Prediction markets page). The spread is the wider side's."""
+    quotes: dict[tuple, dict[str, dict]] = {}
+    for row in rows:
+        if row.get("book") not in EXCHANGES:
+            continue
+        bid, ask = number(row.get("bid")), number(row.get("ask"))
+        if bid is None or ask is None:
+            continue
+        quotes.setdefault((*group_key(row), row["side"]), {})[row["book"]] = {
+            "bid": bid, "ask": ask, "mid": (bid + ask) / 2, "spread": ask - bid,
+            "line": number(row.get("line")),
+        }
+    scaled = {}
+    for key, by_exchange in quotes.items():
+        other = quotes.get((*key[:3], PAIRS.get(key[3], "")), {})
+        out = {}
+        for exchange, quote in by_exchange.items():
+            quote = dict(quote)
+            mate = other.get(exchange)
+            if exchange == "Kalshi" and mate and quote["mid"] + mate["mid"] > 0:
+                quote["mid"] = quote["mid"] / (quote["mid"] + mate["mid"])
+            if mate:
+                quote["spread"] = max(quote["spread"], mate["spread"])
+            out[exchange] = quote
+        scaled[key] = out
+    return scaled
+
+
+def market_outcomes(rows: list[dict], max_spread: float = DEFAULT_MAX_SPREAD) -> list[dict]:
+    """One record per outcome a prediction market quotes: the markets' probabilities,
+    Pinnacle's on the same line, the best book price for it and the EVs against each."""
+    fair = pinnacle_fair(rows)
+    info = {group_key(r)[0]: r for r in rows}
+    best: dict[tuple, tuple[float, dict]] = {}
+    for row in rows:
+        if row.get("book") in BOOKS:
+            net = net_price(row)
+            key = (*group_key(row), row["side"])
+            if net and (key not in best or net > best[key][0]):
+                best[key] = (net, row)
+    out = []
+    for key, quotes in exchange_quotes(rows).items():
+        match = info[key[0]]
+        pinnacle = (fair.get(key[:3]) or {}).get(key[3])
+        net, book_row = best.get(key, (None, None))
+        markets = {}
+        for exchange, quote in quotes.items():
+            markets[exchange] = {
+                **quote, "tight": quote["spread"] <= max_spread + 1e-9,
+                "ev": net * quote["mid"] - 1 if net else None,
+                "gap": quote["mid"] - pinnacle if pinnacle is not None else None,
+            }
+        line = next((q["line"] for q in quotes.values() if q["line"] is not None), None)
+        out.append({
+            "key": key[:3], "side": key[3], "market": key[1], "line": line,
+            "player1": match.get("player1", ""), "player2": match.get("player2", ""),
+            "tournament": match.get("tournament", ""), "starts_at": match.get("starts_at", ""),
+            "pinnacle": pinnacle, "markets": markets,
+            "book": book_row.get("book") if book_row else None,
+            "price": number(book_row["price"]) if book_row else None, "net": net,
+            "ev_pinnacle": net * pinnacle - 1 if net and pinnacle is not None else None,
+        })
+    return out
+
+
+def best_trusted_ev(outcome: dict) -> float | None:
+    evs = [m["ev"] for m in outcome["markets"].values() if m["tight"] and m["ev"] is not None]
+    if outcome["ev_pinnacle"] is not None:
+        evs.append(outcome["ev_pinnacle"])
+    return max(evs) if evs else None
+
+
+def agreement_stats(outcomes: list[dict]) -> dict[str, dict]:
+    """Per exchange: matches and outcomes quoted, tight ones, and against Pinnacle on
+    the same line (tight only, one side per pair): median absolute gap and the share
+    within AGREE_WITHIN."""
+    stats = {}
+    for exchange in EXCHANGES:
+        quoted = [o for o in outcomes if exchange in o["markets"]]
+        tight = [o for o in quoted if o["markets"][exchange]["tight"]]
+        gaps = [abs(o["markets"][exchange]["gap"]) for o in tight
+                if o["markets"][exchange]["gap"] is not None and o["side"] in ("p1", "over")]
+        stats[exchange] = {
+            "matches": len({o["key"][0] for o in quoted}),
+            "outcomes": len(quoted), "tight": len(tight), "compared": len(gaps),
+            "median_gap": statistics.median(gaps) if gaps else None,
+            "within": sum(g <= AGREE_WITHIN for g in gaps) / len(gaps) if gaps else None,
+        }
+    return stats
+
+
+def coverage_html(outcomes: list[dict], rows: list[dict]) -> str:
+    """Per market: matches Pinnacle prices, then matches each exchange quotes."""
+    fair = pinnacle_fair(rows)
+    heads = "<th>Market</th><th>Pinnacle</th>" + "".join(f"<th>{e}</th>" for e in EXCHANGES)
+    body = ""
+    for market, label in MARKET_LABELS.items():
+        cells = f"<td>{html.escape(label)}</td><td>{len({k[0] for k in fair if k[1] == market})}</td>"
+        for exchange in EXCHANGES:
+            mine = [o for o in outcomes if o["market"] == market and exchange in o["markets"]]
+            cells += f"<td>{len({o['key'][0] for o in mine})}</td>"
+        body += f"<tr>{cells}</tr>"
+    return (f'<div class="props-summary-wrap"><table class="props-summary"><thead><tr>{heads}'
+            f"</tr></thead><tbody>{body}</tbody></table></div>")
+
+
+def agreement_html(stats: dict[str, dict], dash: Any) -> str:
+    rows = []
+    for exchange, part in stats.items():
+        gap = "--" if part["median_gap"] is None else f"{part['median_gap'] * 100:.1f} pp"
+        tiles = [
+            dash.tip_tile("Matches", str(part["matches"]),
+                          f"{part['outcomes']} outcomes quoted, {part['tight']} with a tight spread."),
+            dash.tip_tile("Median gap", gap,
+                          "Middle of bid and ask against Pinnacle's devigged probability on the "
+                          f"same line, tight spreads only ({part['compared']} pairs)."),
+            dash.tip_tile(f"Within {AGREE_WITHIN:.0%}", pct(part["within"], signed=False, digits=0),
+                          "Share of those pairs within 2 points of Pinnacle."),
+        ]
+        rows.append(f'<div class="track-book">{html.escape(exchange)}</div>'
+                    f'<div class="overview-tiles">{"".join(tiles)}</div>')
+    return '<div class="track-rows">' + "".join(rows) + "</div>"
+
+
+MARKETS_COLUMN_HELP = {
+    "Pinnacle": "Pinnacle's probability for this outcome on this line, power devig.",
+    "Polymarket": "Middle of the bid and ask. Grey: spread wider than the sidebar's limit.",
+    "Kalshi": "Middle of the bid and ask, scaled with the other side to add up to 100%. "
+              "Grey: spread wider than the limit.",
+    "Price": "The better book price for this outcome (Superbet's EV after its 12% tax).",
+    "EV Pinnacle": "Book price x Pinnacle's probability - 1.",
+    "EV Polymarket": "Book price x Polymarket's probability - 1.",
+    "EV Kalshi": "Book price x Kalshi's probability - 1.",
+}
+GREY = "color: #888888"
+
+
+def market_record(outcome: dict, min_ev: float) -> dict:
+    def ev_style(value, trusted=True):
+        if value is None or not trusted:
+            return GREY
+        return GREEN if value >= min_ev else (RED if value < 0 else "")
+
+    record = {
+        "Bet": bet_text(outcome),
+        "Match": f"{outcome['player1']} vs {outcome['player2']}",
+        "Market": MARKET_LABELS.get(outcome["market"], outcome["market"]),
+        "Starts": local_time(outcome["starts_at"]),
+        "Pinnacle": pct(outcome["pinnacle"], signed=False),
+    }
+    for exchange in EXCHANGES:
+        quote = outcome["markets"].get(exchange)
+        record[exchange] = pct(quote["mid"], signed=False) if quote else ""
+        if quote:
+            record[f"_title {exchange}"] = (f"bid {quote['bid'] * 100:.1f}¢, ask {quote['ask'] * 100:.1f}¢, "
+                                            f"wider spread {quote['spread'] * 100:.1f}¢")
+            if not quote["tight"]:
+                record[f"_style {exchange}"] = GREY
+    record["Book"] = outcome["book"] or ""
+    record["Price"] = f"{outcome['price']:.2f}" if outcome["price"] else ""
+    record["EV Pinnacle"] = pct(outcome["ev_pinnacle"])
+    record["_style EV Pinnacle"] = ev_style(outcome["ev_pinnacle"])
+    for exchange in EXCHANGES:
+        quote = outcome["markets"].get(exchange)
+        record[f"EV {exchange}"] = pct(quote["ev"]) if quote else ""
+        record[f"_style EV {exchange}"] = ev_style(quote["ev"], quote["tight"]) if quote else ""
+    record["_title Match"] = outcome["tournament"]
+    return record
+
+
+def render_props_markets(st, dash: Any) -> None:
+    with st.sidebar:
+        min_ev = st.slider("Minimum EV", 0.0, 10.0, DEFAULT_MIN_EV_PERCENT, 0.5,
+                           format="%.1f%%", key="props_markets_min_ev",
+                           help="Green from here up, against any reference.") / 100
+        max_spread = st.slider("Maximum spread", 1, 10, round(DEFAULT_MAX_SPREAD * 100), 1,
+                               format="%d¢", key="props_markets_spread",
+                               help="A market whose wider side's bid-ask spread is above this "
+                               "is grey and its EV not trusted.") / 100
+        markets = st.multiselect("Markets", list(MARKET_LABELS.values()),
+                                 default=[v for k, v in MARKET_LABELS.items() if k != "match_winner"],
+                                 key="props_markets_markets")
+        player = st.text_input("Player", key="props_markets_player")
+        st.caption("Comparison only: Polymarket and Kalshi on the set and games lines of "
+                   "the props log. Nothing here is sent or counted elsewhere.")
+
+    st.html(PROPS_STYLE)
+    files = snapshots()
+
+    @st.fragment(run_every=REFRESH_SECONDS)
+    def watch() -> None:
+        if snapshots()[-1:] != st.session_state.get("props_markets_drawn"):
+            st.rerun(scope="app")
+
+    st.session_state["props_markets_drawn"] = files[-1:]
+    watch()
+    if not files:
+        st.info("No props snapshot yet. scripts/tennis_props.py writes one every 15 minutes.")
+        return
+
+    rows = read_snapshot(files[-1])
+    outcomes = market_outcomes(rows, max_spread)
+    captured = market_compare.parse_time(rows[0]["captured_at"]) if rows else None
+    age = round((datetime.now(timezone.utc) - captured).total_seconds() / 60) if captured else None
+    st.html(
+        '<section class="overview">'
+        f'<div class="overview-title">Last props run · {local_time(rows[0]["captured_at"]) if rows else "--"}'
+        f'{f" ({age} min ago)" if age is not None else ""}</div>'
+        '<div class="overview-cards">'
+        + card("Matches per market", coverage_html(outcomes, rows))
+        + card("Agreement with Pinnacle", agreement_html(agreement_stats(outcomes), dash))
+        + "</div></section>"
+    )
+
+    wanted = {k for k, v in MARKET_LABELS.items() if v in markets} or set(MARKET_LABELS)
+    needle = player.strip().lower()
+    shown = [
+        o for o in outcomes if o["market"] in wanted
+        and (not needle or needle in o["player1"].lower() or needle in o["player2"].lower())
+    ]
+
+    def order(outcome: dict) -> float:
+        value = best_trusted_ev(outcome)
+        return -value if value is not None else 9.0
+
+    shown.sort(key=order)
+    st.html(f'<div class="props-note">{len(shown)} outcomes quoted on a prediction market</div>')
+    if shown:
+        st.html(table_html([market_record(o, min_ev) for o in shown], MARKETS_COLUMN_HELP))
+    else:
+        st.info("No prediction-market quote for these markets in the newest run.")

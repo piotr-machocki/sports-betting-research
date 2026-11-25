@@ -158,3 +158,49 @@ def test_settled_flags_give_record_roi_and_units():
     assert (stats["won"], stats["lost"], stats["void"], stats["pending"]) == (1, 1, 1, 1)
     assert stats["units"] == pytest.approx(0.0)
     assert stats["roi"] == pytest.approx(0.0)
+
+
+def kalshi(side, bid, ask):
+    return {**BASE, "source": "kalshi", "book": "Kalshi", "market": "set1_winner",
+            "side": side, "line": "", "price": "", "bid": bid, "ask": ask}
+
+
+def test_market_outcomes_compare_exchanges_with_pinnacle_and_books():
+    rows = game_handicap_rows() + [
+        row("polymarket", "game_handicap", "p1", "-3.5", bid="0.46", ask="0.50"),
+    ]
+    found = {(o["side"]): o for o in dp.market_outcomes(rows, max_spread=0.04)}
+
+    monnet = found["p2"]  # Monnet +3.5: Betclic 2.20, Polymarket 50-54
+    quote = monnet["markets"]["Polymarket"]
+    assert quote["mid"] == pytest.approx(0.52)
+    assert quote["tight"]
+    assert quote["ev"] == pytest.approx(2.20 * 0.52 - 1)
+    assert quote["gap"] == pytest.approx(0.52 - monnet["pinnacle"])
+    assert monnet["book"] == "Betclic" and monnet["line"] == 3.5
+    # Sierra -3.5: the better book is Superbet, after its tax.
+    assert found["p1"]["net"] == pytest.approx(2.30 * 0.88)
+
+
+def test_kalshi_sides_are_scaled_and_wide_spreads_untrusted():
+    rows = [kalshi("p1", "0.60", "0.70"), kalshi("p2", "0.36", "0.44"),
+            row("pinnacle", "set1_winner", "p1", "", "1.60"),
+            row("pinnacle", "set1_winner", "p2", "", "2.40")]
+    found = {o["side"]: o for o in dp.market_outcomes(rows, max_spread=0.04)}
+    p1, p2 = found["p1"]["markets"]["Kalshi"], found["p2"]["markets"]["Kalshi"]
+    assert p1["mid"] + p2["mid"] == pytest.approx(1)
+    assert not p1["tight"] and p1["spread"] == pytest.approx(0.10)
+
+    stats = dp.agreement_stats(list(found.values()))
+    assert stats["Kalshi"]["matches"] == 1 and stats["Kalshi"]["compared"] == 0
+
+
+def test_market_record_greys_loose_quotes():
+    rows = [kalshi("p1", "0.60", "0.70"), kalshi("p2", "0.36", "0.44"),
+            row("betclic", "set1_winner", "p1", "", "1.80")]
+    outcome = next(o for o in dp.market_outcomes(rows, 0.04) if o["side"] == "p1")
+    record = dp.market_record(outcome, 0.02)
+    assert record["Bet"] == "Sierra wins set 1"
+    assert record["_style Kalshi"] == dp.GREY
+    assert record["_style EV Kalshi"] == dp.GREY
+    assert "Kalshi" in dp.table_html([record], dp.MARKETS_COLUMN_HELP)
