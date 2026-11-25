@@ -137,3 +137,24 @@ def test_history_finds_the_first_run_at_any_minimum(tmp_path):
 
     assert betclic(0.0)["captured_at"] == "2026-11-25T20:00:00Z"
     assert betclic(0.05)["captured_at"] == "2026-11-25T20:15:00Z"
+
+
+def test_settled_flags_give_record_roi_and_units():
+    flags = [
+        {"event": "9", "market": "game_handicap", "side": "p1", "line": -3.5, "net": 2.0,
+         "book": "Betclic", "started": True, "clv": 0.05, "ev": 0.03},
+        {"event": "9", "market": "total_games", "side": "over", "line": 19.5, "net": 1.9,
+         "book": "Betclic", "started": True, "clv": None, "ev": 0.04},
+        {"event": "10", "market": "total_games", "side": "over", "line": 19.5, "net": 1.9,
+         "book": "Betclic", "started": True, "clv": None, "ev": 0.02},
+        {"event": "11", "market": "total_games", "side": "over", "line": 19.5, "net": 1.9,
+         "book": "Betclic", "started": True, "clv": None, "ev": 0.02},
+    ]
+    outcomes = {"9": ("settled", [(6, 2), (6, 4)]), "10": ("void", "retired")}
+    dp.settle_flags(flags, outcomes)
+
+    assert [f["outcome"] for f in flags] == ["won", "lost", "void", None]
+    stats = dp.history_stats(flags, "Betclic")
+    assert (stats["won"], stats["lost"], stats["void"], stats["pending"]) == (1, 1, 1, 1)
+    assert stats["units"] == pytest.approx(0.0)
+    assert stats["roi"] == pytest.approx(0.0)

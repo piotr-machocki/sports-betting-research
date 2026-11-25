@@ -190,3 +190,5 @@ bash scripts/tennis_props_scheduled.sh              # for cron, e.g. "2-59/15 * 
 ```
 
 Outputs under `data/tennis_props/`: `snapshots/<UTC date>/<run_id>.csv.gz` (columns: `source`, `book`, `pinnacle_event_id`, `starts_at`, players, `market`, `side` (p1/p2, over/under, or a set score from player 1's view), `line` (the side's handicap, or the total), `price` or `bid`/`ask`) and `runs.jsonl`. The dashboard's **Props** subtab of Tennis compares the newest run with Pinnacle on the same lines and keeps a history of first flags and their CLV.
+
+Results: `scripts/props_results.py` settles each market from the final set score (match tiebreak = one set and one game; retirements and walkovers void). Scores come from `match_results.load_results`: Matchstat plus `data/match_results/extra/*.csv`, where the private `src/betting/books/superbet_results.py --all-linked 2` (cron, every 3 hours, one request) adds every linked match Superbet lists as finished. PinnFeed has no results. On 24 Nov 2026 the two sources agreed on all 143 matches both had complete.

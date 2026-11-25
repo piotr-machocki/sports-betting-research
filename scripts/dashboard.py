@@ -4251,7 +4251,9 @@ Pinnacle's price is fair, and it is measured against results as they come in
   games handicap and total, first-set markets) of Superbet and Betclic against
   Pinnacle's devigged price for the same line, logged every 15 minutes for a later
   study; nothing is alerted. History counts each offer once, at its first run at or
-  above the minimum EV, with its CLV against Pinnacle's last price before the start.
+  above the minimum EV, with its CLV against Pinnacle's last price before the start
+  and, once the final set score is in, its result (W-L, ROI and units at the price
+  paid; retirements and walkovers are void).
 """
 
 

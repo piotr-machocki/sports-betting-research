@@ -14,8 +14,9 @@ Since 25 Nov 2026 (user's request). Reads the snapshots of scripts/tennis_props.
   the minimum EV before the start; its CLV = that price x Pinnacle's probability for
   the same line at the last run before the start - 1. Kept incrementally in
   data/cache/props_history.pkl (one closing price per line, one first flag per
-  offer), so it does not grow with the number of runs. Results (set scores from
-  match_results) are not settled yet.
+  offer), so it does not grow with the number of runs. Started flags are settled from
+  final set scores (props_results.py: Matchstat plus Superbet's finished feed);
+  W-L, ROI and units count completed matches only, at the price paid.
 """
 
 from __future__ import annotations
@@ -32,6 +33,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import market_compare
+import match_results
+import props_results
 from results_store import BETCLIC_MIN_ODDS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -242,7 +245,8 @@ def history_flags(history: dict, min_ev: float, now: datetime) -> list[dict]:
         if first is None:
             continue
         key, side, book = flag_key[:3], flag_key[3], flag_key[4]
-        record = {**first, "book": book, "side": side, "clv": None}
+        record = {**first, "book": book, "side": side, "clv": None, "event": key[0],
+                  "started": first["starts_at"] <= stamp, "outcome": None, "profit": None}
         close = history["close"].get(key)
         if first["starts_at"] <= stamp and close and close[1].get(side):
             record["clv"] = first["net"] * close[1][side] - 1
@@ -250,10 +254,34 @@ def history_flags(history: dict, min_ev: float, now: datetime) -> list[dict]:
     return out
 
 
+# A started match with no result this long after its start is "no result", not pending.
+RESULT_WAIT_HOURS = 72
+
+
+def settle_flags(flags: list[dict], outcomes: dict[str, tuple[str, Any]]) -> None:
+    """Fill outcome and profit from each event's (state, sets)."""
+    for flag in flags:
+        state, sets = outcomes.get(flag["event"], ("pending", None))
+        flag["outcome"] = None
+        if state == "settled":
+            flag["outcome"] = props_results.settle(flag["market"], flag["side"], flag["line"], sets)
+        elif state == "void":
+            flag["outcome"] = "void"
+        flag["profit"] = props_results.profit(flag["outcome"], flag["net"]) if flag["outcome"] else None
+
+
 def history_stats(flags: list[dict], book: str, market: str | None = None) -> dict:
     mine = [f for f in flags if f["book"] == book and (market is None or f["market"] == market)]
     clvs = [f["clv"] for f in mine if f["clv"] is not None]
+    settled = [f for f in mine if f.get("profit") is not None]
+    outcomes = [f.get("outcome") for f in mine]
+    units = sum(f["profit"] for f in settled)
     return {
+        "won": outcomes.count("won"), "lost": outcomes.count("lost"),
+        "push": outcomes.count("push"), "void": outcomes.count("void"),
+        "pending": sum(f.get("started", False) and f.get("outcome") is None for f in mine),
+        "settled": len(settled), "units": units if settled else None,
+        "roi": units / len(settled) if settled else None,
         "signals": len(mine),
         "avg_ev": statistics.mean(f["ev"] for f in mine) if mine else None,
         "with_close": len(clvs),
@@ -268,12 +296,53 @@ class HistoryStore:
     def __init__(self, path: Path = HISTORY_FILE, snapshot_dir: Path = SNAPSHOT_DIR) -> None:
         self.path, self.snapshot_dir = path, snapshot_dir
         self.lock = threading.Lock()
+        self.checked: set[str] = set()
         self.history = empty_history()
         try:
             with path.open("rb") as file:
                 self.history = pickle.load(file)
         except (OSError, pickle.PickleError, EOFError, AttributeError):
             pass
+
+    results_signature: tuple = ()
+    results: Any = None
+
+    def outcomes(self, flags: list[dict], now: datetime) -> dict[str, tuple[str, Any]]:
+        """(state, sets) per started event of `flags`; settled and void ones are kept,
+        pending ones looked up again whenever a results file changes."""
+        files = [match_results.RESULTS_CSV, *match_results.extra_files()]
+        signature = tuple((p.name, p.stat().st_mtime) for p in files if p.exists())
+        with self.lock:
+            known = self.history.setdefault("outcomes", {})
+            if signature != self.results_signature:
+                self.results = props_results.Results()
+                self.results_signature = signature
+                self.checked = set()
+            changed = False
+            for flag in flags:
+                event = flag["event"]
+                if not flag["started"] or event in self.checked:
+                    continue
+                self.checked.add(event)
+                if known.get(event, ("pending",))[0] != "pending":
+                    continue
+                state, value = self.results.sets(flag["player1"], flag["player2"], flag["starts_at"])
+                start = market_compare.parse_time(flag["starts_at"])
+                if state == "pending" and start and (now - start).total_seconds() > RESULT_WAIT_HOURS * 3600:
+                    state, value = "void", "no result"
+                if state != "pending":
+                    known[event] = (state, value)
+                    changed = True
+            if changed:
+                self.save()
+            return dict(known)
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(".tmp")
+        with temporary.open("wb") as file:
+            pickle.dump(self.history, file)
+        temporary.replace(self.path)
 
     def update(self) -> dict:
         with self.lock:
@@ -284,11 +353,7 @@ class HistoryStore:
                 except (OSError, EOFError, csv.Error):
                     continue  # a file still being written: next time
             if new:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                temporary = self.path.with_suffix(".tmp")
-                with temporary.open("wb") as file:
-                    pickle.dump(self.history, file)
-                temporary.replace(self.path)
+                self.save()
             return self.history
 
 
@@ -412,6 +477,15 @@ def history_html(flags: list[dict], books: tuple[str, ...], dash: Any) -> str:
                           "have one (started, and Pinnacle still listed that line)."),
             dash.tip_tile("CLV > 0", pct(stats["clv_positive"], signed=False, digits=0),
                           "Share of those with a CLV above zero."),
+            dash.tip_tile("W-L", f"{stats['won']}-{stats['lost']}",
+                          f"Completed matches, from the final set score. Push {stats['push']}, "
+                          f"void {stats['void']} (retired, walkover or no result), "
+                          f"waiting for a result {stats['pending']}."),
+            dash.tip_tile("ROI", pct(stats["roi"]),
+                          "Profit per unit staked on the settled bets (pushes included, at 0), "
+                          "at the price paid: Superbet after its tax."),
+            dash.tip_tile("Units", "--" if stats["units"] is None else f"{stats['units']:+.2f}",
+                          "Profit in units, 1 unit a bet."),
         ]
         rows.append(f'<div class="track-book">{html.escape(book)}</div>'
                     f'<div class="overview-tiles">{"".join(tiles)}</div>')
@@ -421,10 +495,11 @@ def history_html(flags: list[dict], books: tuple[str, ...], dash: Any) -> str:
         for book in books:
             stats = history_stats(flags, book, market)
             cells += (f"<td>{stats['signals']}</td><td>{pct(stats['avg_ev'])}</td>"
-                      f"<td>{pct(stats['avg_clv'])}</td>")
+                      f"<td>{pct(stats['avg_clv'])}</td><td>{stats['won']}-{stats['lost']}</td>"
+                      f"<td>{pct(stats['roi'])}</td>")
         by_market += f"<tr><td>{html.escape(label)}</td>{cells}</tr>"
     heads = "<th>Market</th>" + "".join(
-        f"<th>{book}</th><th>Avg EV</th><th>Avg CLV</th>" for book in books)
+        f"<th>{book}</th><th>Avg EV</th><th>Avg CLV</th><th>W-L</th><th>ROI</th>" for book in books)
     table = (f'<div class="props-summary-wrap"><table class="props-summary"><thead><tr>{heads}'
              f"</tr></thead><tbody>{by_market}</tbody></table></div>")
     return '<div class="track-rows">' + "".join(rows) + "</div>" + table
@@ -490,6 +565,7 @@ def render_props(st, dash: Any) -> None:
     store = st.cache_resource(show_spinner=False)(HistoryStore)()
     history = store.update()
     flags = [f for f in history_flags(history, min_ev, now) if f["book"] in books]
+    settle_flags(flags, store.outcomes(flags, now))
 
     first_run = local_time(history["first"]) if history["first"] else "--"
     st.html(
