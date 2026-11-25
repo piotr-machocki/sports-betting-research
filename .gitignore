@@ -60,3 +60,7 @@ TODO
 
 # AI Context integration
 CLAUDE.md
+src/betting/books/superbet_tennis_props.py
+tests/test_superbet_tennis_props.py
+src/betting/books/betclic_tennis_props.py
+tests/test_betclic_tennis_props.py

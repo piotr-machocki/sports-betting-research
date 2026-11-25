@@ -162,6 +162,12 @@ def parse_polymarket(events: list[dict], captured_at: datetime) -> list[dict]:
 
 
 def fetch_polymarket(now: datetime) -> list[dict]:
+    return parse_polymarket(polymarket_events(now), now)
+
+
+def polymarket_events(now: datetime) -> list[dict]:
+    """Every open tennis event with all its markets (tennis_props.py reads the set and
+    games markets of the same reply)."""
     events: list[dict] = []
     since = iso(now - timedelta(hours=STARTED_HOURS))
 
@@ -176,7 +182,7 @@ def fetch_polymarket(now: datetime) -> list[dict]:
         if len(batch) < POLY_PAGE:
             break
 
-    return parse_polymarket(events, now)
+    return events
 
 
 # ---------------------------------------------------------------------- Kalshi --

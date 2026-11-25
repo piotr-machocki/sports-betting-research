@@ -4247,6 +4247,11 @@ Pinnacle's price is fair, and it is measured against results as they come in
   probability is the middle of its bid and ask; a market whose spread is wider than
   the sidebar's limit is greyed out and its EV not trusted. **Agree** marks a side
   that reaches the minimum EV against Pinnacle and every tight market.
+* **Props** (a subtab of Tennis): set and games markets (set handicap, total sets,
+  games handicap and total, first-set markets) of Superbet and Betclic against
+  Pinnacle's devigged price for the same line, logged every 15 minutes for a later
+  study; nothing is alerted. History counts each offer once, at its first run at or
+  above the minimum EV, with its CLV against Pinnacle's last price before the start.
 """
 
 
@@ -4366,6 +4371,10 @@ def main() -> None:
     # subtab of Tennis, so it is left out of the sport row.
     markets = st.Page(lambda: render_markets(st), title="Prediction markets",
                       icon=":material/query_stats:", url_path="tennis-markets")
+    # Set and games markets against Pinnacle, logged for a later EV study (user,
+    # 25 Nov 2026): another subtab of Tennis.
+    props = st.Page(lambda: render_props(st), title="Props",
+                    icon=":material/stacked_bar_chart:", url_path="tennis-props")
     all_sports = st.Page(lambda: render_all(st), title="All", icon=":material/apps:",
                          url_path="all")
     sports = [
@@ -4374,8 +4383,8 @@ def main() -> None:
         st.Page(lambda: render_basketball(st), title="Basketball",
                 icon=":material/sports_basketball:", url_path="basketball"),
     ]
-    page = st.navigation([*sports, markets], position="hidden")
-    on_markets = page.title == markets.title
+    page = st.navigation([*sports, markets, props], position="hidden")
+    on_markets = page.title in (markets.title, props.title)
     st.html(SPORT_TABS_STYLE)
     with st.container(horizontal=True, key="sport_tabs", gap="small"):
         for each in sports:
@@ -4389,6 +4398,7 @@ def main() -> None:
         with st.container(horizontal=True, key="tennis_tabs", gap="small"):
             st.page_link(tennis, label="Sharp vs soft", icon=":material/compare_arrows:")
             st.page_link(markets)
+            st.page_link(props)
     # All's subtabs (user, 20 Nov 2026): Pipeline health is the first and the default,
     # drawn by the All page itself, like Sharp vs soft on Tennis.
     if page.title == all_sports.title:
@@ -4411,6 +4421,13 @@ def render_markets(st) -> None:
 
     # This module, so the markets page shares its caches and lock (run by streamlit,
     # it is __main__, and "import dashboard" there would load a second copy).
+    render(st, sys.modules[__name__])
+
+
+def render_props(st) -> None:
+    """Set and games markets of the books against Pinnacle (dashboard_props.py)."""
+    from dashboard_props import render_props as render
+
     render(st, sys.modules[__name__])
 
 

@@ -175,3 +175,18 @@ Outputs under `data/nba/`:
 * `results/espn_results.csv`: final scores by `game_key`.
 * `runs.jsonl`: rows, seconds and any error per source for each run.
 * `espn_athletes.json`: ESPN athlete IDs and names, so each player is looked up once.
+
+## 10. Tennis set and games markets (data collection only)
+
+`scripts/tennis_props.py` saves one snapshot per run of the tennis markets beyond the match winner, for a later study of whether the soft books' set and games prices are +EV against Pinnacle. Nothing is alerted or counted on the Tennis page. Every row is keyed to a Pinnacle match (`pinnacle_event_id`) and uses Pinnacle's player order. A source that fails is only logged:
+
+* Pinnacle through PinnFeed (`PINNFEED_KEY`), one request a run with every main market: match and first-set winner, set handicap, total sets, games handicap and total for the match and the first set.
+* Superbet and Betclic through private collectors (`src/betting/books/superbet_tennis_props.py`, `src/betting/books/betclic_tennis_props.py`), run only if present. They use the match links of the newest finished tennis session.
+* Polymarket (every tennis market type) and Kalshi (set winners), as bid/ask probabilities.
+
+```bash
+python scripts/tennis_props.py [--sources superbet,betclic,polymarket,kalshi] [--dry-run]
+bash scripts/tennis_props_scheduled.sh              # for cron, e.g. "2-59/15 * * * *"
+```
+
+Outputs under `data/tennis_props/`: `snapshots/<UTC date>/<run_id>.csv.gz` (columns: `source`, `book`, `pinnacle_event_id`, `starts_at`, players, `market`, `side` (p1/p2, over/under, or a set score from player 1's view), `line` (the side's handicap, or the total), `price` or `bid`/`ask`) and `runs.jsonl`. The dashboard's **Props** subtab of Tennis compares the newest run with Pinnacle on the same lines and keeps a history of first flags and their CLV.
