@@ -2073,14 +2073,42 @@ def save_flag_cache(cache: dict, path: Path = TRACK_CACHE_FILE) -> None:
     os.replace(partial, path)
 
 
-def save_results(results: dict, path: Path = TRACK_RESULTS_FILE) -> None:
-    """TrackLoader's records by (min EV, books), written like save_flag_cache."""
+def save_results(results: dict, path: Path = TRACK_RESULTS_FILE, asked: dict | None = None) -> None:
+    """TrackLoader's records by (min EV, books, long shots) and when each was last
+    asked for, written like save_flag_cache."""
     path.parent.mkdir(parents=True, exist_ok=True)
     partial = path.with_suffix(".tmp")
+    held = {"results": results, "asked": asked or {}}
 
     with open(partial, "wb") as handle:
-        pickle.dump(results, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        pickle.dump(held, handle, protocol=pickle.HIGHEST_PROTOCOL)
     os.replace(partial, path)
+
+
+def load_results(path: Path) -> tuple[dict, dict]:
+    """(records, asked) from save_results. Files from before 26 Nov 2026 hold the
+    records alone; their keys from before 22 Nov 2026 lack long shots (then on)."""
+    saved = load_flag_cache(path)
+    if isinstance(saved.get("results"), dict):
+        records, asked = saved["results"], saved.get("asked") or {}
+    else:
+        records, asked = saved, {}
+
+    def full(key: tuple) -> tuple:
+        return key if len(key) == 3 else (*key, True)
+
+    return (
+        {full(key): value for key, value in records.items() if isinstance(key, tuple)},
+        {full(key): value for key, value in asked.items() if isinstance(key, tuple)},
+    )
+
+
+def file_signature(path: Path) -> tuple | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return stat.st_mtime_ns, stat.st_size
 
 
 def flag_signatures(cache: dict) -> dict:
@@ -2089,15 +2117,25 @@ def flag_signatures(cache: dict) -> dict:
 
 # load_outcome_sources fills one shared cache, from the page and from TrackLoader's thread.
 SOURCES_LOCK = threading.Lock()
-# How long a full run waits for the track record before drawing a placeholder. A warm
-# one takes about 0.08 s on the VM, so only the first, cold one (about 25 s) shows it.
+# How long a full run waits for a choice the loader has never worked out before
+# drawing a Loading card. Any choice it holds is shown at once.
 TRACK_WAIT_SECONDS = 1.0
+# The refresher looks this often whether a run, a result or a recheck has changed
+# what the card counts, and if so works the held choices out again in the background
+# (user, 26 Nov 2026: the card must show at once, never wait for a recompute).
+REFRESH_CHECK_SECONDS = 15
+# It keeps at most this many choices current, the most recently asked for first,
+# and only those asked for within REFRESH_ASKED_HOURS: a warm Tennis card takes
+# several seconds on the micro VM. Any other choice is worked out when asked for.
+REFRESH_KEYS = 4
+REFRESH_ASKED_HOURS = 48
 
 
 class TrackLoader:
-    """Works out the track record in a thread, so the page never waits for the cold
-    read of every session. A full run asks for its minimum EV and books (request);
-    the header fragment checks whether it is there yet (ready). One per server."""
+    """Works out the track record in a thread, so the page never waits for it. A full
+    run asks for its choice (request) and gets the held record at once; a refresher
+    thread (keep_fresh) works the held choices out again whenever their inputs change
+    and saves them, so the record held is the current one. One per server."""
 
     def __init__(
         self,
@@ -2110,38 +2148,52 @@ class TrackLoader:
         self.results_file = results_file
         # session_flags and settled_outcomes, used by the thread only
         self.cache: dict = load_flag_cache(cache_file) if cache_file else {}
-        # The last saved records: shown at once, recomputed on the first request.
-        # Keys saved before the long-shot switch (22 Nov 2026) had it on.
-        saved = load_flag_cache(results_file) if results_file else {}
-        self.results: dict[tuple, dict] = {
-            (key if len(key) == 3 else (*key, True)): value for key, value in saved.items()
-        }
+        # The last saved records: shown at once, kept current by the refresher.
+        self.results, self.asked = load_results(results_file) if results_file else ({}, {})
         self.error: str | None = None
-        self.wanted: tuple | None = None
+        self.queue: list[tuple] = []
         self.finished: tuple | None = None
-        # When each choice was last worked out (time.time()), for done_since.
-        self.computed: dict[tuple, float] = {}
+        # Each choice's record changes bump its version, so a page redraws it.
+        self.versions: dict[tuple, int] = {}
+        # The inputs signature each choice was last worked out for, and the newest.
+        self.computed_for: dict[tuple, Any] = {}
+        self.signed: Any = None
         self.thread: threading.Thread | None = None
+        self.refresher: threading.Thread | None = None
         self.done = threading.Condition()
 
     def request(
         self, min_ev: float, books: list[str], wait: float = 0.0, longshots: bool = True
     ) -> dict | None:
-        """Works the record out again (the sessions may have changed) and returns it
-        if that takes at most wait, else the last one for this choice, or None."""
+        """The held record for this choice at once; one never worked out is worked out
+        now and returned if that takes at most wait, else None (Loading)."""
         return self.request_key((min_ev, tuple(books), longshots), wait)
 
     def request_key(self, key: tuple, wait: float = 0.0) -> dict | None:
         with self.done:
-            self.wanted = key
+            self.asked[key] = time.time()
+
+            if key in self.results:
+                # Held but not worked out since the inputs last changed (a choice the
+                # refresher does not keep): shown now, redrawn when the new one is in.
+                if self.signed is not None and self.computed_for.get(key) != self.signed:
+                    self.enqueue(key)
+                return self.results[key]
+
             self.finished = None
-
-            if self.thread is None:
-                self.thread = threading.Thread(target=self.work, daemon=True)
-                self.thread.start()
-
+            self.enqueue(key, first=True)
             self.done.wait_for(lambda: self.finished == key, timeout=wait)
             return self.results.get(key)
+
+    def enqueue(self, key: tuple, first: bool = False) -> None:
+        """Called with self.done held."""
+        if key in self.queue:
+            self.queue.remove(key)
+        self.queue.insert(0 if first else len(self.queue), key)
+
+        if self.thread is None:
+            self.thread = threading.Thread(target=self.work, daemon=True)
+            self.thread.start()
 
     def ready(self, min_ev: float, books: list[str], longshots: bool = True) -> bool:
         return self.ready_key((min_ev, tuple(books), longshots))
@@ -2150,11 +2202,58 @@ class TrackLoader:
         with self.done:
             return key in self.results or self.error is not None
 
-    def done_since(self, key: tuple, since: float) -> bool:
-        """Whether this choice was worked out afresh after since (or failed), so a
-        tick after a click means new numbers, not the ones saved before."""
+    def version(self, key: tuple) -> int:
         with self.done:
-            return self.computed.get(key, 0.0) >= since or self.error is not None
+            return self.versions.get(key, 0)
+
+    def inputs_signature(self) -> tuple:
+        """Changes when what the card counts may have: a new or growing session, new
+        match results or a recheck. Cheap: only the newest session's files are read."""
+        import recheck_signals
+
+        sessions = list_sessions()
+        newest = [
+            file_signature(SESSIONS_DIR / f"{session_id}{suffix}")
+            for session_id in sessions[:1]
+            for suffix in (".csv", "_status.json")
+        ]
+        return (
+            len(sessions), tuple(newest), outcome_signature(),
+            file_signature(recheck_signals.RECHECKS_FILE),
+        )
+
+    def keep_fresh(self) -> None:
+        """Starts the refresher once (a daemon thread, for the server's life)."""
+        with self.done:
+            if self.refresher is None:
+                self.refresher = threading.Thread(target=self.refresh_loop, daemon=True)
+                self.refresher.start()
+
+    def refresh_loop(self) -> None:
+        while True:
+            self.refresh_once()
+            time.sleep(REFRESH_CHECK_SECONDS)
+
+    def refresh_once(self) -> bool:
+        """Queues the choices kept current when the inputs changed; True if it did."""
+        try:
+            signature = self.inputs_signature()
+        except Exception:
+            return False
+
+        with self.done:
+            if signature == self.signed:
+                return False
+            # Taken before the work, so a change while it runs is caught next time.
+            self.signed = signature
+            recent = time.time() - REFRESH_ASKED_HOURS * 3600
+            keys = sorted(
+                (key for key in self.results if self.asked.get(key, 0.0) >= recent),
+                key=lambda key: self.asked.get(key, 0.0), reverse=True,
+            )[:REFRESH_KEYS]
+            for key in keys:
+                self.enqueue(key)
+            return bool(keys)
 
     def compute(self, key: tuple, sources: dict) -> dict:
         """The record for one choice; a subclass works out another card."""
@@ -2170,11 +2269,11 @@ class TrackLoader:
     def work(self) -> None:
         while True:
             with self.done:
-                key, self.wanted = self.wanted, None
-
-                if key is None:
+                if not self.queue:
                     self.thread = None
                     return
+                key = self.queue.pop(0)
+                signed = self.signed
 
             try:
                 with SOURCES_LOCK:
@@ -2196,24 +2295,28 @@ class TrackLoader:
                 changed = record is not None and self.results.get(key) != record
                 if record is not None:
                     self.results[key] = record
-                    self.computed[key] = time.time()
+                    self.computed_for[key] = signed
+                if changed:
+                    self.versions[key] = self.versions.get(key, 0) + 1
                 self.error = error
                 self.finished = key
                 self.done.notify_all()
-                saved = dict(self.results)
+                saved, asked = dict(self.results), dict(self.asked)
 
             if changed and self.results_file:
                 try:
-                    save_results(saved, self.results_file)
+                    save_results(saved, self.results_file, asked)
                 except Exception:
-                    pass  # only the next server start shows Loading again
+                    pass  # only the next server start shows older numbers first
 
 
 def track_loader() -> TrackLoader:
     """Held by st.cache_resource, so every tab and rerun shares one."""
     import streamlit as st
 
-    return TrackLoader(st.cache_resource(show_spinner=False)(outcomes_cache)())
+    loader = TrackLoader(st.cache_resource(show_spinner=False)(outcomes_cache)())
+    loader.keep_fresh()
+    return loader
 
 
 # The Prediction markets tab's Statistics (scripts/market_track.py), kept like the
@@ -2242,12 +2345,24 @@ class MarketTrackLoader(TrackLoader):
             key[0], key[1], datetime.now(timezone.utc), key[2],
         )
 
+    def inputs_signature(self) -> tuple:
+        """Also the newest market files (one is written during each run)."""
+        from market_compare import latest_snapshots
+
+        newest = latest_snapshots(days=1)
+        return (
+            super().inputs_signature(), len(newest),
+            file_signature(newest[0]) if newest else None,
+        )
+
 
 def market_loader() -> MarketTrackLoader:
     """Held by st.cache_resource; shares the outcome sources with the track record."""
     import streamlit as st
 
-    return MarketTrackLoader(st.cache_resource(show_spinner=False)(outcomes_cache)())
+    loader = MarketTrackLoader(st.cache_resource(show_spinner=False)(outcomes_cache)())
+    loader.keep_fresh()
+    return loader
 
 
 def filter_records(
@@ -3389,56 +3504,34 @@ LONGSHOT_HELP = {
 
 def longshots_setting(st: Any, key: str) -> bool:
     """The Include long shots value before its checkbox is drawn (statistics_section
-    draws it under the Statistics title, after the card's record was asked for). Also
-    notes when this tab opened, before its first request (opening_loading)."""
-    st.session_state.setdefault(f"{key}_opened", time.time())
+    draws it under the Statistics title, after the card's record was asked for)."""
     return bool(st.session_state.setdefault(key, True))
-
-
-# After a click the spinner waits at most this long for fresh numbers (another tab
-# asking for another choice could keep the loader busy elsewhere).
-TOGGLE_MAX_WAIT_SECONDS = 20
-# A newly opened tab may show saved numbers from before; the title's spinner waits this
-# long for fresh ones (a cold read after a restart takes 25-45 s on the VM).
-OPEN_MAX_WAIT_SECONDS = 60
 
 
 def opening_loading(
     st: Any, key: str, loader: TrackLoader, track_key: tuple, record: dict | None
 ) -> bool:
-    """Whether the whole Statistics card is loading, shown beside its title (user, 24
-    Nov 2026): nothing to show yet, or this tab has not yet seen numbers worked out
-    after it opened (the first ones may be the saved, out-of-date ones). Once that is
-    over it stays over for the tab, and the title gets its tick (statistics_section)."""
+    """Whether the whole Statistics card is loading, shown beside its title: only when
+    the loader holds no record for this choice yet. Held numbers show at once (user,
+    26 Nov 2026), since the refresher keeps them current. A tab that did wait gets
+    the title's tick once they are in (statistics_section)."""
     if record is None and loader.error is None:
+        st.session_state[f"{key}_waited"] = True
         return True
-    if st.session_state.get(f"{key}_fresh"):
-        return False
-    opened = st.session_state.get(f"{key}_opened", 0.0)
-    if time.time() - opened <= OPEN_MAX_WAIT_SECONDS and not loader.done_since(
-        track_key, opened
-    ):
-        return True
-    st.session_state[f"{key}_fresh"] = True
-    st.session_state[f"{key}_fresh_tick"] = True
+    if st.session_state.pop(f"{key}_waited", False):
+        st.session_state[f"{key}_fresh_tick"] = True
     return False
 
 
 def toggle_loading(
     st: Any, key: str, loader: TrackLoader, track_key: tuple, record: dict | None
 ) -> bool:
-    """Whether the long-shot box was clicked and the loader has not worked that choice
-    out afresh since (user, 22 Nov 2026: saved numbers showed at once, so the spinner
-    never showed and the tick did not mean they had been recalculated). The card
-    loading as a whole is opening_loading's, beside the title."""
+    """Whether the long-shot box was clicked and the loader holds no record for the new
+    choice yet; a held one shows at once. The card loading as a whole is
+    opening_loading's, beside the title."""
     if not st.session_state.get(f"{key}_pending"):
         return False
-    if record is None and loader.error is None:
-        return True
-    since = st.session_state.get(f"{key}_since", 0.0)
-    if time.time() - since > TOGGLE_MAX_WAIT_SECONDS:
-        return False
-    return not loader.done_since(track_key, since)
+    return record is None and loader.error is None
 
 
 def card_loading(
@@ -4375,6 +4468,10 @@ def main() -> None:
 
     # Cached so that the whole server, across tabs and reruns, starts one watcher.
     st.cache_resource(show_spinner=False)(start_browser_watch)()
+    # Both Statistics cards' loaders start with the first page of any tab, so their
+    # refreshers keep the numbers current before either tab is opened.
+    st.cache_resource(show_spinner=False)(track_loader)()
+    st.cache_resource(show_spinner=False)(market_loader)()
 
     # One tab per sport (user, 20 Nov 2026). Each has its own URL path and its own
     # sidebar; tennis stays the default at "/". Streamlit's own top navigation sits in
@@ -4599,6 +4696,7 @@ def render_tennis(st) -> None:
     longshots = longshots_setting(st, "track_longshots")
     record = loader.request(filters["min_ev"], books, wait=TRACK_WAIT_SECONDS, longshots=longshots)
     track_key = (filters["min_ev"], tuple(books), longshots)
+    track_version = loader.version(track_key)
     track_opening, track_clicked = card_loading(st, "track_longshots", loader, track_key, record)
     track_loading = track_opening or track_clicked
     track = track_card(record, filters["min_ev"], books, loader.error)
@@ -4613,9 +4711,10 @@ def render_tennis(st) -> None:
         fresh, signature = load_rows(st, newest_table) if newest_table else ([], None)
 
         still_running = bool(header_session) and is_running(header_session)
-        track_arrived = track_loading and not any(card_loading(
+        # The card's record arrived or the refresher worked out new numbers.
+        track_arrived = (track_loading and not any(card_loading(
             st, "track_longshots", loader, track_key, loader.results.get(track_key)
-        ))
+        ))) or loader.version(track_key) != track_version
 
         if signature != drawn or still_running != running or track_arrived:
             st.rerun(scope="app")

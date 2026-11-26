@@ -472,6 +472,7 @@ def render_markets(st, dash: Any = None) -> None:
     longshots = dash.longshots_setting(st, "markets_longshots")
     track_key = (min_ev, max_spread, longshots)
     record = loader.request_key(track_key, wait=dash.TRACK_WAIT_SECONDS)
+    track_version = loader.version(track_key)
     track_opening, track_clicked = dash.card_loading(
         st, "markets_longshots", loader, track_key, record
     )
@@ -482,9 +483,10 @@ def render_markets(st, dash: Any = None) -> None:
     def watch() -> None:
         pair = newest_pair()
         # A new run, or the Statistics card has finished loading.
-        arrived = track_loading and not any(dash.card_loading(
+        # Loaded, or the refresher worked out new numbers.
+        arrived = (track_loading and not any(dash.card_loading(
             st, "markets_longshots", loader, track_key, loader.results.get(track_key)
-        ))
+        ))) or loader.version(track_key) != track_version
         if pair != st.session_state.get("markets_drawn") or arrived:
             st.rerun(scope="app")
 

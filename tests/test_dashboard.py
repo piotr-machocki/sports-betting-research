@@ -1717,9 +1717,9 @@ def test_track_loader_draws_a_placeholder_until_the_thread_is_done(monkeypatch):
     gate.set()
     loader.thread.join(5)
     assert loader.ready(0.02, ["Betclic"]) and loader.thread is None
-    # Warm: worked out again and returned within the wait.
-    assert loader.request(0.02, ["Betclic"], wait=2) == {"Betclic": {"signals": 1}}
-    assert calls == [(0.02, ["Betclic"])] * 2
+    # Held: returned at once (the refresher keeps it current, not the request).
+    assert loader.request(0.02, ["Betclic"]) == {"Betclic": {"signals": 1}}
+    assert calls == [(0.02, ["Betclic"])]
 
 
 def test_track_loader_shows_saved_numbers_after_a_restart(monkeypatch, tmp_path):
@@ -1744,14 +1744,16 @@ def test_track_loader_shows_saved_numbers_after_a_restart(monkeypatch, tmp_path)
     first.thread.join(5)
     assert results_file.exists()
 
-    # A restarted server shows the saved numbers at once, then the new ones.
+    # A restarted server shows the saved numbers at once, then its refresher's.
     second = dashboard.TrackLoader({}, cache_file=None, results_file=results_file)
+    monkeypatch.setattr(second, "inputs_signature", lambda: "new run")
     assert second.request(0.02, ["Betclic"], wait=0.05) == {"Betclic": {"signals": 1}}
     assert second.ready(0.02, ["Betclic"])
+    assert second.refresh_once()
     gate.set()
     second.thread.join(5)
     assert second.results[(0.02, ("Betclic",), True)] == {"Betclic": {"signals": 2}}
-    assert dashboard.load_flag_cache(results_file) == {
+    assert dashboard.load_results(results_file)[0] == {
         (0.02, ("Betclic",), True): {"Betclic": {"signals": 2}}
     }
 
@@ -2026,7 +2028,10 @@ def test_donut_keeps_one_match_visible():
 
 def test_track_loader_reads_results_saved_before_the_long_shot_switch(tmp_path):
     results_file = tmp_path / "track_results.pkl"
-    dashboard.save_results({(0.02, ("Betclic",)): {"Betclic": {"signals": 3}}}, results_file)
+    import pickle
+
+    # The old layout: records alone, keys without long shots.
+    results_file.write_bytes(pickle.dumps({(0.02, ("Betclic",)): {"Betclic": {"signals": 3}}}))
 
     loader = dashboard.TrackLoader({}, cache_file=None, results_file=results_file)
     assert loader.results == {(0.02, ("Betclic",), True): {"Betclic": {"signals": 3}}}
@@ -2094,56 +2099,77 @@ def test_sightings_come_back_from_their_file_after_a_restart(monkeypatch, tmp_pa
     assert len(dashboard.load_sightings_cache(cache_file)["files"]) == 3
 
 
-def test_a_newly_opened_tab_spins_beside_the_title_until_fresh_numbers_are_in():
-    import time
+def test_held_numbers_show_at_once_and_only_a_missing_record_spins():
     from types import SimpleNamespace
 
     loader = dashboard.TrackLoader({}, cache_file=None, results_file=None)
     key = (0.02, ("Betclic",), False)
     saved = {"Betclic": {"signals": 1}}
+
+    # A newly opened tab with held numbers: no spinner and no tick.
     page = SimpleNamespace(session_state={})
     dashboard.longshots_setting(page, "box")
+    assert dashboard.card_loading(page, "box", loader, key, saved) == (False, False)
+    assert "box_fresh_tick" not in page.session_state
 
-    # Nothing at all, or only numbers worked out before the tab opened: loading.
+    # Nothing held yet: the title spins, then ticks once when it is in.
     assert dashboard.card_loading(page, "box", loader, key, None) == (True, False)
-    loader.computed[key] = page.session_state["box_opened"] - 5
-    assert dashboard.card_loading(page, "box", loader, key, saved) == (True, False)
-
-    # Worked out after it opened: done for good, with one tick for the title.
-    loader.computed[key] = time.time() + 1
     assert dashboard.card_loading(page, "box", loader, key, saved) == (False, False)
     assert page.session_state.pop("box_fresh_tick")
-    loader.computed.clear()
     assert not dashboard.opening_loading(page, "box", loader, key, saved)
     assert "box_fresh_tick" not in page.session_state
 
-    # A loader that never gets to it does not keep the spinner forever.
-    other = SimpleNamespace(session_state={})
-    other.session_state["box_opened"] = time.time() - dashboard.OPEN_MAX_WAIT_SECONDS - 1
-    assert not dashboard.opening_loading(other, "box", loader, key, saved)
-
-
-def test_after_a_click_the_card_loads_until_fresh_numbers_are_in(monkeypatch):
-    import time
-    from types import SimpleNamespace
-
-    loader = dashboard.TrackLoader({}, cache_file=None, results_file=None)
-    key = (0.02, ("Betclic",), False)
-    saved = {"Betclic": {"signals": 1}}
-    page = SimpleNamespace(session_state={})
-
-    # Nothing clicked: the box has no spinner (the title has the loading one).
+    # A click spins the box only while the new choice has no record.
+    page.session_state["box_pending"] = True
     assert not dashboard.toggle_loading(page, "box", loader, key, saved)
-    assert not dashboard.toggle_loading(page, "box", loader, key, None)
-
-    # Clicked: loading until the loader has worked this choice out after the click.
-    page.session_state.update({"box_pending": True, "box_since": time.time()})
-    assert dashboard.toggle_loading(page, "box", loader, key, saved)
     assert dashboard.toggle_loading(page, "box", loader, key, None)
-    loader.computed[key] = time.time() + 1
-    assert not dashboard.toggle_loading(page, "box", loader, key, saved)
 
-    # A loader busy elsewhere does not keep the spinner forever.
-    loader.computed.clear()
-    page.session_state["box_since"] = time.time() - dashboard.TOGGLE_MAX_WAIT_SECONDS - 1
-    assert not dashboard.toggle_loading(page, "box", loader, key, saved)
+
+def test_the_refresher_keeps_held_choices_current_in_the_background(monkeypatch, tmp_path):
+    values = iter(range(1, 100))
+    computed = []
+
+    def record(sessions, cache, sources, min_ev, now, books, rechecks=None, longshots=True):
+        computed.append((min_ev, longshots))
+        return {"Betclic": {"signals": next(values)}}
+
+    inputs = {"value": 1}
+    monkeypatch.setattr(dashboard, "load_outcome_sources", lambda cache: {})
+    monkeypatch.setattr(dashboard, "list_sessions", lambda: [])
+    monkeypatch.setattr(dashboard, "track_record", record)
+    results_file = tmp_path / "track_results.pkl"
+    loader = dashboard.TrackLoader({}, cache_file=None, results_file=results_file)
+    monkeypatch.setattr(loader, "inputs_signature", lambda: inputs["value"])
+
+    key = (0.02, ("Betclic",), True)
+    assert loader.request_key(key, wait=2) == {"Betclic": {"signals": 1}}
+    loader.thread.join(5)
+    version = loader.version(key)
+
+    # Asked again: the held record at once, nothing worked out.
+    assert loader.request_key(key) == {"Betclic": {"signals": 1}}
+    assert computed == [(0.02, True)]
+
+    # Inputs changed (a new run): worked out again in the background, saved, and the
+    # version moves so the page redraws; unchanged inputs do nothing.
+    assert loader.refresh_once()
+    loader.thread.join(5)
+    assert loader.results[key] == {"Betclic": {"signals": 2}}
+    assert loader.version(key) == version + 1
+    assert not loader.refresh_once()
+    assert len(computed) == 2
+
+    # A restarted server shows the saved numbers and keeps the same choices current.
+    second = dashboard.TrackLoader({}, cache_file=None, results_file=results_file)
+    monkeypatch.setattr(second, "inputs_signature", lambda: inputs["value"])
+    assert second.results[key] == {"Betclic": {"signals": 2}} and key in second.asked
+    assert second.refresh_once()
+    second.thread.join(5)
+    assert second.results[key] == {"Betclic": {"signals": 3}}
+
+    # A held choice the refresher did not keep is shown, then worked out again.
+    other = (0.01, ("Betclic",), True)
+    second.results[other] = {"Betclic": {"signals": 0}}
+    assert second.request_key(other) == {"Betclic": {"signals": 0}}
+    second.thread.join(5)
+    assert second.results[other] == {"Betclic": {"signals": 4}}
