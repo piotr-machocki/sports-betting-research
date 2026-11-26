@@ -2125,6 +2125,18 @@ def test_held_numbers_show_at_once_and_only_a_missing_record_spins():
     assert dashboard.toggle_loading(page, "box", loader, key, None)
 
 
+def test_the_refresher_waits_for_a_run_to_finish(monkeypatch):
+    sessions = ["session_c", "session_b", "session_a"]
+    running = {"session_c"}
+    monkeypatch.setattr(dashboard, "list_sessions", lambda: sessions)
+    monkeypatch.setattr(dashboard, "is_running", lambda session_id: session_id in running)
+
+    # A run going on is ignored: the card counts the last finished one.
+    assert dashboard.TrackLoader.finished_session() == "session_b"
+    running.clear()
+    assert dashboard.TrackLoader.finished_session() == "session_c"
+
+
 def test_the_refresher_keeps_held_choices_current_in_the_background(monkeypatch, tmp_path):
     values = iter(range(1, 100))
     computed = []

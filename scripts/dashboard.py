@@ -2120,9 +2120,11 @@ SOURCES_LOCK = threading.Lock()
 # How long a full run waits for a choice the loader has never worked out before
 # drawing a Loading card. Any choice it holds is shown at once.
 TRACK_WAIT_SECONDS = 1.0
-# The refresher looks this often whether a run, a result or a recheck has changed
-# what the card counts, and if so works the held choices out again in the background
-# (user, 26 Nov 2026: the card must show at once, never wait for a recompute).
+# The refresher looks this often (a few file stats, no recount) whether a run has
+# finished or a result or recheck came in, and only then works the held choices out
+# again in the background: about once per 5-minute run, plus a recheck's (user, 26
+# Nov 2026: the card must show at once, never wait for a recompute). The look only
+# sets how soon after a run's end the new numbers show.
 REFRESH_CHECK_SECONDS = 15
 # It keeps at most this many choices current, the most recently asked for first,
 # and only those asked for within REFRESH_ASKED_HOURS: a warm Tennis card takes
@@ -2207,19 +2209,24 @@ class TrackLoader:
             return self.versions.get(key, 0)
 
     def inputs_signature(self) -> tuple:
-        """Changes when what the card counts may have: a new or growing session, new
-        match results or a recheck. Cheap: only the newest session's files are read."""
+        """Changes when what the card counts may have: a run finished, new match
+        results or a recheck. A run still going is left out (its CSV grows row by row,
+        which recounted the card several times per run), so it is one recount per run.
+        Cheap: a few status files are read."""
         import recheck_signals
 
-        sessions = list_sessions()
-        newest = [
-            file_signature(SESSIONS_DIR / f"{session_id}{suffix}")
-            for session_id in sessions[:1]
-            for suffix in (".csv", "_status.json")
-        ]
+        session_id = self.finished_session()
         return (
-            len(sessions), tuple(newest), outcome_signature(),
-            file_signature(recheck_signals.RECHECKS_FILE),
+            session_id, file_signature(session_csv(session_id)) if session_id else None,
+            outcome_signature(), file_signature(recheck_signals.RECHECKS_FILE),
+        )
+
+    @staticmethod
+    def finished_session() -> str | None:
+        """The newest session that is no longer running (a run is one at a time)."""
+        return next(
+            (session_id for session_id in list_sessions()[:3] if not is_running(session_id)),
+            None,
         )
 
     def keep_fresh(self) -> None:
@@ -2349,14 +2356,12 @@ class MarketTrackLoader(TrackLoader):
         )
 
     def inputs_signature(self) -> tuple:
-        """Also the newest market files (one is written during each run)."""
-        from market_compare import latest_snapshots
+        """Also the market file of that finished run."""
+        from market_compare import snapshot_path
 
-        newest = latest_snapshots(days=1)
-        return (
-            super().inputs_signature(), len(newest),
-            file_signature(newest[0]) if newest else None,
-        )
+        signature = super().inputs_signature()
+        path = snapshot_path(signature[0]) if signature[0] else None
+        return signature, file_signature(path) if path else None
 
 
 def market_loader() -> MarketTrackLoader:
