@@ -32,8 +32,8 @@ from market_compare import (
 )
 
 IDLE_REFRESH_SECONDS = 10
-# While the run shown is still going: redraw as its matches come in, like the Tennis
-# page's table (user, 26 Nov 2026), a bit slower since the whole page is redrawn.
+# How often the page looks for a new run, new matches in it or its end, and redraws
+# then (user, 26 Nov 2026: fill in during a run like the Tennis page's table).
 RUNNING_REFRESH_SECONDS = 2
 DEFAULT_MIN_EV_PERCENT = 2.0
 MAX_MIN_EV_PERCENT = 5.0
@@ -493,9 +493,11 @@ def render_markets(st, dash: Any = None) -> None:
     state = drawn_state()
     pair, running = state[0], state[1]
 
-    # Every second while the Statistics card loads, so its tick comes quickly; every 2 s
-    # while the run is going, so its matches fill in.
-    every = 1 if track_loading else RUNNING_REFRESH_SECONDS if running else IDLE_REFRESH_SECONDS
+    # Every second while the Statistics card loads, so its tick comes quickly; else
+    # every 2 s, also between runs: a run has matches for only about 12 s, so a 10 s
+    # look usually found it finished (26 Nov 2026). The look draws nothing and reads
+    # a few file stats (about 4 ms on the VM), so it does not make scrolling stutter.
+    every = 1 if track_loading else RUNNING_REFRESH_SECONDS
 
     @st.fragment(run_every=every)
     def watch() -> None:
