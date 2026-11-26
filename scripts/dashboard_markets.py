@@ -483,15 +483,18 @@ def render_markets(st, dash: Any = None) -> None:
     track_loading = track_opening or track_clicked
 
     def drawn_state() -> tuple:
-        """The run shown, whether it is still going and its CSV's state: a change
-        in any of them means a redraw."""
+        """The run shown, its CSV's state and a run still going: a change in any of
+        them means a redraw. A run writes its rows only in its last half second, so
+        while it goes the heading follows it and the rest shows the run before, as on
+        the Tennis page."""
         pair = newest_pair()
-        if not pair:
-            return pair, False, None
-        return pair, dash.is_running(pair[0]), dash.file_signature(dash.session_csv(pair[0]))
+        newest = dash.list_sessions()[:1]
+        live = newest[0] if newest and dash.is_running(newest[0]) else None
+        csv = dash.file_signature(dash.session_csv(pair[0])) if pair else None
+        return pair, csv, live
 
     state = drawn_state()
-    pair, running = state[0], state[1]
+    pair, live = state[0], state[2]
 
     # Every second while the Statistics card loads, so its tick comes quickly; else
     # every 2 s, also between runs: a run has matches for only about 12 s, so a 10 s
@@ -542,15 +545,20 @@ def render_markets(st, dash: Any = None) -> None:
     summary["status"] = str(info.get("status", "running")).lower()
     dash.pill_state(summary, session_id)
 
-    st.html(dash.session_bar_html(summary, session_id))
-    # The run's progress, as on the Tennis page.
-    if running:
-        progress = dash.session_summary(rows, info, min_ev, now)
+    if live:
+        # The run going on: its Running pill and progress bar, as on the Tennis page.
+        progress = dash.session_summary(
+            read_session_rows(dash.session_csv(live)) or [], dash.session_info(live), min_ev, now
+        )
+        dash.pill_state(progress, live)
+        st.html(dash.session_bar_html(progress, live))
         if progress["expected"]:
             st.progress(
                 min(1.0, progress["processed"] / progress["expected"]),
                 text=f"{progress['processed']} / {progress['expected']} matches",
             )
+    else:
+        st.html(dash.session_bar_html(summary, session_id))
     st.html(overview(stats, max_spread, flow))
     dash.statistics_section(
         st, "markets_longshots", "markets", track, track_clicked, track_opening,
