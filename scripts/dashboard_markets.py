@@ -32,6 +32,9 @@ from market_compare import (
 )
 
 IDLE_REFRESH_SECONDS = 10
+# While the run shown is still going: redraw as its matches come in, like the Tennis
+# page's table (user, 26 Nov 2026), a bit slower since the whole page is redrawn.
+RUNNING_REFRESH_SECONDS = 2
 DEFAULT_MIN_EV_PERCENT = 2.0
 MAX_MIN_EV_PERCENT = 5.0
 CHECK = "✓"
@@ -479,22 +482,33 @@ def render_markets(st, dash: Any = None) -> None:
     )
     track_loading = track_opening or track_clicked
 
-    # Every second while the Statistics card loads, so its tick comes quickly.
-    @st.fragment(run_every=1 if track_loading else IDLE_REFRESH_SECONDS)
-    def watch() -> None:
+    def drawn_state() -> tuple:
+        """The run shown, whether it is still going and its CSV's state: a change
+        in any of them means a redraw."""
         pair = newest_pair()
-        # A new run, or the Statistics card has finished loading.
+        if not pair:
+            return pair, False, None
+        return pair, dash.is_running(pair[0]), dash.file_signature(dash.session_csv(pair[0]))
+
+    state = drawn_state()
+    pair, running = state[0], state[1]
+
+    # Every second while the Statistics card loads, so its tick comes quickly; every 2 s
+    # while the run is going, so its matches fill in.
+    every = 1 if track_loading else RUNNING_REFRESH_SECONDS if running else IDLE_REFRESH_SECONDS
+
+    @st.fragment(run_every=every)
+    def watch() -> None:
         # Loaded, or the refresher worked out new numbers.
         arrived = (track_loading and not any(dash.card_loading(
             st, "markets_longshots", loader, track_key, loader.results.get(track_key)
         ))) or loader.version(track_key) != track_version
         # Up to date <-> Updating, so the title's pill follows a run's end.
         arrived = arrived or loader.status(track_key) != track_state
-        if pair != st.session_state.get("markets_drawn") or arrived:
+        # A new run, new matches in this one, or it ended.
+        if drawn_state() != state or arrived:
             st.rerun(scope="app")
 
-    pair = newest_pair()
-    st.session_state["markets_drawn"] = pair
     watch()
 
     if not pair:
@@ -526,10 +540,16 @@ def render_markets(st, dash: Any = None) -> None:
     summary["status"] = str(info.get("status", "running")).lower()
     dash.pill_state(summary, session_id)
 
-    st.html(
-        dash.session_bar_html(summary, session_id)
-        + overview(stats, max_spread, flow)
-    )
+    st.html(dash.session_bar_html(summary, session_id))
+    # The run's progress, as on the Tennis page.
+    if running:
+        progress = dash.session_summary(rows, info, min_ev, now)
+        if progress["expected"]:
+            st.progress(
+                min(1.0, progress["processed"] / progress["expected"]),
+                text=f"{progress['processed']} / {progress['expected']} matches",
+            )
+    st.html(overview(stats, max_spread, flow))
     dash.statistics_section(
         st, "markets_longshots", "markets", track, track_clicked, track_opening,
         track_state if record is not None or loader.error else None,
