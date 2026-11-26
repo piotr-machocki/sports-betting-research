@@ -2185,3 +2185,36 @@ def test_the_refresher_keeps_held_choices_current_in_the_background(monkeypatch,
     assert second.request_key(other) == {"Betclic": {"signals": 0}}
     second.thread.join(5)
     assert second.results[other] == {"Betclic": {"signals": 4}}
+
+
+def test_the_statistics_title_says_whether_its_numbers_are_up_to_date(monkeypatch):
+    monkeypatch.setattr(dashboard, "load_outcome_sources", lambda cache: {})
+    monkeypatch.setattr(dashboard, "list_sessions", lambda: [])
+    monkeypatch.setattr(dashboard, "track_record", lambda *a, **k: {"Betclic": {"signals": 1}})
+    monkeypatch.setattr(
+        dashboard.TrackLoader, "finished_session",
+        staticmethod(lambda: "session_20261126_172000_abcdef"),
+    )
+    loader = dashboard.TrackLoader({}, cache_file=None, results_file=None)
+    inputs = {"value": 1}
+    monkeypatch.setattr(loader, "inputs_signature", lambda: inputs["value"])
+    key = (0.02, ("Betclic",), True)
+
+    loader.refresh_once()
+    loader.request_key(key, wait=2)
+    if loader.thread:
+        loader.thread.join(5)
+    assert loader.status(key) == ("current", "session_20261126_172000_abcdef")
+    pill = dashboard.stats_status_html(*loader.status(key))
+    shown = f"{dashboard.session_started('session_20261126_172000_abcdef'):%m-%d %H:%M}"
+    assert "Up to date" in pill and shown in pill and "Last run counted" in pill
+
+    # A run finished: Updating until its recount is in.
+    inputs["value"] = 2
+    loader.refresh_once()
+    if loader.thread:
+        loader.thread.join(5)
+    assert loader.status(key)[0] == "current"
+    loader.signed = 3
+    assert loader.status(key)[0] == "updating"
+    assert "Updating" in dashboard.stats_status_html("updating", None)

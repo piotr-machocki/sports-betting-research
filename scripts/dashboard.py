@@ -707,7 +707,7 @@ OVERVIEW_STYLE = """<style>
 .toggle-status { display: flex; align-items: center; min-height: 24px; }
 /* Beside the Statistics (all runs) title: the same while a newly opened tab waits for
    numbers worked out after it opened (user, 24 Nov 2026). */
-.stats-title { display: flex; align-items: center; gap: 8px; }
+.stats-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-bottom: 6px; }
 .title-status { display: inline-flex; align-items: center; }
 .toggle-tick {
     color: #1f9d55;
@@ -2160,6 +2160,9 @@ class TrackLoader:
         # The inputs signature each choice was last worked out for, and the newest.
         self.computed_for: dict[tuple, Any] = {}
         self.signed: Any = None
+        # The finished run the newest inputs end with, and the one each choice counts.
+        self.signed_session: str | None = None
+        self.counted: dict[tuple, str | None] = {}
         self.thread: threading.Thread | None = None
         self.refresher: threading.Thread | None = None
         self.done = threading.Condition()
@@ -2203,6 +2206,17 @@ class TrackLoader:
     def ready_key(self, key: tuple) -> bool:
         with self.done:
             return key in self.results or self.error is not None
+
+    def status(self, key: tuple) -> tuple[str, str | None]:
+        """(state, run counted) for the Statistics title's pill: "current" once this
+        choice was worked out for the newest inputs, else "updating" (a run finished
+        or a result came in and the recount is on its way), "failed" on an error."""
+        with self.done:
+            if self.error is not None:
+                return "failed", self.counted.get(key)
+            if self.signed is not None and self.computed_for.get(key) == self.signed:
+                return "current", self.counted.get(key)
+            return "updating", self.counted.get(key)
 
     def version(self, key: tuple) -> int:
         with self.done:
@@ -2253,6 +2267,7 @@ class TrackLoader:
                 return False
             # Taken before the work, so a change while it runs is caught next time.
             self.signed = signature
+            self.signed_session = self.finished_session()
             recent = time.time() - REFRESH_ASKED_HOURS * 3600
             keys = sorted(
                 (key for key in self.results if self.asked.get(key, 0.0) >= recent),
@@ -2280,7 +2295,7 @@ class TrackLoader:
                     self.thread = None
                     return
                 key = self.queue.pop(0)
-                signed = self.signed
+                signed, session = self.signed, self.signed_session
 
             try:
                 with SOURCES_LOCK:
@@ -2306,6 +2321,7 @@ class TrackLoader:
                 if record is not None:
                     self.results[key] = record
                     self.computed_for[key] = signed
+                    self.counted[key] = session
                 if changed:
                     self.versions[key] = self.versions.get(key, 0) + 1
                 self.error = error
@@ -3552,8 +3568,35 @@ def card_loading(
     )
 
 
+# The Statistics title's pill (user, 26 Nov 2026: like the run's Successful pill, to
+# show the numbers are current): its words, colour and tooltip per TrackLoader.status.
+STATS_STATES = {
+    "current": ("Up to date", STATUS_COLOURS["finished"], "Counts every run up to the last finished one"),
+    "updating": ("Updating", OVERVIEW_BLUE, "A run finished or results came in: counting them now"),
+    "failed": ("Failed", STATUS_COLOURS["failed"], "Could not work the statistics out"),
+}
+
+
+def stats_status_html(state: str, session_id: str | None) -> str:
+    """The pill and, once known, the time of the last run the numbers count (the
+    same tags as session_bar_html's)."""
+    label, colour, tip = STATS_STATES[state]
+    tags = (
+        f'<span class="session-status" style="--status: {colour}" '
+        f'title="{html.escape(tip)}">{label}</span>'
+    )
+    started = session_started(session_id) if session_id else None
+    if started is not None:
+        tags += (
+            f'<span class="session-time" title="Last run counted">'
+            f'<span class="year">{started:%Y-}</span>{started:%m-%d %H:%M}</span>'
+        )
+    return tags
+
+
 def statistics_section(
-    st: Any, key: str, help_key: str, card: str, loading: bool, opening: bool = False
+    st: Any, key: str, help_key: str, card: str, loading: bool, opening: bool = False,
+    state: tuple[str, str | None] | None = None,
 ) -> None:
     """Statistics (all runs) with Include long shots under its title (user, 22 Nov
     2026: out of the sidebar, easy to flip on a phone), a spinner beside the box while
@@ -3576,7 +3619,12 @@ def statistics_section(
             '<span class="title-status"><span class="spinner brief"></span>'
             '<span class="toggle-tick">✓</span></span>'
         )
-    st.html(f'<div class="overview-title stats-title">Statistics (all runs){status}</div>')
+    if state and not opening:
+        status += stats_status_html(*state)
+    st.html(
+        '<div class="session-title stats-title"><span class="overview-title">'
+        f'Statistics (all runs)</span>{status}</div>'
+    )
 
     with st.container(horizontal=True, vertical_alignment="center", gap="small"):
         st.checkbox(
@@ -4705,6 +4753,7 @@ def render_tennis(st) -> None:
     record = loader.request(filters["min_ev"], books, wait=TRACK_WAIT_SECONDS, longshots=longshots)
     track_key = (filters["min_ev"], tuple(books), longshots)
     track_version = loader.version(track_key)
+    track_state = loader.status(track_key)
     track_opening, track_clicked = card_loading(st, "track_longshots", loader, track_key, record)
     track_loading = track_opening or track_clicked
     track = track_card(record, filters["min_ev"], books, loader.error)
@@ -4723,6 +4772,8 @@ def render_tennis(st) -> None:
         track_arrived = (track_loading and not any(card_loading(
             st, "track_longshots", loader, track_key, loader.results.get(track_key)
         ))) or loader.version(track_key) != track_version
+        # Up to date <-> Updating, so the pill follows a run's end.
+        track_arrived = track_arrived or loader.status(track_key) != track_state
 
         if signature != drawn or still_running != running or track_arrived:
             st.rerun(scope="app")
@@ -4747,7 +4798,8 @@ def render_tennis(st) -> None:
     # once per full run; a full run follows any change and the card's arrival.
     with track_box:
         statistics_section(
-            st, "track_longshots", "tennis", track, track_clicked, track_opening
+            st, "track_longshots", "tennis", track, track_clicked, track_opening,
+            track_state if record is not None or loader.error else None,
         )
 
     if table_session:

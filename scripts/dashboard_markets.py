@@ -473,6 +473,7 @@ def render_markets(st, dash: Any = None) -> None:
     track_key = (min_ev, max_spread, longshots)
     record = loader.request_key(track_key, wait=dash.TRACK_WAIT_SECONDS)
     track_version = loader.version(track_key)
+    track_state = loader.status(track_key)
     track_opening, track_clicked = dash.card_loading(
         st, "markets_longshots", loader, track_key, record
     )
@@ -487,6 +488,8 @@ def render_markets(st, dash: Any = None) -> None:
         arrived = (track_loading and not any(dash.card_loading(
             st, "markets_longshots", loader, track_key, loader.results.get(track_key)
         ))) or loader.version(track_key) != track_version
+        # Up to date <-> Updating, so the title's pill follows a run's end.
+        arrived = arrived or loader.status(track_key) != track_state
         if pair != st.session_state.get("markets_drawn") or arrived:
             st.rerun(scope="app")
 
@@ -528,7 +531,8 @@ def render_markets(st, dash: Any = None) -> None:
         + overview(stats, max_spread, flow)
     )
     dash.statistics_section(
-        st, "markets_longshots", "markets", track, track_clicked, track_opening
+        st, "markets_longshots", "markets", track, track_clicked, track_opening,
+        track_state if record is not None or loader.error else None,
     )
 
     shown = [m for m in matches if m["markets"]] if on_market else matches
