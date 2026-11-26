@@ -2293,6 +2293,9 @@ class TrackLoader:
 
             with self.done:
                 changed = record is not None and self.results.get(key) != record
+                # The first time this server works a choice out it is saved even
+                # unchanged, so the file knows it is asked for (refresh_once).
+                first = record is not None and key not in self.computed_for
                 if record is not None:
                     self.results[key] = record
                     self.computed_for[key] = signed
@@ -2303,7 +2306,7 @@ class TrackLoader:
                 self.done.notify_all()
                 saved, asked = dict(self.results), dict(self.asked)
 
-            if changed and self.results_file:
+            if (changed or first) and self.results_file:
                 try:
                     save_results(saved, self.results_file, asked)
                 except Exception:
