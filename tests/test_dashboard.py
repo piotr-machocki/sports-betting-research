@@ -2206,8 +2206,7 @@ def test_the_statistics_title_says_whether_its_numbers_are_up_to_date(monkeypatc
         loader.thread.join(5)
     assert loader.status(key) == ("current", "session_20261126_172000_abcdef")
     pill = dashboard.stats_status_html(*loader.status(key))
-    shown = f"{dashboard.session_started('session_20261126_172000_abcdef'):%m-%d %H:%M}"
-    assert "Up to date" in pill and shown in pill and "Last run counted" in pill
+    assert "Up to date" in pill and "session-time" not in pill
 
     # A run finished: Updating until its recount is in.
     inputs["value"] = 2

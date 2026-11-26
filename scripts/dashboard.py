@@ -3578,20 +3578,13 @@ STATS_STATES = {
 
 
 def stats_status_html(state: str, session_id: str | None) -> str:
-    """The pill and, once known, the time of the last run the numbers count (the
-    same tags as session_bar_html's)."""
+    """The pill alone (user, 26 Nov 2026: no time tag after it); session_id is kept
+    for a caller that may want it."""
     label, colour, tip = STATS_STATES[state]
-    tags = (
+    return (
         f'<span class="session-status" style="--status: {colour}" '
         f'title="{html.escape(tip)}">{label}</span>'
     )
-    started = session_started(session_id) if session_id else None
-    if started is not None:
-        tags += (
-            f'<span class="session-time" title="Last run counted">'
-            f'<span class="year">{started:%Y-}</span>{started:%m-%d %H:%M}</span>'
-        )
-    return tags
 
 
 def statistics_section(
