@@ -2941,6 +2941,11 @@ def overview_counts(value: str) -> tuple[int, int | None]:
     return int(part), int(whole) if whole else None
 
 
+# Pinnacle's bar is yellow, as on Prediction markets (dashboard_markets.SHARP_COLOUR;
+# user, 27 Nov 2026), the books' blue.
+PINNACLE_COLOUR = "#e0a526"
+
+
 def overview_meters(stats: dict, total: int, books: list[str] = BOOKS) -> str:
     rows = [
         ("Pinnacle", "Pinnacle matches processed"),
@@ -2956,11 +2961,12 @@ def overview_meters(stats: dict, total: int, books: list[str] = BOOKS) -> str:
         whole = whole or total
         width = min(100.0, 100 * part / whole) if whole else 0
         text = f"{part} / {whole}" if whole else str(part)
+        colour = PINNACLE_COLOUR if label == "Pinnacle" else OVERVIEW_BLUE
 
         cells.append(
             f"<div>{label}</div>"
             f'<div class="overview-meter" title="{key}: {text} ({share(part, whole)})">'
-            f'<div style="width: {width:.1f}%; background-color: {OVERVIEW_BLUE}"></div></div>'
+            f'<div style="width: {width:.1f}%; background-color: {colour}"></div></div>'
             f'<div class="count">{text}</div>'
         )
 
