@@ -654,7 +654,7 @@ OVERVIEW_STYLE = """<style>
 }
 .longshots-label .tip { width: 260px; font-weight: 400; }
 /* Long-shot signals per source, indented under the box's text (user, 27 Nov 2026). */
-.longshots-counts { margin: -6px 0 0 32px; font-size: 14px; line-height: 22px; user-select: text; }
+.longshots-counts { margin: -14px 0 0 32px; font-size: 14px; line-height: 22px; user-select: text; }
 .longshots-counts .label { color: color-mix(in srgb, currentColor 65%, transparent); }
 .longshots-counts .dot { margin-right: 7px; }
 .has-tip .tip a { color: inherit; text-decoration: underline; cursor: pointer; }
