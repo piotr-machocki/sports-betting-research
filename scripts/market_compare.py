@@ -68,6 +68,17 @@ def band_of(value: Any) -> tuple[float, float]:
     return (float(value[0]), float(value[1]))
 
 
+def band_counts(flags: list[dict]) -> list[int]:
+    """Signals per stretch of BAND_POINTS, judged on (1 + EV) / price: the reference
+    probability (Pinnacle's fair one, or the market's on the markets tab)."""
+    counts = [0] * (len(BAND_POINTS) - 1)
+    for flag in flags:
+        chance = (1 + flag["Best EV"]) / flag["_price"] * 100
+        index = sum(chance >= point for point in BAND_POINTS[1:-1])
+        counts[index] += 1
+    return counts
+
+
 def in_band(probability: float, band: Any) -> bool:
     """low <= probability < high; a high of 100% keeps everything above low."""
     low, high = band_of(band)

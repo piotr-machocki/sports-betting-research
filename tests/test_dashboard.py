@@ -2240,3 +2240,17 @@ def test_longshots_setting_reads_percent_as_a_band():
     assert dashboard.longshots_setting(page, "band") == (0.15, 0.85)
     page.session_state["band"] = True  # an old checkbox value
     assert dashboard.longshots_setting(page, "band") == (0.0, 1.0)
+
+
+def test_band_chart_counts_signals_per_stretch():
+    from market_compare import band_counts
+
+    flags = [{"Best EV": 0.0, "_price": price} for price in (10.0, 3.0, 1.5, 1.1, 1.05)]
+    # 10%, 33%, 67%, 91%, 95%
+    assert band_counts(flags) == [1, 1, 1, 2]
+    record = {"Betclic": {"by_band": [0, 5, 2, 0]}, "Superbet": {"by_band": [2, 1, 0, 0]}}
+    chart = dashboard.band_chart_html(record, {"Betclic": "Betclic", "Superbet": "Superbet"}, (0.15, 1.0))
+    assert chart.count('class="band-bar"') == 8
+    assert "Betclic · Underdogs (15–50%): 5 signals" in chart
+    assert chart.count("band-column out") == 1  # long shots, outside the range
+    assert dashboard.band_chart_html({"Old": {"signals": 3}}, {"Old": "Old"}, True) == ""

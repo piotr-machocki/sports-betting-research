@@ -46,7 +46,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from market_compare import BAND_NAMES, BAND_POINTS, FULL_BAND, band_of  # noqa: E402
+from market_compare import BAND_NAMES, BAND_POINTS, FULL_BAND, band_counts, band_of  # noqa: E402
 from live_monitor import (  # noqa: E402
     EV_LABELS,
     FINISHED_STATES,
@@ -680,6 +680,20 @@ OVERVIEW_STYLE = """<style>
 .st-key-markets_band [data-testid="stSliderThumbValue"] { display: none; }
 .st-key-track_band [style*="translate(-50%, -50%)"],
 .st-key-markets_band [style*="translate(-50%, -50%)"] { z-index: 2; }
+.band-chart { margin: 4px 0 14px; font-size: 12px; line-height: 16px; }
+.band-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 6px;
+    color: color-mix(in srgb, currentColor 75%, transparent); }
+.band-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+    margin-right: 5px; vertical-align: -1px; }
+.band-plot { display: grid; grid-template-columns: repeat(4, 1fr);
+    border-bottom: 1px solid rgba(128, 128, 128, 0.45); }
+.band-column { display: flex; justify-content: center; align-items: flex-end; gap: 2px;
+    padding-top: 16px; }
+.band-column.out { opacity: 0.35; }
+.band-bar { display: flex; flex-direction: column; align-items: center; width: 16px; cursor: default; }
+.band-bar span { font-size: 11px; line-height: 14px; font-variant-numeric: tabular-nums;
+    color: color-mix(in srgb, currentColor 75%, transparent); }
+.band-bar i { display: block; width: 12px; border-radius: 4px 4px 0 0; }
 .band-marks { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
 .band-marks .band-dot {
     position: absolute;
@@ -2195,8 +2209,60 @@ def track_record(
                 session_ids, oldest_first, flags, book, min_ev, sources["sightings"], rechecks
             )))
             record[book]["all_signals"] = len(everything)
+            record[book]["by_band"] = band_counts(everything)
 
     return record
+
+
+# The chart over the probability slider (user, 27 Nov 2026): signals per stretch
+# and source, one column per stretch so they sit over the slider's. Categorical
+# slots 1-3 of the dataviz palette's dark steps (validated on #0e1117: CVD and
+# normal-vision separation pass); each bar also has its number over it and a
+# legend names the colours, so identity is never colour alone.
+BAND_CHART_COLOURS = ("#3987e5", "#d95926", "#199e70")
+BAND_CHART_HEIGHT = 64
+
+
+def band_chart_html(record: dict | None, labels: dict[str, str], band: Any) -> str:
+    """Grouped bars: per stretch, one bar per source with its signal count, out of
+    all its signals whatever the range; stretches outside the range are faded."""
+    if not record:
+        return ""
+    sources = [
+        (label, record[key]["by_band"]) for key, label in labels.items()
+        if record.get(key) and record[key].get("by_band")
+    ]
+    if not sources:
+        return ""
+    top = max(max(counts) for _, counts in sources) or 1
+    low, high = band_of(band)
+    legend = "".join(
+        f'<span><i style="background:{colour}"></i>{html.escape(label)}</span>'
+        for (label, _), colour in zip(sources, BAND_CHART_COLOURS)
+    )
+    columns = []
+    for index, name in enumerate(BAND_NAMES):
+        start, end = BAND_POINTS[index] / 100, BAND_POINTS[index + 1] / 100
+        inside = start >= low - 1e-9 and end <= high + 1e-9
+        bars = []
+        for (label, counts), colour in zip(sources, BAND_CHART_COLOURS):
+            count = counts[index]
+            height = round(BAND_CHART_HEIGHT * count / top)
+            tip = (
+                f"{label} · {name} ({BAND_POINTS[index]}–{BAND_POINTS[index + 1]}%): "
+                f"{count} signal{'' if count == 1 else 's'}"
+            )
+            bars.append(
+                f'<div class="band-bar" title="{html.escape(tip)}"><span>{count}</span>'
+                f'<i style="height:{max(height, 1 if count else 0)}px;background:{colour}"></i></div>'
+            )
+        columns.append(
+            f'<div class="band-column{"" if inside else " out"}">{"".join(bars)}</div>'
+        )
+    return (
+        f'<div class="band-chart"><div class="band-legend">{legend}</div>'
+        f'<div class="band-plot">{"".join(columns)}</div></div>'
+    )
 
 
 def longshots_html(record: dict | None, labels: dict[str, str]) -> str:
@@ -3790,6 +3856,7 @@ def statistics_section(
     st: Any, key: str, help_key: str, card: str, loading: bool, opening: bool = False,
     state: tuple[str, str | None] | None = None,
     counts: str = "",
+    chart: str = "",
 ) -> None:
     """Statistics (all runs) with Include long shots under its title (user, 22 Nov
     2026: out of the sidebar, easy to flip on a phone), a spinner beside the box while
@@ -3823,6 +3890,8 @@ def statistics_section(
     # replaced Include long shots): its title is plain HTML with the tip, the
     # spinner and the tick, the stretches are named under it, the counts after.
     with st.container(width=440, gap=None):
+        if chart:
+            st.html(chart)
         # The spinner or tick goes inside the text's element, right after the "?"
         # (user, 27 Nov 2026: as an element of its own it sat far to the right).
         toggle = ""
@@ -5018,6 +5087,7 @@ def render_tennis(st) -> None:
             st, "track_band", "tennis", track, track_clicked, track_opening,
             track_state if record is not None or loader.error else None,
             longshots_html(record, {book: book for book in books}),
+            band_chart_html(record, {book: book for book in books}, longshots),
         )
 
     if table_session:

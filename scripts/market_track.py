@@ -27,6 +27,7 @@ from live_monitor import SESSIONS_DIR, latest_per_match, read_session_rows
 from market_compare import (
     FULL_BAND,
     MARKETS_DIR,
+    band_counts,
     band_of,
     in_band,
     far_from_pinnacle,
@@ -190,6 +191,7 @@ def market_record(
         stats = dash.track_stats(settled)
         stats.update(agreement_stats(settled))
         stats["all_signals"] = len(everything)
+        stats["by_band"] = band_counts(everything)
         record[reference] = stats
 
     return record
