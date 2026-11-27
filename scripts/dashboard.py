@@ -643,6 +643,16 @@ OVERVIEW_STYLE = """<style>
 /* The tip stays open while the mouse crosses the gap to it, so its text can be
    selected and copied (user, 20 Nov 2026). */
 .has-tip .tip { cursor: text; user-select: text; }
+/* Include long shots: plain text beside its box, so it can be copied (user, 27 Nov 2026). */
+.longshots-label { position: relative; display: flex; align-items: center; gap: 8px; font-size: 1rem; user-select: text; cursor: text; }
+/* The tip opens under the text's start, so it stays on a phone screen. */
+.longshots-label .has-tip { position: static; }
+.longshots-label .help-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; border: 1.5px solid currentColor; border-radius: 50%;
+    font-size: 11px; font-weight: 700; line-height: 1; opacity: 0.7; cursor: help;
+}
+.longshots-label .tip { width: 260px; font-weight: 400; }
 .has-tip .tip a { color: inherit; text-decoration: underline; cursor: pointer; }
 .has-tip .tip::before { content: ""; position: absolute; left: 0; right: 0; top: -6px; height: 6px; }
 /* Dotted and grey (user, 15 Nov 2026): a hint that a tap explains it, quieter than the text. */
@@ -3638,8 +3648,15 @@ def statistics_section(
     )
 
     with st.container(horizontal=True, vertical_alignment="center", gap="small"):
+        # Only the box toggles (user, 27 Nov 2026): the text beside it is plain,
+        # selectable HTML, as a tap on a widget label ticks the box.
         st.checkbox(
-            "Include long shots", key=key, on_change=changed, help=LONGSHOT_HELP[help_key]
+            "Include long shots", key=key, on_change=changed, label_visibility="collapsed"
+        )
+        st.html(
+            '<div class="longshots-label">Include long shots'
+            '<span class="has-tip" tabindex="0"><span class="help-icon">?</span>'
+            f'<span class="tip">{html.escape(LONGSHOT_HELP[help_key])}</span></span></div>'
         )
         if loading:
             st.html('<div class="toggle-status"><span class="spinner"></span></div>')
