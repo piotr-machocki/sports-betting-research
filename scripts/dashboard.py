@@ -942,8 +942,8 @@ TABLE_SCRIPT = """<script>
         const status = label && label.querySelector(".toggle-status");
         return status ? String(status.dataset.change ?? "loading") : "none";
     };
-    const handlesOf = box => Array.from(box.querySelectorAll('[role="slider"]'))
-        .map(handle => handle.getAttribute("aria-valuenow")).join();
+    const handlesOf = box => Array.from(box.querySelectorAll('input[type="range"]'))
+        .map(handle => handle.value).join();
     const before = event => {
         const box = event.target.closest && event.target.closest(LONGSHOT_BOXES);
         if (box) box.dataset.handlesBefore = handlesOf(box);
