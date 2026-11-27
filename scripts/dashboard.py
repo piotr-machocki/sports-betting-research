@@ -731,7 +731,12 @@ OVERVIEW_STYLE = """<style>
 .toggle-status { display: flex; align-items: center; min-height: 24px; }
 /* Beside the Statistics (all runs) title: the same while a newly opened tab waits for
    numbers worked out after it opened (user, 24 Nov 2026). */
-.stats-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-bottom: 6px; }
+.stats-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-bottom: -6px; }
+/* Larger than the run's heading, and closer to Include long shots (user, 27 Nov 2026). */
+.stats-title .overview-title, .session-title.stats-title .overview-title { font-size: 26px; line-height: 34px; }
+@media (max-width: 700px) {
+    .session-title.stats-title .overview-title { font-size: 23px; line-height: 30px; }
+}
 .title-status { display: inline-flex; align-items: center; }
 .toggle-tick {
     color: #1f9d55;
