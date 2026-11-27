@@ -452,14 +452,14 @@ OVERVIEW_STYLE = """<style>
     color: var(--status);
     background-color: color-mix(in srgb, var(--status) 15%, transparent);
 }
-/* Updating... : the dots go ... .. . .. and round again (user, 27 Nov 2026), each dot
-   always holding its place so the pill does not change width. */
+/* Updating... : the dots build up . .. ... and start again (user, 27 Nov 2026), each
+   dot always holding its place so the pill does not change width. */
 .loading-dots { margin-left: -4px; letter-spacing: 2px; }
-.loading-dots span { animation: 1.6s step-end infinite; }
+.loading-dots span { animation: 1.5s step-end infinite; }
 .loading-dots span:nth-child(2) { animation-name: dot-two; }
 .loading-dots span:nth-child(3) { animation-name: dot-three; }
-@keyframes dot-two { 0% { opacity: 1; } 50% { opacity: 0; } 75% { opacity: 1; } }
-@keyframes dot-three { 0% { opacity: 1; } 25% { opacity: 0; } }
+@keyframes dot-two { 0% { opacity: 0; } 33.3% { opacity: 1; } }
+@keyframes dot-three { 0% { opacity: 0; } 66.6% { opacity: 1; } }
 .session-status::before {
     content: "";
     width: 7px;
