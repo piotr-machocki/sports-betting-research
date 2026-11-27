@@ -930,7 +930,7 @@ TABLE_SCRIPT = """<script>
         document.querySelectorAll(LONGSHOT_BOXES).forEach(box => {
             const label = labelOf(box);
             if (!label || !label.classList.contains("busy")) return;
-            const old = Date.now() - Number(box.dataset.busySince) > 15000;
+            const old = Date.now() - Number(box.dataset.busySince) > 30000;
             if (old || statusChange(label) !== box.dataset.busyFrom) label.classList.remove("busy");
         });
     }, 200);
