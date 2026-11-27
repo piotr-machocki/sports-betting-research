@@ -750,14 +750,13 @@ OVERVIEW_STYLE = """<style>
    (user, 22 Nov 2026: to see that the card was worked out again). */
 .toggle-status .spinner.brief, .title-status .spinner.brief { animation: spin 0.8s linear infinite, vanish 0.9s step-end forwards; }
 @keyframes vanish { to { width: 0; height: 0; border-width: 0; } }
-/* The browser's own spinner right after a click (TABLE_SCRIPT adds .busy). */
-.st-key-track_longshots.busy, .st-key-markets_longshots.busy {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-.st-key-track_longshots.busy::after, .st-key-markets_longshots.busy::after {
-    content: "";
+/* The browser's own spinner right after a click (TABLE_SCRIPT adds .busy to the
+   text beside the box), after the "?"; hidden while the server's own status shows. */
+.longshots-label .click-spinner { display: none; }
+.longshots-label.busy .click-spinner { display: inline-block; }
+.longshots-label.busy .toggle-status { display: none; }
+.longshots-label .toggle-status { display: inline-flex; min-height: 0; }
+.longshots-label .click-spinner {
     flex: none;
     width: 18px;
     height: 18px;
@@ -910,24 +909,29 @@ TABLE_SCRIPT = """<script>
     // Include long shots: a spinner beside the box the moment it is clicked (user, 22
     // Nov 2026: on Sharp vs soft the server's own spinner came about 5 s later, after
     // redrawing the page), until the server's spinner or tick arrives in the same row.
+    // Since 27 Nov 2026 it sits in the text beside the box (.click-spinner) and goes
+    // as soon as the server sends the row again with a spinner or a new tick: the old
+    // one looked for the row by a test id it no longer had, so it spun its full 30 s.
     const LONGSHOT_BOXES = ".st-key-track_longshots, .st-key-markets_longshots";
-    const statusChange = row => {
-        const status = row && row.querySelector(".toggle-status");
+    const labelOf = box => box.parentElement && box.parentElement.querySelector(".longshots-label");
+    const statusChange = label => {
+        const status = label && label.querySelector(".toggle-status");
         return status ? String(status.dataset.change ?? "loading") : "none";
     };
     document.addEventListener("click", event => {
         const box = event.target.closest && event.target.closest(LONGSHOT_BOXES);
-        if (!box) return;
-        const row = box.closest('[data-testid="stHorizontalBlock"]');
+        const label = box && labelOf(box);
+        if (!label) return;
         box.dataset.busySince = String(Date.now());
-        box.dataset.busyFrom = statusChange(row);
-        box.classList.add("busy");
+        box.dataset.busyFrom = statusChange(label);
+        label.classList.add("busy");
     }, true);
     setInterval(() => {
-        document.querySelectorAll(".busy[data-busy-since]").forEach(box => {
-            const row = box.closest('[data-testid="stHorizontalBlock"]');
-            const old = Date.now() - Number(box.dataset.busySince) > 30000;
-            if (old || statusChange(row) !== box.dataset.busyFrom) box.classList.remove("busy");
+        document.querySelectorAll(LONGSHOT_BOXES).forEach(box => {
+            const label = labelOf(box);
+            if (!label || !label.classList.contains("busy")) return;
+            const old = Date.now() - Number(box.dataset.busySince) > 15000;
+            if (old || statusChange(label) !== box.dataset.busyFrom) label.classList.remove("busy");
         });
     }, 200);
 
@@ -3693,21 +3697,25 @@ def statistics_section(
         st.checkbox(
             "Include long shots", key=key, on_change=changed, label_visibility="collapsed"
         )
-        st.html(
-            '<div class="longshots-label">Include long shots'
-            '<span class="has-tip" tabindex="0"><span class="help-icon">?</span>'
-            f'<span class="tip">{html.escape(LONGSHOT_HELP[help_key])}</span></span></div>'
-        )
+        # The spinner or tick goes inside the text's element, right after the "?"
+        # (user, 27 Nov 2026: as an element of its own it sat far to the right).
+        toggle = ""
         if loading:
-            st.html('<div class="toggle-status"><span class="spinner"></span></div>')
+            toggle = '<span class="toggle-status"><span class="spinner"></span></span>'
         elif st.session_state.get(pending):
             st.session_state[pending] = False
             # Numbered, so ticking back on sends a new element and its fade plays
             # again; the same HTML twice would keep the old, already faded one.
-            st.html(
-                f'<div class="toggle-status" data-change="{st.session_state.get(count, 0)}">'
-                '<span class="spinner brief"></span><span class="toggle-tick">✓</span></div>'
+            toggle = (
+                f'<span class="toggle-status" data-change="{st.session_state.get(count, 0)}">'
+                '<span class="spinner brief"></span><span class="toggle-tick">✓</span></span>'
             )
+        st.html(
+            '<div class="longshots-label">Include long shots'
+            '<span class="has-tip" tabindex="0"><span class="help-icon">?</span>'
+            f'<span class="tip">{html.escape(LONGSHOT_HELP[help_key])}</span></span>'
+            f'{toggle}<span class="click-spinner"></span></div>'
+        )
 
     if counts:
         st.html(counts)
