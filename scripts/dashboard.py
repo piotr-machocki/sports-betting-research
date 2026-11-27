@@ -656,6 +656,7 @@ OVERVIEW_STYLE = """<style>
 /* Long-shot signals per source, indented under the box's text (user, 27 Nov 2026). */
 .longshots-counts { margin: -6px 0 0 32px; font-size: 14px; line-height: 22px; user-select: text; }
 .longshots-counts .label { color: color-mix(in srgb, currentColor 65%, transparent); }
+.longshots-counts .dot { margin-right: 7px; }
 .has-tip .tip a { color: inherit; text-decoration: underline; cursor: pointer; }
 .has-tip .tip::before { content: ""; position: absolute; left: 0; right: 0; top: -6px; height: 6px; }
 /* Dotted and grey (user, 15 Nov 2026): a hint that a tap explains it, quieter than the text. */
@@ -2087,7 +2088,8 @@ def longshots_html(record: dict | None, labels: dict[str, str]) -> str:
             continue
         # "• Betclic: 0" (user, 27 Nov 2026).
         lines.append(
-            f'<div><span class="label">• {html.escape(label)}:</span> {stats["longshots"]}</div>'
+            f'<div><span class="dot">•</span><span class="label">{html.escape(label)}:</span> '
+            f'{stats["longshots"]}</div>'
         )
     return f'<div class="longshots-counts">{"".join(lines)}</div>' if lines else ""
 
