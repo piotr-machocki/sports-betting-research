@@ -426,9 +426,11 @@ OVERVIEW_STYLE = """<style>
    its right, then its facts as values over small grey labels. */
 /* Equal space over and under the facts (user, 16 Nov 2026): 16 px each, the gap
    Streamlit leaves between this and the overview below. */
-.session-head { margin-bottom: 14px; }
+.session-head { margin-bottom: 2px; }
 .session-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .session-title .overview-title { margin-bottom: 0; }
+/* Both headings as large as Statistics (all runs) (user, 27 Nov 2026). */
+.session-title .overview-title { font-size: 26px; line-height: 34px; }
 /* The run's time in a tag of its own right after the status pill, white on grey,
    no label (user, 22 Nov 2026). */
 .session-time {
@@ -547,14 +549,14 @@ OVERVIEW_STYLE = """<style>
     .session-time .year { display: none; }
     /* Title, pill and time on one line down to 360 px (user, 22 Nov 2026). */
     .session-title { gap: 4px 8px; }
-    .session-title .overview-title { font-size: 18px; }
+    .session-title .overview-title { font-size: 23px; line-height: 30px; }
     .session-title .session-status { font-size: 13px; padding: 0 8px; gap: 5px; }
     .session-time { font-size: 13px; padding: 0 8px; }
 }
 /* Narrow phones: a bit tighter still, so both tags stay beside the title. */
 @media (max-width: 390px) {
     .session-title { gap: 4px 6px; }
-    .session-title .overview-title { font-size: 16px; }
+    .session-title .overview-title { font-size: 20px; line-height: 28px; }
     .session-title .session-status, .session-time { padding: 0 6px; }
     .session-title .session-status::before { display: none; }
 }
@@ -741,11 +743,8 @@ OVERVIEW_STYLE = """<style>
 /* Beside the Statistics (all runs) title: the same while a newly opened tab waits for
    numbers worked out after it opened (user, 24 Nov 2026). */
 .stats-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-bottom: -6px; }
-/* Larger than the run's heading, and closer to Include long shots (user, 27 Nov 2026). */
-.stats-title .overview-title, .session-title.stats-title .overview-title { font-size: 26px; line-height: 34px; }
-@media (max-width: 700px) {
-    .session-title.stats-title .overview-title { font-size: 23px; line-height: 30px; }
-}
+/* Closer to Include long shots (user, 27 Nov 2026); its size is the run heading's
+   (.session-title .overview-title). */
 .title-status { display: inline-flex; align-items: center; }
 .toggle-tick {
     color: #1f9d55;
