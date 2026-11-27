@@ -3957,13 +3957,12 @@ def render_header(
     st.html(overview_html(summary, ev_only, ev_stats, books, track, titled=False))
 
     if waiting:
+        # Short (user, 27 Nov 2026): what is happening, and how old the shown odds are.
         age = session_summary(rows, {}, min_ev, now)["pinnacle_age"]
-        prices = f", its Pinnacle odds {fmt_age(age)} old" if age is not None else ""
+        old = f"are {fmt_age(age)} old and " if age is not None else ""
+        shown = f"Odds in the table {old}come from the last successful run."
 
-        st.warning(
-            "Waiting for this run's first match. The table still shows the previous "
-            f"run ({session_label(table_session)}{prices})."
-        )
+        st.warning(f"Collecting the latest odds… {shown}")
 
 
 def empty_message(records: list[dict], filters: dict) -> str:
