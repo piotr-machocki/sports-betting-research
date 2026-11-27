@@ -3604,11 +3604,9 @@ def session_bar_html(summary: dict, session_id: str) -> str:
 
 
 LONGSHOT_HELP = {
-    "tennis": "Count signals where Pinnacle's fair probability for the side bet is "
-    "under 15% (odds above about 6.5). Untick to see the record without them.",
-    "markets": "Count signals whose market probability is under 15% (odds above about "
-    "6.5). Markets tend to overprice outsiders, and a cent on a 5% price is a fifth of "
-    "it, so these can look like value that is not.",
+    # Short (user, 27 Nov 2026).
+    "tennis": "Signals where Pinnacle's fair probability is under 15% (odds above about 6.5).",
+    "markets": "Signals where the market's probability is under 15% (odds above about 6.5).",
 }
 
 
