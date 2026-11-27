@@ -2217,3 +2217,12 @@ def test_the_statistics_title_says_whether_its_numbers_are_up_to_date(monkeypatc
     loader.signed = 3
     assert loader.status(key)[0] == "updating"
     assert "Updating" in dashboard.stats_status_html("updating", None)
+
+
+def test_longshots_html_counts_each_source():
+    assert dashboard.is_longshot({"Best EV": 0.1, "_price": 8.0})  # 1.1 / 8 = 13.75%
+    assert not dashboard.is_longshot({"Best EV": 0.1, "_price": 2.0})
+    record = {"Betclic": {"longshots": 3}, "Superbet": {"longshots": 1}, "Old": {}}
+    html_text = dashboard.longshots_html(record, {"Betclic": "Betclic", "Superbet": "Superbet", "Old": "Old"})
+    assert "3 long shots" in html_text and "1 long shot<" in html_text and "Old" not in html_text
+    assert dashboard.longshots_html(None, {"Betclic": "Betclic"}) == ""

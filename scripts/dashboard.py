@@ -653,6 +653,9 @@ OVERVIEW_STYLE = """<style>
     font-size: 11px; font-weight: 700; line-height: 1; opacity: 0.7; cursor: help;
 }
 .longshots-label .tip { width: 260px; font-weight: 400; }
+/* Long-shot signals per source, indented under the box's text (user, 27 Nov 2026). */
+.longshots-counts { margin: -6px 0 0 32px; font-size: 14px; line-height: 22px; user-select: text; }
+.longshots-counts .label { color: color-mix(in srgb, currentColor 65%, transparent); }
 .has-tip .tip a { color: inherit; text-decoration: underline; cursor: pointer; }
 .has-tip .tip::before { content: ""; position: absolute; left: 0; right: 0; top: -6px; height: 6px; }
 /* Dotted and grey (user, 15 Nov 2026): a hint that a tap explains it, quieter than the text. */
@@ -2049,6 +2052,10 @@ def track_record(
 
         records = [flag for flags in oldest_first for flag in flags.get(book, [])]
         flags = first_flags(records, book, min_ev, sources["sightings"], longshots)
+        # How many signals are long shots, shown under Include long shots whichever
+        # way it is set (user, 27 Nov 2026).
+        everything = flags if longshots else first_flags(records, book, min_ev, sources["sightings"])
+        count = sum(is_longshot(flag) for flag in everything)
 
         if flags:
             memo = cache.setdefault(("outcomes", book), {})
@@ -2056,8 +2063,33 @@ def track_record(
             record[book].update(lifetime_stats(signal_lifetimes(
                 session_ids, oldest_first, flags, book, min_ev, sources["sightings"], rechecks
             )))
+            record[book]["longshots"] = count
 
     return record
+
+
+def is_longshot(flag: dict) -> bool:
+    """The flag's reference probability, (1 + EV) / price, is under LONGSHOT_BELOW."""
+    from market_compare import LONGSHOT_BELOW
+
+    return (1 + flag["Best EV"]) / flag["_price"] < LONGSHOT_BELOW
+
+
+def longshots_html(record: dict | None, labels: dict[str, str]) -> str:
+    """Indented lines under Include long shots: each shown source's number of
+    long-shot signals (user, 27 Nov 2026). Older saved results lack the count."""
+    if not record:
+        return ""
+    lines = []
+    for key, label in labels.items():
+        stats = record.get(key)
+        if not stats or stats.get("longshots") is None:
+            continue
+        lines.append(
+            f'<div><span class="label">{html.escape(label)}</span> '
+            f'{stats["longshots"]} long shot{"" if stats["longshots"] == 1 else "s"}</div>'
+        )
+    return f'<div class="longshots-counts">{"".join(lines)}</div>' if lines else ""
 
 
 # TrackLoader's session_flags, kept between server starts: reading every session
@@ -3618,6 +3650,7 @@ def stats_status_html(state: str, session_id: str | None) -> str:
 def statistics_section(
     st: Any, key: str, help_key: str, card: str, loading: bool, opening: bool = False,
     state: tuple[str, str | None] | None = None,
+    counts: str = "",
 ) -> None:
     """Statistics (all runs) with Include long shots under its title (user, 22 Nov
     2026: out of the sidebar, easy to flip on a phone), a spinner beside the box while
@@ -3669,6 +3702,8 @@ def statistics_section(
                 '<span class="spinner brief"></span><span class="toggle-tick">✓</span></div>'
             )
 
+    if counts:
+        st.html(counts)
     st.html(f'<div class="overview"><div class="overview-cards">{card}</div></div>')
 
 
@@ -4828,6 +4863,7 @@ def render_tennis(st) -> None:
         statistics_section(
             st, "track_longshots", "tennis", track, track_clicked, track_opening,
             track_state if record is not None or loader.error else None,
+            longshots_html(record, {book: book for book in books}),
         )
 
     if table_session:

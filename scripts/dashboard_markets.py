@@ -620,6 +620,7 @@ def render_markets(st, dash: Any = None) -> None:
     dash.statistics_section(
         st, "markets_longshots", "markets", track, track_clicked, track_opening,
         track_state if record is not None or loader.error else None,
+        dash.longshots_html(record, {name: name for name in (record or {})}),
     )
 
     shown = [m for m in matches if m["markets"]] if on_market else matches

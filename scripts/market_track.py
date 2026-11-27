@@ -178,10 +178,16 @@ def market_record(
         )
         if not flags:
             continue
+        # Long-shot signals, shown under Include long shots either way it is set
+        # ((1 + EV) / price is the market's probability here).
+        everything = flags if longshots else dash.first_flags(
+            flags_for(candidates, reference, min_ev, max_spread), "", min_ev, sources["sightings"],
+        )
         memo = cache.setdefault(("market outcomes", reference), {})
         settled = dash.settled_outcomes(flags, sources, now, memo)
         stats = dash.track_stats(settled)
         stats.update(agreement_stats(settled))
+        stats["longshots"] = sum(dash.is_longshot(flag) for flag in everything)
         record[reference] = stats
 
     return record
