@@ -57,8 +57,9 @@ COLUMN_HELP = {
 
 MARKETS_STYLE = """<style>
 .markets-note { font-size: 13px; color: color-mix(in srgb, currentColor 65%, transparent); }
-/* A phone gets the table too (sideways scroll): there are no cards for this tab. */
-@media (max-width: 700px) { table.matches.markets { display: table; } }
+/* Phones get one card per match, as on Sharp vs soft (user, 27 Nov 2026): the
+   dashboard's CSS hides table.matches and shows .match-cards under 700 px. */
+.match-cards .mc-books { grid-template-columns: repeat(2, 1fr); }
 /* The fork (user, 22 Nov 2026: boxes stretched to fill a row looked odd): the
    branches share a grid, so the boxes of one column are one size, as wide as the
    longest name in it, and spare room stays empty on the right. Pinnacle is as tall
@@ -189,6 +190,7 @@ def match_record(match: dict, min_ev: float) -> dict:
     if match["started"]:
         record["_title Bet on"] = "Started: market prices are in-play, so no EV"
     record["_dimmed"] = match["started"] or data["price"] is None
+    record["_best"] = None if match["started"] else max(trusted.values(), default=None)
     record["_sort"] = (
         match["started"],
         -max(trusted.values(), default=-9),
@@ -227,6 +229,61 @@ def table_html(records: list[dict]) -> str:
         f'<table class="matches markets"><thead><tr>{heads}</tr></thead>'
         f"<tbody>{''.join(rows)}</tbody></table>"
     )
+
+
+def cards_html(records: list[dict], min_ev: float) -> str:
+    """The same records as table_html, one card each, for phones (user, 27 Nov 2026:
+    like Sharp vs soft; CSS shows one or the other): the Bet on side's best trusted EV,
+    then a tile for the book's price, Pinnacle and each market (probability + EV)."""
+
+    def attr(name: str, value: Any) -> str:
+        return f' {name}="{html.escape(str(value))}"' if value else ""
+
+    def tile(label: str, value: str, sub: str = "", title: str = "", style: str = "") -> str:
+        return (
+            f'<div class="mc-book"{attr("title", title)}><div class="label">{html.escape(label)}</div>'
+            f'<div class="price"{attr("style", style)}>{html.escape(value or "--")}</div>'
+            f"{sub}</div>"
+        )
+
+    def ev(column: str, record: dict) -> str:
+        return (
+            f'<div class="sub"{attr("title", record.get(f"_title {column}"))}>'
+            f'<span class="ev"{attr("style", record.get(f"_style {column}"))}>'
+            f"EV {html.escape(record[column])}</span></div>"
+        )
+
+    cards = []
+    for record in records:
+        best = record["_best"]
+        tiles = [
+            tile(record["Book"], record["Price"], '<div class="sub">price</div>'),
+            tile("Pinnacle", record["Pinnacle"], ev("EV Pinnacle", record)),
+        ]
+        for source in SOURCES:
+            label = SOURCE_LABELS[source]
+            tiles.append(tile(
+                label, record[label], ev(f"EV {label}", record),
+                record.get(f"_title {label}"), record.get(f"_style {label}"),
+            ))
+        meta = " · ".join(html.escape(p) for p in (record["Starts"], record["Tournament"]) if p)
+        extra = (
+            f'<div class="mc-extra"><span><span class="label">Agree</span>'
+            f'<span style="{GREEN}">{CHECK}</span></span></div>'
+            if record["Agree"] else ""
+        )
+        cards.append(
+            f'<div class="match-card{" dimmed" if record["_dimmed"] else ""}"'
+            f'{attr("title", record.get("_title Bet on"))}>'
+            '<div class="mc-head"><div class="mc-names">'
+            f'<div class="mc-bet">{html.escape(record["Bet on"])}</div>'
+            f'<div class="mc-vs">vs {html.escape(record["Opponent"])}</div></div>'
+            f'<div class="mc-best"{attr("style", ev_style(best, min_ev))}>'
+            f'{html.escape(signed_percent(best) if best is not None else "no EV")}</div></div>'
+            f'<div class="mc-meta">{meta}</div>'
+            f'<div class="mc-books">{"".join(tiles)}</div>{extra}</div>'
+        )
+    return f'<div class="match-cards">{"".join(cards)}</div>'
 
 
 # Bar colours by kind: sharp reference, prediction market, soft book.
@@ -577,6 +634,6 @@ def render_markets(st, dash: Any = None) -> None:
 
     st.html(f'<div class="markets-note">Showing {len(records)} of {len(matches)} matches</div>')
     if records:
-        st.html(table_html(records))
+        st.html(table_html(records) + cards_html(records, min_ev))
     else:
         st.info("No match fits these filters.")
