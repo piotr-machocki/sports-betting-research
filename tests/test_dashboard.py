@@ -2224,5 +2224,5 @@ def test_longshots_html_counts_each_source():
     assert not dashboard.is_longshot({"Best EV": 0.1, "_price": 2.0})
     record = {"Betclic": {"longshots": 3}, "Superbet": {"longshots": 1}, "Old": {}}
     html_text = dashboard.longshots_html(record, {"Betclic": "Betclic", "Superbet": "Superbet", "Old": "Old"})
-    assert "3 long shots" in html_text and "1 long shot<" in html_text and "Old" not in html_text
+    assert "Betclic:</span> 3" in html_text and "Superbet:</span> 1" in html_text and "Old" not in html_text
     assert dashboard.longshots_html(None, {"Betclic": "Betclic"}) == ""

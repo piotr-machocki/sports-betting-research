@@ -2085,9 +2085,9 @@ def longshots_html(record: dict | None, labels: dict[str, str]) -> str:
         stats = record.get(key)
         if not stats or stats.get("longshots") is None:
             continue
+        # "• Betclic: 0" (user, 27 Nov 2026).
         lines.append(
-            f'<div><span class="label">{html.escape(label)}</span> '
-            f'{stats["longshots"]} long shot{"" if stats["longshots"] == 1 else "s"}</div>'
+            f'<div><span class="label">• {html.escape(label)}:</span> {stats["longshots"]}</div>'
         )
     return f'<div class="longshots-counts">{"".join(lines)}</div>' if lines else ""
 
