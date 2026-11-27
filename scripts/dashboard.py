@@ -2457,7 +2457,7 @@ class TrackLoader:
         or a result came in and the recount is on its way), "failed" on an error."""
         with self.done:
             if self.error is not None:
-                return "failed", self.counted.get(key)
+                return "failed", self.error  # the Failed pill's tooltip names it
             if self.signed is not None and self.computed_for.get(key) == self.signed:
                 return "current", self.counted.get(key)
             return "updating", self.counted.get(key)
@@ -3840,10 +3840,12 @@ STATS_STATES = {
 }
 
 
-def stats_status_html(state: str, session_id: str | None) -> str:
-    """The pill alone (user, 26 Nov 2026: no time tag after it); session_id is kept
-    for a caller that may want it."""
+def stats_status_html(state: str, detail: str | None) -> str:
+    """The pill alone (user, 26 Nov 2026: no time tag after it). detail is the
+    run counted, or for Failed the error, added to the tooltip."""
     label, colour, tip = STATS_STATES[state]
+    if state == "failed" and detail:
+        tip = f"{tip}: {detail}"
     if state == "updating":
         label += '<span class="loading-dots"><span>.</span><span>.</span><span>.</span></span>'
     return (
