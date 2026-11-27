@@ -454,7 +454,7 @@ OVERVIEW_STYLE = """<style>
 }
 /* Updating... : the dots go ... .. . .. and round again (user, 27 Nov 2026), each dot
    always holding its place so the pill does not change width. */
-.loading-dots { margin-left: -7px; letter-spacing: 1px; }
+.loading-dots { margin-left: -4px; letter-spacing: 2px; }
 .loading-dots span { animation: 1.6s step-end infinite; }
 .loading-dots span:nth-child(2) { animation-name: dot-two; }
 .loading-dots span:nth-child(3) { animation-name: dot-three; }
