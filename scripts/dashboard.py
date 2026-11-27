@@ -673,6 +673,7 @@ OVERVIEW_STYLE = """<style>
    go by index, so the checkpoints are evenly spaced). The handles' own values and
    the end labels are hidden: the dots say it, the ones in range in blue. */
 .st-key-track_band, .st-key-markets_band { padding: 14px 0 46px; }
+@media (max-width: 400px) { .st-key-track_band, .st-key-markets_band { padding-bottom: 62px; } }
 .st-key-track_band [data-testid="stSliderTickBar"],
 .st-key-markets_band [data-testid="stSliderTickBar"],
 .st-key-track_band [data-testid="stSliderThumbValue"],
@@ -701,7 +702,12 @@ OVERVIEW_STYLE = """<style>
 }
 .band-marks .band-pct { top: calc(50% + 10px); font-variant-numeric: tabular-nums; }
 .band-marks .band-pct.on { color: #2a78d6; font-weight: 600; }
-.band-marks .band-name { top: calc(50% + 28px); }
+.band-marks .band-name {
+    top: calc(50% + 28px);
+    width: 25%;
+    text-align: center;
+    white-space: normal;
+}
 /* The end percents hang inwards, so they stay inside the page. */
 .band-marks .band-pct.first { transform: translateX(-25%); }
 .band-marks .band-pct.last { transform: translateX(-75%); }
