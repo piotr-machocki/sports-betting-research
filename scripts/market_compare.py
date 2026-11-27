@@ -51,6 +51,27 @@ MAX_PINNACLE_GAP = 0.10
 # already a fifth of it. About odds 6.5 and up.
 LONGSHOT_BELOW = 0.15
 SUPERBET_TAX_FACTOR = 0.88
+# The Statistics cards' probability range (user, 27 Nov 2026; it replaced Include
+# long shots): checkpoints in percent and the name of each stretch between them.
+BAND_POINTS = (0, 15, 50, 85, 100)
+BAND_NAMES = ("Long shots", "Underdogs", "Favourites", "Heavy favourites")
+FULL_BAND = (0.0, 1.0)
+
+
+def band_of(value: Any) -> tuple[float, float]:
+    """A (low, high) probability range from a band or the old long-shots setting
+    (True = everything, False = from LONGSHOT_BELOW up)."""
+    if value is True or value is None:
+        return FULL_BAND
+    if value is False:
+        return (LONGSHOT_BELOW, 1.0)
+    return (float(value[0]), float(value[1]))
+
+
+def in_band(probability: float, band: Any) -> bool:
+    """low <= probability < high; a high of 100% keeps everything above low."""
+    low, high = band_of(band)
+    return probability >= low and (high >= 1 or probability < high)
 
 
 def number(value: Any) -> float | None:

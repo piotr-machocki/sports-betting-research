@@ -529,13 +529,13 @@ def render_markets(st, dash: Any = None) -> None:
     st.html(MARKETS_STYLE)
 
     loader = st.cache_resource(show_spinner=False)(dash.market_loader)()
-    longshots = dash.longshots_setting(st, "markets_longshots")
+    longshots = dash.longshots_setting(st, "markets_band")
     track_key = (min_ev, max_spread, longshots)
     record = loader.request_key(track_key, wait=dash.TRACK_WAIT_SECONDS)
     track_version = loader.version(track_key)
     track_state = loader.status(track_key)
     track_opening, track_clicked = dash.card_loading(
-        st, "markets_longshots", loader, track_key, record
+        st, "markets_band", loader, track_key, record
     )
     track_loading = track_opening or track_clicked
 
@@ -563,7 +563,7 @@ def render_markets(st, dash: Any = None) -> None:
     def watch() -> None:
         # Loaded, or the refresher worked out new numbers.
         arrived = (track_loading and not any(dash.card_loading(
-            st, "markets_longshots", loader, track_key, loader.results.get(track_key)
+            st, "markets_band", loader, track_key, loader.results.get(track_key)
         ))) or loader.version(track_key) != track_version
         # Up to date <-> Updating, so the title's pill follows a run's end.
         arrived = arrived or loader.status(track_key) != track_state
@@ -618,7 +618,7 @@ def render_markets(st, dash: Any = None) -> None:
         st.html(dash.session_bar_html(summary, session_id))
     st.html(overview(stats, max_spread, flow))
     dash.statistics_section(
-        st, "markets_longshots", "markets", track, track_clicked, track_opening,
+        st, "markets_band", "markets", track, track_clicked, track_opening,
         track_state if record is not None or loader.error else None,
         dash.longshots_html(record, {name: name for name in (record or {})}),
     )

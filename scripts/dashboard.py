@@ -45,6 +45,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from market_compare import BAND_NAMES, BAND_POINTS, FULL_BAND, band_of  # noqa: E402
 from live_monitor import (  # noqa: E402
     EV_LABELS,
     FINISHED_STATES,
@@ -149,7 +150,8 @@ SETTING_DEFAULTS = {
     "draws": [ALL_PILL],
     "player": "",
     "player_all": False,
-    "track_longshots": True,
+    # Statistics' probability range in percent (it replaced track_longshots).
+    "track_band": (0, 100),
 }
 
 NAME_COLUMNS = {"Bet on", "Opponent"}
@@ -665,7 +667,19 @@ OVERVIEW_STYLE = """<style>
 }
 .longshots-label .tip { width: 260px; font-weight: 400; }
 /* Long-shot signals per source, indented under the box's text (user, 27 Nov 2026). */
-.longshots-counts { margin: -14px 0 0 32px; font-size: 14px; line-height: 22px; user-select: text; }
+.longshots-counts { margin: 6px 0 0 4px; font-size: 14px; line-height: 22px; user-select: text; }
+/* Under the probability slider: each stretch between its checkpoints by name. */
+.band-scale {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    margin: -6px 0 0;
+    font-size: 12px;
+    line-height: 16px;
+    text-align: center;
+    color: color-mix(in srgb, currentColor 60%, transparent);
+}
+.band-scale span { padding: 0 2px; border-left: 1px solid rgba(128, 128, 128, 0.35); }
+.band-scale span:first-child { border-left: 0; }
 .longshots-counts .label { color: color-mix(in srgb, currentColor 65%, transparent); }
 .longshots-counts .dot { margin-right: 7px; }
 .has-tip .tip a { color: inherit; text-decoration: underline; cursor: pointer; }
@@ -920,20 +934,35 @@ TABLE_SCRIPT = """<script>
     // Since 27 Nov 2026 it sits in the text beside the box (.click-spinner) and goes
     // as soon as the server sends the row again with a spinner or a new tick: the old
     // one looked for the row by a test id it no longer had, so it spun its full 30 s.
-    const LONGSHOT_BOXES = ".st-key-track_longshots, .st-key-markets_longshots";
+    // Since the same day it follows the probability slider: busy once a drag or key
+    // press has moved a handle (the handles' text changed), not on a plain tap.
+    const LONGSHOT_BOXES = ".st-key-track_band, .st-key-markets_band";
     const labelOf = box => box.parentElement && box.parentElement.querySelector(".longshots-label");
     const statusChange = label => {
         const status = label && label.querySelector(".toggle-status");
         return status ? String(status.dataset.change ?? "loading") : "none";
     };
-    document.addEventListener("click", event => {
+    const handlesOf = box => Array.from(box.querySelectorAll('[role="slider"]'))
+        .map(handle => handle.getAttribute("aria-valuenow")).join();
+    const before = event => {
+        const box = event.target.closest && event.target.closest(LONGSHOT_BOXES);
+        if (box) box.dataset.handlesBefore = handlesOf(box);
+    };
+    const after = event => {
         const box = event.target.closest && event.target.closest(LONGSHOT_BOXES);
         const label = box && labelOf(box);
         if (!label) return;
-        box.dataset.busySince = String(Date.now());
-        box.dataset.busyFrom = statusChange(label);
-        label.classList.add("busy");
-    }, true);
+        setTimeout(() => {
+            if (handlesOf(box) === box.dataset.handlesBefore) return;
+            box.dataset.busySince = String(Date.now());
+            box.dataset.busyFrom = statusChange(label);
+            label.classList.add("busy");
+        }, 60);
+    };
+    document.addEventListener("pointerdown", before, true);
+    document.addEventListener("keydown", before, true);
+    document.addEventListener("pointerup", after, true);
+    document.addEventListener("keyup", after, true);
     setInterval(() => {
         document.querySelectorAll(LONGSHOT_BOXES).forEach(box => {
             const label = labelOf(box);
@@ -1789,14 +1818,15 @@ def session_flags(session_id: str, cache: dict) -> dict[str, list[dict]]:
 
 
 def first_flags(
-    records: list[dict], book: str, min_ev: float, sightings: dict, longshots: bool = True
+    records: list[dict], book: str, min_ev: float, sightings: dict, longshots: Any = True
 ) -> list[dict]:
     """Each match once, from the first (oldest) record that reached min_ev before the
     match's latest known start, so it could have been bet at that price. Betclic
-    prices below its minimum odds are not bets. longshots=False leaves out flags
-    whose reference probability, (1 + EV) / price, is under LONGSHOT_BELOW."""
+    prices below its minimum odds are not bets. longshots is the probability range
+    kept (market_compare.band_of; False = from LONGSHOT_BELOW up), judged on the
+    reference probability, (1 + EV) / price."""
     import evaluate_ev
-    from market_compare import LONGSHOT_BELOW
+    from market_compare import in_band
 
     seen, first = set(), []
 
@@ -1806,7 +1836,7 @@ def first_flags(
         if key in seen or record["Best EV"] < min_ev or not record["_price"]:
             continue
 
-        if not longshots and (1 + record["Best EV"]) / record["_price"] < LONGSHOT_BELOW:
+        if not in_band((1 + record["Best EV"]) / record["_price"], longshots):
             continue
 
         if book == "Betclic" and record["_price"] < BETCLIC_MIN_ODDS:
@@ -2064,7 +2094,7 @@ def track_record(
     now: datetime,
     books: list[str] = BOOKS,
     rechecks: list[dict] | None = None,
-    longshots: bool = True,
+    longshots: Any = True,
 ) -> dict[str, dict]:
     """Each book shown with at least one first flag -> track_stats. sessions are
     newest first, as list_sessions gives them."""
@@ -2078,10 +2108,11 @@ def track_record(
 
         records = [flag for flags in oldest_first for flag in flags.get(book, [])]
         flags = first_flags(records, book, min_ev, sources["sightings"], longshots)
-        # How many signals are long shots, shown under Include long shots whichever
-        # way it is set (user, 27 Nov 2026).
-        everything = flags if longshots else first_flags(records, book, min_ev, sources["sightings"])
-        count = sum(is_longshot(flag) for flag in everything)
+        # Signals in the range out of all of them, shown under the range slider.
+        everything = (
+            flags if band_of(longshots) == FULL_BAND
+            else first_flags(records, book, min_ev, sources["sightings"])
+        )
 
         if flags:
             memo = cache.setdefault(("outcomes", book), {})
@@ -2089,32 +2120,25 @@ def track_record(
             record[book].update(lifetime_stats(signal_lifetimes(
                 session_ids, oldest_first, flags, book, min_ev, sources["sightings"], rechecks
             )))
-            record[book]["longshots"] = count
+            record[book]["all_signals"] = len(everything)
 
     return record
 
 
-def is_longshot(flag: dict) -> bool:
-    """The flag's reference probability, (1 + EV) / price, is under LONGSHOT_BELOW."""
-    from market_compare import LONGSHOT_BELOW
-
-    return (1 + flag["Best EV"]) / flag["_price"] < LONGSHOT_BELOW
-
-
 def longshots_html(record: dict | None, labels: dict[str, str]) -> str:
-    """Indented lines under Include long shots: each shown source's number of
-    long-shot signals (user, 27 Nov 2026). Older saved results lack the count."""
+    """Indented lines under the probability range: each shown source's signals in
+    the range out of all its signals, "• Betclic: 60 of 67" (user, 27 Nov 2026).
+    Results saved before the range lack the total."""
     if not record:
         return ""
     lines = []
     for key, label in labels.items():
         stats = record.get(key)
-        if not stats or stats.get("longshots") is None:
+        if not stats or stats.get("all_signals") is None:
             continue
-        # "• Betclic: 0" (user, 27 Nov 2026).
         lines.append(
             f'<div><span class="dot">•</span><span class="label">{html.escape(label)}:</span> '
-            f'{stats["longshots"]}</div>'
+            f'{stats["signals"]} of {stats["all_signals"]}</div>'
         )
     return f'<div class="longshots-counts">{"".join(lines)}</div>' if lines else ""
 
@@ -2174,7 +2198,8 @@ def load_results(path: Path) -> tuple[dict, dict]:
         records, asked = saved, {}
 
     def full(key: tuple) -> tuple:
-        return key if len(key) == 3 else (*key, True)
+        # The long-shots choice (True/False, on before 22 Nov 2026) as its range.
+        return (*key[:2], band_of(key[2] if len(key) == 3 else True))
 
     return (
         {full(key): value for key, value in records.items() if isinstance(key, tuple)},
@@ -2247,11 +2272,11 @@ class TrackLoader:
         self.done = threading.Condition()
 
     def request(
-        self, min_ev: float, books: list[str], wait: float = 0.0, longshots: bool = True
+        self, min_ev: float, books: list[str], wait: float = 0.0, longshots: Any = True
     ) -> dict | None:
         """The held record for this choice at once; one never worked out is worked out
         now and returned if that takes at most wait, else None (Loading)."""
-        return self.request_key((min_ev, tuple(books), longshots), wait)
+        return self.request_key((min_ev, tuple(books), band_of(longshots)), wait)
 
     def request_key(self, key: tuple, wait: float = 0.0) -> dict | None:
         with self.done:
@@ -2279,8 +2304,8 @@ class TrackLoader:
             self.thread = threading.Thread(target=self.work, daemon=True)
             self.thread.start()
 
-    def ready(self, min_ev: float, books: list[str], longshots: bool = True) -> bool:
-        return self.ready_key((min_ev, tuple(books), longshots))
+    def ready(self, min_ev: float, books: list[str], longshots: Any = True) -> bool:
+        return self.ready_key((min_ev, tuple(books), band_of(longshots)))
 
     def ready_key(self, key: tuple) -> bool:
         with self.done:
@@ -3604,15 +3629,26 @@ def session_bar_html(summary: dict, session_id: str) -> str:
 
 LONGSHOT_HELP = {
     # Short (user, 27 Nov 2026).
-    "tennis": "Signals where Pinnacle's fair probability is under 15% (odds above about 6.5).",
-    "markets": "Signals where the market's probability is under 15% (odds above about 6.5).",
+    "tennis": "Count only signals whose Pinnacle fair probability is in this range.",
+    "markets": "Count only signals whose market probability is in this range.",
 }
 
 
-def longshots_setting(st: Any, key: str) -> bool:
-    """The Include long shots value before its checkbox is drawn (statistics_section
-    draws it under the Statistics title, after the card's record was asked for)."""
-    return bool(st.session_state.setdefault(key, True))
+def longshots_setting(st: Any, key: str) -> tuple[float, float]:
+    """The Statistics probability range, (low, high) as fractions, before its slider
+    is drawn (statistics_section draws it under the Statistics title, after the
+    card's record was asked for). Kept in percent, as the slider shows it."""
+    value = st.session_state.setdefault(key, (0, 100))
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        value = st.session_state[key] = (0, 100)
+    return band_of((value[0] / 100, value[1] / 100))
+
+
+def band_scale_html() -> str:
+    """The names of the stretches between the slider's checkpoints, one under each."""
+    return '<div class="band-scale">' + "".join(
+        f"<span>{html.escape(name)}</span>" for name in BAND_NAMES
+    ) + "</div>"
 
 
 def opening_loading(
@@ -3705,12 +3741,10 @@ def statistics_section(
         f'Statistics (all runs)</span>{status}</div>'
     )
 
-    with st.container(horizontal=True, vertical_alignment="center", gap="small"):
-        # Only the box toggles (user, 27 Nov 2026): the text beside it is plain,
-        # selectable HTML, as a tap on a widget label ticks the box.
-        st.checkbox(
-            "Include long shots", key=key, on_change=changed, label_visibility="collapsed"
-        )
+    # A range slider over the probability with checkpoints (user, 27 Nov 2026; it
+    # replaced Include long shots): its title is plain HTML with the tip, the
+    # spinner and the tick, the stretches are named under it, the counts after.
+    with st.container(width=440, gap=None):
         # The spinner or tick goes inside the text's element, right after the "?"
         # (user, 27 Nov 2026: as an element of its own it sat far to the right).
         toggle = ""
@@ -3725,14 +3759,18 @@ def statistics_section(
                 '<span class="spinner brief"></span><span class="toggle-tick">✓</span></span>'
             )
         st.html(
-            '<div class="longshots-label">Include long shots'
+            '<div class="longshots-label">Signal probability'
             '<span class="has-tip" tabindex="0"><span class="help-icon">?</span>'
             f'<span class="tip">{html.escape(LONGSHOT_HELP[help_key])}</span></span>'
             f'{toggle}<span class="click-spinner"></span></div>'
         )
-
-    if counts:
-        st.html(counts)
+        st.select_slider(
+            "Signal probability", options=list(BAND_POINTS), key=key, on_change=changed,
+            format_func=lambda value: f"{value}%", label_visibility="collapsed",
+        )
+        st.html(band_scale_html())
+        if counts:
+            st.html(counts)
     st.html(f'<div class="overview"><div class="overview-cards">{card}</div></div>')
 
 
@@ -4850,12 +4888,12 @@ def render_tennis(st) -> None:
     # Worked out in a thread: until it is there the card says so and the header
     # checks every second, then asks for the full run that draws it.
     loader = st.cache_resource(show_spinner=False)(track_loader)()
-    longshots = longshots_setting(st, "track_longshots")
+    longshots = longshots_setting(st, "track_band")
     record = loader.request(filters["min_ev"], books, wait=TRACK_WAIT_SECONDS, longshots=longshots)
     track_key = (filters["min_ev"], tuple(books), longshots)
     track_version = loader.version(track_key)
     track_state = loader.status(track_key)
-    track_opening, track_clicked = card_loading(st, "track_longshots", loader, track_key, record)
+    track_opening, track_clicked = card_loading(st, "track_band", loader, track_key, record)
     track_loading = track_opening or track_clicked
     track = track_card(record, filters["min_ev"], books, loader.error)
 
@@ -4871,7 +4909,7 @@ def render_tennis(st) -> None:
         still_running = bool(header_session) and is_running(header_session)
         # The card's record arrived or the refresher worked out new numbers.
         track_arrived = (track_loading and not any(card_loading(
-            st, "track_longshots", loader, track_key, loader.results.get(track_key)
+            st, "track_band", loader, track_key, loader.results.get(track_key)
         ))) or loader.version(track_key) != track_version
         # Up to date <-> Updating, so the pill follows a run's end.
         track_arrived = track_arrived or loader.status(track_key) != track_state
@@ -4899,7 +4937,7 @@ def render_tennis(st) -> None:
     # once per full run; a full run follows any change and the card's arrival.
     with track_box:
         statistics_section(
-            st, "track_longshots", "tennis", track, track_clicked, track_opening,
+            st, "track_band", "tennis", track, track_clicked, track_opening,
             track_state if record is not None or loader.error else None,
             longshots_html(record, {book: book for book in books}),
         )

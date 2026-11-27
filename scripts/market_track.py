@@ -25,8 +25,10 @@ from typing import Any
 
 from live_monitor import SESSIONS_DIR, latest_per_match, read_session_rows
 from market_compare import (
-    LONGSHOT_BELOW,
+    FULL_BAND,
     MARKETS_DIR,
+    band_of,
+    in_band,
     far_from_pinnacle,
     SOURCE_LABELS,
     SOURCES,
@@ -132,14 +134,15 @@ def flags_for(
     reference: str,
     min_ev: float,
     max_spread: float,
-    longshots: bool = True,
+    longshots: Any = True,
 ) -> list[dict]:
     """Every candidate as a record with Best EV against this reference (None left
-    out, and long shots unless longshots) and whether Pinnacle agreed, oldest run first."""
+    out, and any whose market probability is outside the band longshots, see
+    market_compare.band_of) and whether Pinnacle agreed, oldest run first."""
     out = []
     for candidate in candidates:
         chance = reference_probability(candidate, reference, max_spread)
-        if chance is None or (not longshots and chance < LONGSHOT_BELOW):
+        if chance is None or not in_band(chance, longshots):
             continue
         price = candidate["_price"]
         pinnacle = candidate["_pinnacle"]
@@ -159,7 +162,7 @@ def market_record(
     min_ev: float,
     max_spread: float,
     now: datetime,
-    longshots: bool = True,
+    longshots: Any = True,
 ) -> dict[str, dict]:
     """Each reference with at least one signal -> dashboard.track_stats plus the
     agreement with Pinnacle. dash is the dashboard module (its first_flags,
@@ -178,16 +181,15 @@ def market_record(
         )
         if not flags:
             continue
-        # Long-shot signals, shown under Include long shots either way it is set
-        # ((1 + EV) / price is the market's probability here).
-        everything = flags if longshots else dash.first_flags(
+        # Signals in the range out of all of them, shown under the range slider.
+        everything = flags if band_of(longshots) == FULL_BAND else dash.first_flags(
             flags_for(candidates, reference, min_ev, max_spread), "", min_ev, sources["sightings"],
         )
         memo = cache.setdefault(("market outcomes", reference), {})
         settled = dash.settled_outcomes(flags, sources, now, memo)
         stats = dash.track_stats(settled)
         stats.update(agreement_stats(settled))
-        stats["longshots"] = sum(dash.is_longshot(flag) for flag in everything)
+        stats["all_signals"] = len(everything)
         record[reference] = stats
 
     return record

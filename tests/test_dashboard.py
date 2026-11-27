@@ -1752,9 +1752,9 @@ def test_track_loader_shows_saved_numbers_after_a_restart(monkeypatch, tmp_path)
     assert second.refresh_once()
     gate.set()
     second.thread.join(5)
-    assert second.results[(0.02, ("Betclic",), True)] == {"Betclic": {"signals": 2}}
+    assert second.results[(0.02, ("Betclic",), (0.0, 1.0))] == {"Betclic": {"signals": 2}}
     assert dashboard.load_results(results_file)[0] == {
-        (0.02, ("Betclic",), True): {"Betclic": {"signals": 2}}
+        (0.02, ("Betclic",), (0.0, 1.0)): {"Betclic": {"signals": 2}}
     }
 
 
@@ -2034,7 +2034,7 @@ def test_track_loader_reads_results_saved_before_the_long_shot_switch(tmp_path):
     results_file.write_bytes(pickle.dumps({(0.02, ("Betclic",)): {"Betclic": {"signals": 3}}}))
 
     loader = dashboard.TrackLoader({}, cache_file=None, results_file=results_file)
-    assert loader.results == {(0.02, ("Betclic",), True): {"Betclic": {"signals": 3}}}
+    assert loader.results == {(0.02, ("Betclic",), (0.0, 1.0)): {"Betclic": {"signals": 3}}}
 
 
 def test_long_shots_can_be_left_out_of_the_first_flags():
@@ -2153,14 +2153,14 @@ def test_the_refresher_keeps_held_choices_current_in_the_background(monkeypatch,
     loader = dashboard.TrackLoader({}, cache_file=None, results_file=results_file)
     monkeypatch.setattr(loader, "inputs_signature", lambda: inputs["value"])
 
-    key = (0.02, ("Betclic",), True)
+    key = (0.02, ("Betclic",), (0.0, 1.0))
     assert loader.request_key(key, wait=2) == {"Betclic": {"signals": 1}}
     loader.thread.join(5)
     version = loader.version(key)
 
     # Asked again: the held record at once, nothing worked out.
     assert loader.request_key(key) == {"Betclic": {"signals": 1}}
-    assert computed == [(0.02, True)]
+    assert computed == [(0.02, (0.0, 1.0))]
 
     # Inputs changed (a new run): worked out again in the background, saved, and the
     # version moves so the page redraws; unchanged inputs do nothing.
@@ -2180,7 +2180,7 @@ def test_the_refresher_keeps_held_choices_current_in_the_background(monkeypatch,
     assert second.results[key] == {"Betclic": {"signals": 3}}
 
     # A held choice the refresher did not keep is shown, then worked out again.
-    other = (0.01, ("Betclic",), True)
+    other = (0.01, ("Betclic",), (0.0, 1.0))
     second.results[other] = {"Betclic": {"signals": 0}}
     assert second.request_key(other) == {"Betclic": {"signals": 0}}
     second.thread.join(5)
@@ -2198,7 +2198,7 @@ def test_the_statistics_title_says_whether_its_numbers_are_up_to_date(monkeypatc
     loader = dashboard.TrackLoader({}, cache_file=None, results_file=None)
     inputs = {"value": 1}
     monkeypatch.setattr(loader, "inputs_signature", lambda: inputs["value"])
-    key = (0.02, ("Betclic",), True)
+    key = (0.02, ("Betclic",), (0.0, 1.0))
 
     loader.refresh_once()
     loader.request_key(key, wait=2)
@@ -2219,10 +2219,24 @@ def test_the_statistics_title_says_whether_its_numbers_are_up_to_date(monkeypatc
     assert "Updating" in dashboard.stats_status_html("updating", None)
 
 
-def test_longshots_html_counts_each_source():
-    assert dashboard.is_longshot({"Best EV": 0.1, "_price": 8.0})  # 1.1 / 8 = 13.75%
-    assert not dashboard.is_longshot({"Best EV": 0.1, "_price": 2.0})
-    record = {"Betclic": {"longshots": 3}, "Superbet": {"longshots": 1}, "Old": {}}
-    html_text = dashboard.longshots_html(record, {"Betclic": "Betclic", "Superbet": "Superbet", "Old": "Old"})
-    assert "Betclic:</span> 3" in html_text and "Superbet:</span> 1" in html_text and "Old" not in html_text
+def test_probability_band_counts_and_filter():
+    from market_compare import band_of, in_band
+
+    assert band_of(True) == (0.0, 1.0) and band_of(False) == (0.15, 1.0)
+    assert in_band(0.10, (0.0, 0.15)) and not in_band(0.15, (0.0, 0.15))
+    assert in_band(1.0, (0.85, 1.0)) and not in_band(0.5, (0.85, 1.0))
+    record = {"Betclic": {"signals": 60, "all_signals": 67}, "Old": {"signals": 3}}
+    html_text = dashboard.longshots_html(record, {"Betclic": "Betclic", "Old": "Old"})
+    assert "Betclic:</span> 60 of 67" in html_text and "Old" not in html_text
     assert dashboard.longshots_html(None, {"Betclic": "Betclic"}) == ""
+
+
+def test_longshots_setting_reads_percent_as_a_band():
+    from types import SimpleNamespace
+
+    page = SimpleNamespace(session_state={})
+    assert dashboard.longshots_setting(page, "band") == (0.0, 1.0)
+    page.session_state["band"] = (15, 85)
+    assert dashboard.longshots_setting(page, "band") == (0.15, 0.85)
+    page.session_state["band"] = True  # an old checkbox value
+    assert dashboard.longshots_setting(page, "band") == (0.0, 1.0)
