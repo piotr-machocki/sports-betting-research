@@ -43,6 +43,11 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parents[1]
+# This module, kept now: under streamlit it is __main__, and sys.modules["__main__"]
+# is the dashboard only while a script run is going, so a loader thread that looked
+# it up between runs got streamlit's own module ("no attribute 'first_flags'",
+# 27 Nov 2026: the markets Statistics card failed after runs).
+THIS_MODULE = sys.modules[__name__]
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -2611,7 +2616,7 @@ class MarketTrackLoader(TrackLoader):
         import market_track
 
         return market_track.market_record(
-            sys.modules[__name__], market_track.market_sessions(), self.cache, sources,
+            THIS_MODULE, market_track.market_sessions(), self.cache, sources,
             key[0], key[1], datetime.now(timezone.utc), key[2],
         )
 
