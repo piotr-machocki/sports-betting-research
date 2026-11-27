@@ -690,10 +690,23 @@ OVERVIEW_STYLE = """<style>
     color: color-mix(in srgb, currentColor 75%, transparent); }
 .band-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
     margin-right: 5px; vertical-align: -1px; }
-.band-plot { display: grid; grid-template-columns: repeat(4, 1fr);
-    border-bottom: 1px solid rgba(128, 128, 128, 0.45); }
-.band-column { display: flex; justify-content: center; align-items: flex-end; gap: 2px;
-    padding-top: 16px; }
+/* The plot is only the bars' source: TABLE_SCRIPT copies it into the slider's
+   track (.band-bars), standing on the line, one column over each stretch. */
+.band-chart .band-plot { display: none; }
+.band-chart { margin: 2px 0 0; }
+.band-legend { margin-bottom: 0; }
+.band-bars {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(50% + 4px);
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    align-items: end;
+}
+.band-bars .band-bar { pointer-events: auto; }
+.st-key-track_band.with-bars, .st-key-markets_band.with-bars { padding-top: 92px; }
+.band-column { display: flex; justify-content: center; align-items: flex-end; gap: 2px; }
 .band-column.out { opacity: 0.35; }
 .band-bar { display: flex; flex-direction: column; align-items: center; width: 16px; cursor: default; }
 .band-bar span { font-size: 11px; line-height: 14px; font-variant-numeric: tabular-nums;
@@ -1060,6 +1073,26 @@ TABLE_SCRIPT = """<script>
                 const index = Math.round(parseFloat(mark.style.left) / (100 / (BAND_POINTS.length - 1)));
                 mark.classList.toggle("on", index >= low && index <= high);
             });
+            // The chart's bars (sent hidden over the slider) stand on the line.
+            const plot = box.parentElement && box.parentElement.querySelector(".band-chart .band-plot");
+            let bars = marks.querySelector(".band-bars");
+            if (plot) {
+                if (!bars) {
+                    bars = document.createElement("div");
+                    bars.className = "band-bars";
+                    marks.prepend(bars);
+                }
+                if (bars.dataset.source !== plot.innerHTML) {
+                    bars.innerHTML = plot.innerHTML;
+                    bars.dataset.source = plot.innerHTML;
+                }
+                bars.querySelectorAll(".band-column").forEach((column, i) => {
+                    column.classList.toggle("out", !(i >= low && i + 1 <= high));
+                });
+            } else if (bars) {
+                bars.remove();
+            }
+            box.classList.toggle("with-bars", Boolean(plot));
         });
     }, 150);
 
@@ -3897,8 +3930,6 @@ def statistics_section(
     # replaced Include long shots): its title is plain HTML with the tip, the
     # spinner and the tick, the stretches are named under it, the counts after.
     with st.container(width=440, gap=None):
-        if chart:
-            st.html(chart)
         # The spinner or tick goes inside the text's element, right after the "?"
         # (user, 27 Nov 2026: as an element of its own it sat far to the right).
         toggle = ""
@@ -3918,6 +3949,10 @@ def statistics_section(
             f'<span class="tip">{html.escape(LONGSHOT_HELP[help_key])}</span></span>'
             f'{toggle}<span class="click-spinner"></span></div>'
         )
+        # Its legend here; its bars are drawn inside the slider's track by
+        # TABLE_SCRIPT, so they stand on the blue line (user, 27 Nov 2026).
+        if chart:
+            st.html(chart)
         st.select_slider(
             "Signal probability", options=list(BAND_POINTS), value=BAND_DEFAULT, key=key,
             on_change=changed,
