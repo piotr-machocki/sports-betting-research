@@ -150,8 +150,6 @@ SETTING_DEFAULTS = {
     "draws": [ALL_PILL],
     "player": "",
     "player_all": False,
-    # Statistics' probability range in percent (it replaced track_longshots).
-    "track_band": (0, 100),
 }
 
 NAME_COLUMNS = {"Bet on", "Opponent"}
@@ -680,6 +678,11 @@ OVERVIEW_STYLE = """<style>
 }
 .band-scale span { padding: 0 2px; border-left: 1px solid rgba(128, 128, 128, 0.35); }
 .band-scale span:first-child { border-left: 0; }
+/* The slider's own 0% / 100% under its ends would sit on the stretch names; the
+   handles show their values above the track anyway. */
+.st-key-track_band [data-testid="stSliderTickBar"],
+.st-key-markets_band [data-testid="stSliderTickBar"] { display: none; }
+.band-scale { margin-top: 2px; }
 .longshots-counts .label { color: color-mix(in srgb, currentColor 65%, transparent); }
 .longshots-counts .dot { margin-right: 7px; }
 .has-tip .tip a { color: inherit; text-decoration: underline; cursor: pointer; }
@@ -3637,11 +3640,22 @@ LONGSHOT_HELP = {
 def longshots_setting(st: Any, key: str) -> tuple[float, float]:
     """The Statistics probability range, (low, high) as fractions, before its slider
     is drawn (statistics_section draws it under the Statistics title, after the
-    card's record was asked for). Kept in percent, as the slider shows it."""
-    value = st.session_state.setdefault(key, (0, 100))
+    card's record was asked for). Kept in percent, as the slider shows it. Only read:
+    a range slider that takes its value from Session State alone becomes a single
+    handle, so the slider is given its default range itself."""
+    value = st.session_state.get(key, BAND_DEFAULT)
     if not isinstance(value, (list, tuple)) or len(value) != 2:
-        value = st.session_state[key] = (0, 100)
+        value = BAND_DEFAULT
     return band_of((value[0] / 100, value[1] / 100))
+
+
+BAND_DEFAULT = (BAND_POINTS[0], BAND_POINTS[-1])
+
+
+def percent_label(value: int) -> str:
+    """The slider's checkpoint text. A named function, not a lambda: a new lambda each
+    run could give the widget a new identity and send it back to its default."""
+    return f"{value}%"
 
 
 def band_scale_html() -> str:
@@ -3765,8 +3779,9 @@ def statistics_section(
             f'{toggle}<span class="click-spinner"></span></div>'
         )
         st.select_slider(
-            "Signal probability", options=list(BAND_POINTS), key=key, on_change=changed,
-            format_func=lambda value: f"{value}%", label_visibility="collapsed",
+            "Signal probability", options=list(BAND_POINTS), value=BAND_DEFAULT, key=key,
+            on_change=changed,
+            format_func=percent_label, label_visibility="collapsed",
         )
         st.html(band_scale_html())
         if counts:
