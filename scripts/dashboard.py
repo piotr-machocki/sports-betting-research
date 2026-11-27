@@ -456,6 +456,16 @@ OVERVIEW_STYLE = """<style>
    always holding its place so the pill does not change width. */
 .loading-dots { margin-left: -4px; letter-spacing: 2px; }
 .loading-dots span { animation: 2s step-end infinite; }
+/* The note while a run collects its first odds, coloured like st.warning. */
+.run-note {
+    padding: 16px;
+    border-radius: 8px;
+    color: #ffd16a;
+    background-color: rgba(255, 189, 69, 0.2);
+    line-height: 1.6;
+}
+@media (prefers-color-scheme: light) { .run-note { color: #926c05; background-color: rgba(255, 210, 56, 0.2); } }
+.run-note .loading-dots { margin-left: 1px; }
 .loading-dots span:nth-child(1) { animation-name: dot-one; }
 .loading-dots span:nth-child(2) { animation-name: dot-two; }
 .loading-dots span:nth-child(3) { animation-name: dot-three; }
@@ -938,6 +948,14 @@ TABLE_SCRIPT = """<script>
     // Counts in the browser, because a server tick each second makes scrolling stutter
     // (see IDLE_REFRESH_SECONDS). Writing the text node does not wake the observer above.
     setInterval(() => {
+        // The table's odds age in the note shown while a run collects its first odds.
+        document.querySelectorAll(".run-note [data-since]").forEach(note => {
+            const seconds = Math.max(0, Math.round(Date.now() / 1000 - Number(note.dataset.since)));
+            const shown = ageText(seconds, Number(note.dataset.staleAfter));
+            if (!note.firstChild) note.appendChild(document.createTextNode(""));
+            if (note.firstChild.nodeValue !== shown) note.firstChild.nodeValue = shown;
+        });
+
         const age = document.querySelector(".flow-age [data-since]");
 
         if (!age || !age.firstChild) return;
@@ -3958,11 +3976,21 @@ def render_header(
 
     if waiting:
         # Short (user, 27 Nov 2026): what is happening, and how old the shown odds are.
-        age = session_summary(rows, {}, min_ev, now)["pinnacle_age"]
-        old = f"are {fmt_age(age)} old and " if age is not None else ""
-        shown = f"Odds in the table {old}come from the last successful run."
-
-        st.warning(f"Collecting the latest odds… {shown}")
+        # Own box, not st.warning (markdown, no HTML): the dots animate like the
+        # Updating pill's and the table's odds go on a line of their own. The age is
+        # counted in the browser (TABLE_SCRIPT), so the HTML stays the same each
+        # second and the dots' animation is not restarted by the header's reruns.
+        captured = session_summary(rows, {}, min_ev, now)["pinnacle_captured"]
+        old = (
+            f'are <span data-since="{captured}" data-stale-after="{STALE_MINUTES * 60:g}">'
+            "</span> old and "
+            if captured is not None else ""
+        )
+        st.html(
+            '<div class="run-note">Collecting the latest odds<span class="loading-dots">'
+            "<span>.</span><span>.</span><span>.</span></span>"
+            f"<br>Odds in the table {old}come from the last successful run.</div>"
+        )
 
 
 def empty_message(records: list[dict], filters: dict) -> str:
