@@ -464,7 +464,6 @@ OVERVIEW_STYLE = """<style>
     background-color: rgba(255, 189, 69, 0.2);
     line-height: 1.6;
 }
-@media (prefers-color-scheme: light) { .run-note { color: #926c05; background-color: rgba(255, 210, 56, 0.2); } }
 .run-note .loading-dots { margin-left: 1px; }
 .loading-dots span:nth-child(1) { animation-name: dot-one; }
 .loading-dots span:nth-child(2) { animation-name: dot-two; }
