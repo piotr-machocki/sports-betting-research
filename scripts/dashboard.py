@@ -28,6 +28,7 @@ from __future__ import annotations
 import calendar
 import csv
 import html
+import json
 import os
 import pickle
 import re
@@ -666,23 +667,44 @@ OVERVIEW_STYLE = """<style>
 .longshots-label .tip { width: 260px; font-weight: 400; }
 /* Long-shot signals per source, indented under the box's text (user, 27 Nov 2026). */
 .longshots-counts { margin: 6px 0 0 4px; font-size: 14px; line-height: 22px; user-select: text; }
-/* Under the probability slider: each stretch between its checkpoints by name. */
-.band-scale {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    margin: -6px 0 0;
+/* The probability slider (user, 27 Nov 2026): a dot on the line at each checkpoint
+   with its percent under it, the stretches named below that, all put inside the
+   slider's track by TABLE_SCRIPT so they sit where the handles snap (the handles
+   go by index, so the checkpoints are evenly spaced). The handles' own values and
+   the end labels are hidden: the dots say it, the ones in range in blue. */
+.st-key-track_band, .st-key-markets_band { padding: 14px 0 46px; }
+.st-key-track_band [data-testid="stSliderTickBar"],
+.st-key-markets_band [data-testid="stSliderTickBar"],
+.st-key-track_band [data-testid="stSliderThumbValue"],
+.st-key-markets_band [data-testid="stSliderThumbValue"] { display: none; }
+.st-key-track_band [style*="translate(-50%, -50%)"],
+.st-key-markets_band [style*="translate(-50%, -50%)"] { z-index: 2; }
+.band-marks { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.band-marks .band-dot {
+    position: absolute;
+    top: 50%;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    background-color: #5a5f6b;
+    border: 2px solid #0e1117;
+}
+.band-marks .band-dot.on { background-color: #2a78d6; }
+.band-marks .band-pct, .band-marks .band-name {
+    position: absolute;
+    transform: translateX(-50%);
+    white-space: nowrap;
     font-size: 12px;
     line-height: 16px;
-    text-align: center;
     color: color-mix(in srgb, currentColor 60%, transparent);
 }
-.band-scale span { padding: 0 2px; border-left: 1px solid rgba(128, 128, 128, 0.35); }
-.band-scale span:first-child { border-left: 0; }
-/* The slider's own 0% / 100% under its ends would sit on the stretch names; the
-   handles show their values above the track anyway. */
-.st-key-track_band [data-testid="stSliderTickBar"],
-.st-key-markets_band [data-testid="stSliderTickBar"] { display: none; }
-.band-scale { margin-top: 2px; }
+.band-marks .band-pct { top: calc(50% + 10px); font-variant-numeric: tabular-nums; }
+.band-marks .band-pct.on { color: #2a78d6; font-weight: 600; }
+.band-marks .band-name { top: calc(50% + 28px); }
+/* The end percents hang inwards, so they stay inside the page. */
+.band-marks .band-pct.first { transform: translateX(-25%); }
+.band-marks .band-pct.last { transform: translateX(-75%); }
 .longshots-counts .label { color: color-mix(in srgb, currentColor 65%, transparent); }
 .longshots-counts .dot { margin-right: 7px; }
 .has-tip .tip a { color: inherit; text-decoration: underline; cursor: pointer; }
@@ -975,6 +997,47 @@ TABLE_SCRIPT = """<script>
         });
     }, 200);
 
+    // The probability slider's dots, percents and stretch names, inside its track
+    // (see the CSS above), and which checkpoints are in the chosen range.
+    const BAND_POINTS = BAND_POINTS_JSON;
+    const BAND_NAMES = BAND_NAMES_JSON;
+    setInterval(() => {
+        document.querySelectorAll(LONGSHOT_BOXES).forEach(box => {
+            const track = box.querySelector('[role="group"] > [style*="position: relative"]');
+            if (!track) return;
+            let marks = track.querySelector(".band-marks");
+            if (!marks) {
+                marks = document.createElement("div");
+                marks.className = "band-marks";
+                const last = BAND_POINTS.length - 1;
+                BAND_POINTS.forEach((point, i) => {
+                    const left = `${(100 * i) / last}%`;
+                    const dot = document.createElement("span");
+                    dot.className = "band-dot";
+                    dot.style.left = left;
+                    const pct = document.createElement("span");
+                    pct.className = "band-pct" + (i === 0 ? " first" : i === last ? " last" : "");
+                    pct.style.left = left;
+                    pct.textContent = `${point}%`;
+                    marks.append(dot, pct);
+                });
+                BAND_NAMES.forEach((name, i) => {
+                    const label = document.createElement("span");
+                    label.className = "band-name";
+                    label.style.left = `${(100 * (i + 0.5)) / last}%`;
+                    label.textContent = name;
+                    marks.append(label);
+                });
+                track.append(marks);
+            }
+            const [low, high] = Array.from(box.querySelectorAll('input[type="range"]')).map(h => Number(h.value));
+            marks.querySelectorAll(".band-dot, .band-pct").forEach(mark => {
+                const index = Math.round(parseFloat(mark.style.left) / (100 / (BAND_POINTS.length - 1)));
+                mark.classList.toggle("on", index >= low && index <= high);
+            });
+        });
+    }, 150);
+
     // Counts in the browser, because a server tick each second makes scrolling stutter
     // (see IDLE_REFRESH_SECONDS). Writing the text node does not wake the observer above.
     setInterval(() => {
@@ -1016,6 +1079,8 @@ TABLE_SCRIPT = """<script>
 </script>"""
 TABLE_SCRIPT = TABLE_SCRIPT.replace("STALE_COLOUR", OVERVIEW_NO_EV).replace(
     "STALE_LIMIT", f"{STALE_MINUTES:g}"
+).replace("BAND_POINTS_JSON", json.dumps(list(BAND_POINTS))).replace(
+    "BAND_NAMES_JSON", json.dumps(list(BAND_NAMES))
 )
 
 
@@ -3658,13 +3723,6 @@ def percent_label(value: int) -> str:
     return f"{value}%"
 
 
-def band_scale_html() -> str:
-    """The names of the stretches between the slider's checkpoints, one under each."""
-    return '<div class="band-scale">' + "".join(
-        f"<span>{html.escape(name)}</span>" for name in BAND_NAMES
-    ) + "</div>"
-
-
 def opening_loading(
     st: Any, key: str, loader: TrackLoader, track_key: tuple, record: dict | None
 ) -> bool:
@@ -3783,7 +3841,6 @@ def statistics_section(
             on_change=changed,
             format_func=percent_label, label_visibility="collapsed",
         )
-        st.html(band_scale_html())
         if counts:
             st.html(counts)
     st.html(f'<div class="overview"><div class="overview-cards">{card}</div></div>')
