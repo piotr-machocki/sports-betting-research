@@ -425,9 +425,10 @@ def market_track_card(dash: Any, record: dict | None, min_ev: float, error: str 
                 "Avg EV", pct(stats["ev"]), "Mean EV at the first flag, what the prices promised",
             ),
         ]
+        slug = dash.source_slug(reference)
         rows.append(
-            f'<div class="track-book">{html.escape(reference)}</div>'
-            f'<div class="overview-tiles">{"".join(tiles)}</div>'
+            f'<div class="track-book" data-source="{slug}">{html.escape(reference)}</div>'
+            f'<div class="overview-tiles" data-source="{slug}">{"".join(tiles)}</div>'
         )
     return f'<div class="overview-card"><div class="track-rows">{"".join(rows)}</div></div>'
 

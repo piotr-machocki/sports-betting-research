@@ -1160,6 +1160,32 @@ TABLE_SCRIPT = """<script>
     ["pointerdown", "mousedown", "touchstart"].forEach(type =>
         document.addEventListener(type, bandTap, { capture: true, passive: false }));
 
+    // The Statistics legend switches sources on and off (user, 28 Nov 2026): the
+    // names switched off sit on the root element, CSS hides their bars and card rows
+    // at once, and the choice is kept in this browser. One always stays on.
+    let statsOff = [];
+    try { statsOff = JSON.parse(localStorage.getItem("statsOff") || "[]"); } catch (e) {}
+    const applyStatsOff = () => {
+        document.documentElement.dataset.statsOff = statsOff.join(" ");
+    };
+    applyStatsOff();
+    document.addEventListener("click", event => {
+        const toggle = event.target.closest && event.target.closest(".band-toggle[data-toggle]");
+        if (!toggle) return;
+        const name = toggle.dataset.toggle;
+        if (statsOff.includes(name)) {
+            statsOff = statsOff.filter(each => each !== name);
+        } else {
+            const legend = toggle.parentElement;
+            const on = Array.from(legend.querySelectorAll("[data-toggle]"))
+                .filter(each => !statsOff.includes(each.dataset.toggle));
+            if (on.length <= 1) return;
+            statsOff = statsOff.concat([name]);
+        }
+        try { localStorage.setItem("statsOff", JSON.stringify(statsOff)); } catch (e) {}
+        applyStatsOff();
+    });
+
     document.addEventListener("click", event => {
         const choice = event.target.closest && event.target.closest(".band-unit [data-unit]");
         if (!choice) return;
@@ -2416,6 +2442,23 @@ BAND_CHART_COLOURS = ("#3987e5", "#d95926", "#199e70")
 BAND_CHART_HEIGHT = 64
 
 
+def source_slug(label: str) -> str:
+    """A source's name as the switch key of the Statistics legend (data-source)."""
+    return re.sub(r"[^a-z0-9]+", "", label.lower())
+
+
+# Hides what the Statistics legend switched off (TABLE_SCRIPT sets data-stats-off on
+# the root element); one rule per source either Statistics section can show.
+STATS_TOGGLE_STYLE = "<style>" + "".join(
+    f'html[data-stats-off~="{slug}"] [data-source="{slug}"] {{ display: none !important; }}'
+    f'html[data-stats-off~="{slug}"] .band-toggle[data-toggle="{slug}"] '
+    "{ opacity: 0.45; text-decoration: line-through; }"
+    for slug in ("betclic", "superbet", "polymarket", "kalshi", "both")
+) + """
+.band-toggle { cursor: pointer; user-select: none; padding: 2px 0; }
+</style>"""
+
+
 def chart_record(loader: "TrackLoader", key: tuple, record: dict | None) -> dict | None:
     """The record the chart over the slider is drawn from: the whole range's, held
     for the defaults, since a source with no signal in the chosen range is left out of
@@ -2440,8 +2483,12 @@ def band_chart_html(record: dict | None, labels: dict[str, str], band: Any) -> s
         return ""
     top = max(max(counts) for _, counts, _ in sources) or 1
     low, high = band_of(band)
+    # Each entry switches its source on and off in the chart and the cards under it
+    # (user, 28 Nov 2026; TABLE_SCRIPT, kept in this browser).
     legend = "".join(
-        f'<span><i style="background:{colour}"></i>{html.escape(label)}</span>'
+        f'<span class="band-toggle" data-toggle="{source_slug(label)}" '
+        f'title="Tap to hide or show {html.escape(label)}">'
+        f'<i style="background:{colour}"></i>{html.escape(label)}</span>'
         for label, _, colour in sources
     )
     columns = []
@@ -2457,7 +2504,8 @@ def band_chart_html(record: dict | None, labels: dict[str, str], band: Any) -> s
                 f"{count} signal{'' if count == 1 else 's'}"
             )
             bars.append(
-                f'<div class="band-bar" title="{html.escape(tip)}"><span>{count}</span>'
+                f'<div class="band-bar" data-source="{source_slug(label)}" '
+                f'title="{html.escape(tip)}"><span>{count}</span>'
                 f'<i style="height:{max(height, 1 if count else 0)}px;background:{colour}"></i></div>'
             )
         columns.append(
@@ -3719,15 +3767,16 @@ def overview_track(record: dict[str, dict], min_ev: float = 0.02) -> str:
             ),
             tip_tile("Lasts", lifetime_text(stats), lifetime_help(stats), end=True),
         ]
+        slug = source_slug(book)
         rows.append(
-            f'<div class="track-book">{html.escape(book)}</div>'
-            f'<div class="overview-tiles">{"".join(tiles)}</div>'
+            f'<div class="track-book" data-source="{slug}">{html.escape(book)}</div>'
+            f'<div class="overview-tiles" data-source="{slug}">{"".join(tiles)}</div>'
         )
         if book == "Betclic":
             # Under the tiles: an empty first column on desktop, its own line on phones.
             rows.append(
-                '<div></div>'
-                f'<div class="track-note">Odds ≥ {BETCLIC_MIN_ODDS:.2f}</div>'
+                f'<div data-source="{slug}"></div>'
+                f'<div class="track-note" data-source="{slug}">Odds ≥ {BETCLIC_MIN_ODDS:.2f}</div>'
             )
 
     return f'<div class="track-rows">{"".join(rows)}</div>'
@@ -5044,6 +5093,7 @@ def main() -> None:
         + OVERVIEW_STYLE
         + PICKER_STYLE
         + PILLS_STYLE
+        + STATS_TOGGLE_STYLE
         + TABLE_SCRIPT,
         unsafe_allow_javascript=True,
     )

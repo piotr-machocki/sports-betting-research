@@ -1651,10 +1651,13 @@ def test_track_card_shows_each_book_and_says_when_nothing_qualified():
     # No heading: the rules are in the Signals tip and a note under Betclic's tiles.
     assert "Track record (" not in page and "overview-heading" not in page
     assert '<div class="tip">First flag at EV ≥ 2.0%</div>' in page
-    assert page.endswith('<div></div><div class="track-note">Odds ≥ 1.14</div></div></div>')
+    assert page.endswith(
+        '<div data-source="betclic"></div>'
+        '<div class="track-note" data-source="betclic">Odds ≥ 1.14</div></div></div>'
+    )
     superbet_only = dashboard.track_card({"Superbet": stats}, 0.02, ["Superbet"])
     assert "track-note" not in superbet_only and "EV ≥ 2.0%" in superbet_only
-    assert '<div class="track-book">Betclic</div>' in page
+    assert '<div class="track-book" data-source="betclic">Betclic</div>' in page
     for text in (">1-1<", ">+2.0%<", ">50%<", "Win rate (exp. 52%)", "ROI ±139%", ">+0.00<"):
         assert text in page
     assert ">Lasts<" in page and "Gone next run" not in page
