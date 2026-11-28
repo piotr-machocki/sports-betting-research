@@ -4844,6 +4844,11 @@ SPORT_TABS_STYLE = """<style>
     .st-key-sport_tabs, .st-key-tennis_tabs, .st-key-tennis_views, .st-key-all_tabs {
         flex-wrap: nowrap !important;
         overflow-x: auto;
+        /* overflow-x alone makes the row scroll vertically too (user, 28 Nov 2026:
+           the views row moved up and down under a finger); only sideways now. */
+        overflow-y: hidden;
+        overscroll-behavior-x: contain;
+        touch-action: pan-x pan-y;
         scrollbar-width: none;
         gap: 0.25rem !important;
     }
