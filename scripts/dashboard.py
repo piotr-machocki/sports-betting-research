@@ -1075,7 +1075,9 @@ TABLE_SCRIPT = """<script>
         if (inputs.length !== 2) return;
         const thumbs = inputs.map(input => input.parentElement.parentElement);
         const track = thumbs[0].parentElement;
-        if (!track.contains(event.target) || thumbs.some(t => t.contains(event.target))) return;
+        // The line's box and the few pixels around it (the end dots stick out of it).
+        if (!track.parentElement.contains(event.target)
+            || thumbs.some(t => t.contains(event.target))) return;
         event.preventDefault();
         event.stopImmediatePropagation();
         if (event.type !== "pointerdown") return;
