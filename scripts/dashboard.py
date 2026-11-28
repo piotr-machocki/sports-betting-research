@@ -2306,29 +2306,40 @@ BAND_CHART_COLOURS = ("#3987e5", "#d95926", "#199e70")
 BAND_CHART_HEIGHT = 64
 
 
+def chart_record(loader: "TrackLoader", key: tuple, record: dict | None) -> dict | None:
+    """The record the chart over the slider is drawn from: the whole range's, held
+    for the defaults, since a source with no signal in the chosen range is left out of
+    that range's record and its bars went with it (user, 28 Nov 2026). The chart counts
+    every signal whatever the range, so the numbers are the same."""
+    return loader.results.get((*key[:-1], FULL_BAND)) or record
+
+
 def band_chart_html(record: dict | None, labels: dict[str, str], band: Any) -> str:
     """Grouped bars: per stretch, one bar per source with its signal count, out of
     all its signals whatever the range; stretches outside the range are faded."""
     if not record:
         return ""
+    # Each source keeps its colour by its place in labels, so one without signals
+    # does not hand its colour to the next (user, 28 Nov 2026: Superbet turned blue).
     sources = [
-        (label, record[key]["by_band"]) for key, label in labels.items()
+        (label, record[key]["by_band"], colour)
+        for (key, label), colour in zip(labels.items(), BAND_CHART_COLOURS)
         if record.get(key) and record[key].get("by_band")
     ]
     if not sources:
         return ""
-    top = max(max(counts) for _, counts in sources) or 1
+    top = max(max(counts) for _, counts, _ in sources) or 1
     low, high = band_of(band)
     legend = "".join(
         f'<span><i style="background:{colour}"></i>{html.escape(label)}</span>'
-        for (label, _), colour in zip(sources, BAND_CHART_COLOURS)
+        for label, _, colour in sources
     )
     columns = []
     for index, name in enumerate(BAND_NAMES):
         start, end = BAND_POINTS[index] / 100, BAND_POINTS[index + 1] / 100
         inside = start >= low - 1e-9 and end <= high + 1e-9
         bars = []
-        for (label, counts), colour in zip(sources, BAND_CHART_COLOURS):
+        for label, counts, colour in sources:
             count = counts[index]
             height = round(BAND_CHART_HEIGHT * count / top)
             tip = (
@@ -5208,7 +5219,8 @@ def render_tennis(st) -> None:
             st, "track_band", "tennis", track, track_clicked, track_opening,
             track_state if record is not None or loader.error else None,
             "Results by bookmaker",
-            band_chart_html(record, {book: book for book in books}, longshots),
+            band_chart_html(chart_record(loader, track_key, record),
+                            {book: book for book in books}, longshots),
         )
 
     if table_session:

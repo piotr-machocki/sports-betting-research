@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import market_track
 from live_monitor import SESSIONS_DIR, latest_per_match, read_session_rows
 from market_compare import (
     DEFAULT_MAX_SPREAD,
@@ -621,7 +622,10 @@ def render_markets(st, dash: Any = None) -> None:
         st, "markets_band", "markets", track, track_clicked, track_opening,
         track_state if record is not None or loader.error else None,
         "Results by reference",
-        dash.band_chart_html(record, {name: name for name in (record or {})}, longshots),
+        dash.band_chart_html(
+            dash.chart_record(loader, track_key, record),
+            {name: name for name in market_track.REFERENCES}, longshots,
+        ),
     )
 
     shown = [m for m in matches if m["markets"]] if on_market else matches

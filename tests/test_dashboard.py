@@ -2274,3 +2274,20 @@ def test_every_probability_range_is_worked_out_after_a_run(monkeypatch):
     assert key in loader.results
     markets = dashboard.MarketTrackLoader({}, cache_file=None, results_file=None)
     assert (0.02, 0.04, (0.15, 0.5)) in markets.precompute_keys()
+
+
+def test_band_chart_keeps_every_source_and_its_colour():
+    from types import SimpleNamespace
+
+    full = {"Betclic": {"by_band": [0, 26, 35, 7]}, "Superbet": {"by_band": [2, 16, 6, 0]}}
+    only_superbet = {"Superbet": {"by_band": [2, 16, 6, 0], "signals": 2}}
+    loader = SimpleNamespace(results={(0.02, ("Betclic", "Superbet"), (0.0, 1.0)): full})
+    key = (0.02, ("Betclic", "Superbet"), (0.0, 0.15))
+    record = dashboard.chart_record(loader, key, only_superbet)
+    assert record is full  # long shots alone: Betclic's bars stay
+    labels = {"Betclic": "Betclic", "Superbet": "Superbet"}
+    # Without Betclic's data Superbet still gets its own (second) colour.
+    text = dashboard.band_chart_html(only_superbet, labels, (0.0, 0.15))
+    assert dashboard.BAND_CHART_COLOURS[1] in text and dashboard.BAND_CHART_COLOURS[0] not in text
+    # Nothing held for the whole range: the chosen one's record.
+    assert dashboard.chart_record(SimpleNamespace(results={}), key, only_superbet) is only_superbet
