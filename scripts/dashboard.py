@@ -4397,7 +4397,7 @@ def render_table(
     )
 
     if all_records is None:
-        box.caption(f"Showing {len(shown)} of {len(records)} matches")
+        box.caption(f"Showing {len(shown)} of {len(records)}")  # the heading says matches
     elif filters.get("player_all"):
         sessions = len({record["Session"] for record in shown})
         box.caption(
