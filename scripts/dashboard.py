@@ -735,10 +735,10 @@ OVERVIEW_STYLE = """<style>
 .band-marks .band-pct { top: calc(50% + 10px); font-variant-numeric: tabular-nums; }
 /* Odds | % switch under the slider (user, 28 Nov 2026: tapping the labels was clumsy). */
 .band-unit {
-    display: inline-flex; margin-top: -0.4rem; border: 1px solid rgba(128, 128, 128, 0.35);
-    border-radius: 8px; overflow: hidden; font-size: 13px; user-select: none;
+    display: inline-flex; margin-top: -1.1rem; border: 1px solid rgba(128, 128, 128, 0.35);
+    border-radius: 6px; overflow: hidden; font-size: 11px; line-height: 14px; user-select: none;
 }
-.band-unit span { padding: 4px 12px; cursor: pointer; color: color-mix(in srgb, currentColor 65%, transparent); }
+.band-unit span { padding: 2px 8px; cursor: pointer; color: color-mix(in srgb, currentColor 65%, transparent); }
 .band-unit span + span { border-left: 1px solid rgba(128, 128, 128, 0.35); }
 .band-unit span.on { background: rgba(42, 120, 214, 0.22); color: #5aa0f0; font-weight: 600; }
 .band-marks .band-pct.on { color: #2a78d6; font-weight: 600; }
