@@ -736,6 +736,8 @@ OVERVIEW_STYLE = """<style>
     color: color-mix(in srgb, currentColor 60%, transparent);
 }
 .band-marks .band-pct { top: calc(50% + 10px); font-variant-numeric: tabular-nums; }
+/* Tappable (see bandTap): a checkpoint's odds as its dot, a stretch's name as the stretch. */
+.band-marks .band-pct, .band-marks .band-name { pointer-events: auto; cursor: pointer; user-select: none; }
 /* Odds | % switch under the slider (user, 28 Nov 2026: tapping the labels was clumsy). */
 .band-unit {
     display: inline-flex; border: 1px solid rgba(128, 128, 128, 0.35);
@@ -1066,11 +1068,49 @@ TABLE_SCRIPT = """<script>
     // percent with the Odds | % switch under the slider; kept in this browser.
     let bandUnit = "odds";
     try { bandUnit = localStorage.getItem("bandUnit") || "odds"; } catch (e) {}
-    // A tap on the slider's line (user, 28 Nov 2026): outside the range it moves the
-    // handle on that side; inside it, the handle not moved last (so after moving the
-    // left handle to 6.67, a tap on 2.00 moves the right one), the nearer one before any
-    // move. The slider itself would always move the nearer handle. Handles are moved
-    // with arrow keys on their inputs, as the keyboard does, so the server sees it.
+    // Taps on the probability slider (user, 28 Nov 2026), worked out here before the
+    // slider sees them (it would always move the nearer handle):
+    // - on the line between two dots (or a stretch's name or bars): that stretch alone;
+    // - on a dot right after another dot tap (within BAND_PAIR_MS, no drag between):
+    //   the range between the two dots, so 6.67 then the infinity dot = Long shots;
+    // - on a single dot: outside the range the handle on that side moves there; inside
+    //   it, the handle not moved last, the nearer one before any move.
+    // Handles are moved with arrow keys on their inputs, as the keyboard does, one press
+    // at a time (presses sent together moved one step), one keyup at the very end so
+    // the server gets one change.
+    const BAND_DOT_ZONE = 0.22;  // of a stretch's width, on each side of a dot
+    const BAND_PAIR_MS = 15000;
+    const bandMove = (box, inputs, target) => {
+        const [low, high] = inputs.map(input => Number(input.value));
+        // Never cross the handles: the one moving outwards first.
+        const order = target[0] >= high ? [1, 0] : [0, 1];
+        const steps = [];
+        order.forEach(which => {
+            const from = which === 0 ? low : high;
+            const to = target[which];
+            const key = to > from ? "ArrowRight" : "ArrowLeft";
+            for (let i = Math.abs(to - from); i > 0; i--) steps.push([which, key]);
+            if (to !== from) box.dataset.lastMoved = String(which);
+        });
+        if (!steps.length) return;
+        box.dataset.expect = `${target[0]},${target[1]}`;
+        box.dataset.movingUntil = String(Date.now() + 60 * steps.length + 1500);
+        let index = 0;
+        const step = () => {
+            const [which, key] = steps[index];
+            const input = inputs[which];
+            input.focus({ preventScroll: true });
+            input.dispatchEvent(new KeyboardEvent("keydown", {
+                key, code: key, keyCode: key === "ArrowRight" ? 39 : 37, bubbles: true,
+            }));
+            if (++index < steps.length) return setTimeout(step, 60);
+            input.dispatchEvent(new KeyboardEvent("keyup", {
+                key, code: key, keyCode: key === "ArrowRight" ? 39 : 37, bubbles: true,
+            }));
+            input.blur();
+        };
+        step();
+    };
     const bandTap = event => {
         const box = event.target.closest && event.target.closest(LONGSHOT_BOXES);
         if (!box || (event.button !== undefined && event.button !== 0)) return;
@@ -1086,33 +1126,36 @@ TABLE_SCRIPT = """<script>
         if (event.type !== "pointerdown") return;
         const rect = track.getBoundingClientRect();
         const steps = BAND_POINTS.length - 1;
-        const index = Math.max(0, Math.min(steps,
-            Math.round(((event.clientX - rect.left) / rect.width) * steps)));
+        const position = Math.max(0, Math.min(steps,
+            ((event.clientX - rect.left) / rect.width) * steps));
+        const dot = Math.round(position);
         const [low, high] = inputs.map(input => Number(input.value));
-        let which;
-        if (index < low) which = 0;
-        else if (index > high) which = 1;
-        else if (index === low || index === high) return;
-        else if (box.dataset.lastMoved) which = 1 - Number(box.dataset.lastMoved);
-        else which = index - low < high - index ? 0 : 1;
-        const input = inputs[which];
-        const key = index > Number(input.value) ? "ArrowRight" : "ArrowLeft";
-        const press = type => input.dispatchEvent(new KeyboardEvent(type, {
-            key, code: key, keyCode: key === "ArrowRight" ? 39 : 37, bubbles: true,
-        }));
-        // One step at a time: the slider reads its value once per render, so presses
-        // sent together moved it a single step. The key goes up once, at the end, so
-        // the server gets one change.
-        let left = Math.abs(index - Number(input.value));
-        box.dataset.lastMoved = String(which);
-        input.focus({ preventScroll: true });
-        const step = () => {
-            press("keydown");
-            if (--left > 0) return setTimeout(step, 60);
-            press("keyup");
-            input.blur();
-        };
-        step();
+        const now = Date.now();
+        let target;
+        if (Math.abs(position - dot) > BAND_DOT_ZONE) {
+            const stretch = Math.min(steps - 1, Math.floor(position));
+            target = [stretch, stretch + 1];
+            delete box.dataset.tapDot;
+        } else {
+            const previous = box.dataset.tapDot;
+            const recent = now - Number(box.dataset.tapAt || 0) < BAND_PAIR_MS;
+            if (previous !== undefined && recent && Number(previous) !== dot) {
+                target = [Math.min(dot, Number(previous)), Math.max(dot, Number(previous))];
+                delete box.dataset.tapDot;
+            } else {
+                let which;
+                if (dot < low) which = 0;
+                else if (dot > high) which = 1;
+                else if (dot === low || dot === high) which = null;
+                else if (box.dataset.lastMoved) which = 1 - Number(box.dataset.lastMoved);
+                else which = dot - low < high - dot ? 0 : 1;
+                target = which === null ? [low, high]
+                    : which === 0 ? [dot, high] : [low, dot];
+                box.dataset.tapDot = String(dot);
+                box.dataset.tapAt = String(now);
+            }
+        }
+        bandMove(box, inputs, target);
     };
     ["pointerdown", "mousedown", "touchstart"].forEach(type =>
         document.addEventListener(type, bandTap, { capture: true, passive: false }));
@@ -1165,6 +1208,10 @@ TABLE_SCRIPT = """<script>
             const [oldLow, oldHigh] = (box.dataset.values || `${low},${high}`).split(",").map(Number);
             if (low !== oldLow && high === oldHigh) box.dataset.lastMoved = "0";
             if (high !== oldHigh && low === oldLow) box.dataset.lastMoved = "1";
+            // A change no tap asked for is a drag: a dot tap no longer pairs with it.
+            const moving = Date.now() < Number(box.dataset.movingUntil || 0);
+            if ((low !== oldLow || high !== oldHigh) && !moving
+                && `${low},${high}` !== box.dataset.expect) delete box.dataset.tapDot;
             box.dataset.values = `${low},${high}`;
             marks.querySelectorAll(".band-dot, .band-pct").forEach(mark => {
                 const index = Math.round(parseFloat(mark.style.left) / (100 / (BAND_POINTS.length - 1)));
