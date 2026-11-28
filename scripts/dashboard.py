@@ -738,7 +738,9 @@ OVERVIEW_STYLE = """<style>
     display: inline-flex; border: 1px solid rgba(128, 128, 128, 0.35);
     border-radius: 6px; overflow: hidden; font-size: 11px; line-height: 14px; user-select: none;
 }
-.band-unit span { padding: 2px 8px; cursor: pointer; color: color-mix(in srgb, currentColor 65%, transparent); }
+/* Two equal halves (user, 28 Nov 2026): the wider label sets both widths. */
+.band-unit { display: inline-grid; grid-template-columns: 1fr 1fr; }
+.band-unit span { text-align: center; padding: 2px 8px; cursor: pointer; color: color-mix(in srgb, currentColor 65%, transparent); }
 .band-unit span + span { border-left: 1px solid rgba(128, 128, 128, 0.35); }
 /* Under 400 px the slider keeps room for two-line stretch names on the right; the
    switch sits on the left under the one-line "Long shots", so it goes up into it. */
