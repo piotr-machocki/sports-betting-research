@@ -841,6 +841,7 @@ OVERVIEW_STYLE = """<style>
 .toggle-status { display: flex; align-items: center; min-height: 24px; }
 /* Beside the Statistics (all runs) title: the same while a newly opened tab waits for
    numbers worked out after it opened (user, 24 Nov 2026). */
+.table-title { margin-top: 0.8rem; }
 .stats-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-bottom: -6px; }
 /* Closer to Include long shots (user, 27 Nov 2026); its size is the run heading's
    (.session-title .overview-title). */
@@ -4381,6 +4382,18 @@ def render_table(
         filters["tours"],
         filters["draws"],
         filters["player"],
+    )
+
+    # A heading as large as Statistics (all runs) (user, 28 Nov 2026).
+    if all_records is None:
+        title = "Last run matches"
+    elif filters.get("player_all"):
+        title = "Player search (all runs)"
+    else:
+        title = "Matches with EV (all runs)"
+    box.html(
+        '<div class="session-title stats-title table-title">'
+        f'<span class="overview-title">{title}</span></div>'
     )
 
     if all_records is None:
