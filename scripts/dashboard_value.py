@@ -27,7 +27,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from market_compare import FULL_BAND
+from market_compare import BAND_NAMES, BAND_POINTS, FULL_BAND, in_band
 
 MIN_EV = 0.02
 MAX_SPREAD = 0.04
@@ -90,6 +90,33 @@ def props_row(path: tuple[str, ...], source: str, stats: dict) -> dict:
     }
 
 
+def odds_text(point: int) -> str:
+    return "\u221e" if point == 0 else f"{100 / point:.2f}"
+
+
+# The four stretches of the Statistics slider, each a band (low, high) as fractions,
+# exactly as the loaders precompute them (dashboard.ALL_BANDS), with its odds range.
+STRETCHES = [
+    (
+        name,
+        (BAND_POINTS[index] / 100, BAND_POINTS[index + 1] / 100),
+        f"{odds_text(BAND_POINTS[index])}\u2013{odds_text(BAND_POINTS[index + 1])}",
+    )
+    for index, name in enumerate(BAND_NAMES)
+]
+
+
+def stretch_row(name: str, odds: str, stats: dict | None, held: bool) -> dict:
+    """One stretch of a card: held=False while its record is still being worked out;
+    stats None when held = no signal in this stretch."""
+    if not held:
+        return {"path": (odds,), "source": name, "loading": True}
+    if stats is None:
+        return {"path": (odds,), "source": name, "loading": False, "empty": True,
+                "signals": 0, "clv": None, "clv_margin": None, "clv_count": 0}
+    return track_row((odds,), name, stats)
+
+
 def rank(rows: list[dict]) -> list[dict]:
     """Verdict filled in, best average CLV first among rows with enough closes, then
     the too-early ones the same way (one lucky close must not top the list), then
@@ -98,6 +125,8 @@ def rank(rows: list[dict]) -> list[dict]:
         row["verdict"] = "loading" if row["loading"] else verdict(
             row["clv"], row["clv_margin"], row["clv_count"]
         )
+        if row.get("stretches"):
+            row["stretches"] = rank(row["stretches"])
     order = {"loading": 2, "early": 1}
     return sorted(rows, key=lambda row: (
         order.get(row["verdict"], 0), row.get("clv") is None,
@@ -154,6 +183,37 @@ def plot_html(row: dict, limit: float) -> str:
     return f'<div class="sv-plot" title="{html.escape(tip)}">{"".join(parts)}</div>'
 
 
+def stretch_html(row: dict, limit: float) -> str:
+    """A compact line inside an opened card: one odds stretch."""
+    label, css, icon, help_text = VERDICTS[row["verdict"]]
+    name = (
+        f'<span class="sv-name"><b>{html.escape(row["source"])}</b>'
+        f'<small>{html.escape(row["path"][0])}</small></span>'
+    )
+    if row.get("empty"):
+        return (
+            f'<div class="sv-sub empty"><div class="sv-head">{name}'
+            '<span class="sv-none">No signals</span></div></div>'
+        )
+    pill = (
+        f'<span class="sv-verdict {css}" title="{html.escape(help_text)}">{icon} {label}</span>'
+    )
+    if row["loading"]:
+        return f'<div class="sv-sub"><div class="sv-head">{name}{pill}</div></div>'
+    clv = pct(row["clv"])
+    if row["clv_margin"]:
+        clv += f' <small>\u00b1{row["clv_margin"] * 100:.1f}</small>'
+    facts = (
+        f'<b class="{tone(row["clv"]).strip()}">{clv}</b> CLV \u00b7 {row["signals"]} signals'
+        f' \u00b7 {row["won"]}-{row["lost"]} W-L'
+        f' \u00b7 ROI <b class="{tone(row["roi"]).strip()}">{pct(row["roi"])}</b>'
+    )
+    return (
+        f'<div class="sv-sub"><div class="sv-head">{name}{pill}</div>'
+        f'{plot_html(row, limit)}<div class="sv-facts">{facts}</div></div>'
+    )
+
+
 def row_html(number: int, row: dict, limit: float) -> str:
     label, css, icon, help_text = VERDICTS[row["verdict"]]
     path = " · ".join(row["path"])
@@ -183,9 +243,15 @@ def row_html(number: int, row: dict, limit: float) -> str:
         f'<div class="sv-stat"><b class="{css_class.strip()}">{value}</b><span>{name}</span></div>'
         for name, value, css_class in stats
     )
+    summary = f'{head}{plot_html(row, limit)}<div class="sv-stats">{cells}</div>'
+    if not row.get("stretches"):
+        return f'<div class="sv-row">{summary}</div>'
+    # Tap to open (user, 28 Nov 2026): the same source by odds stretch, best first.
+    inner = "".join(stretch_html(sub, limit) for sub in row["stretches"])
     return (
-        f'<div class="sv-row">{head}{plot_html(row, limit)}'
-        f'<div class="sv-stats">{cells}</div></div>'
+        f'<details class="sv-row"><summary>{summary}'
+        '<div class="sv-open">By odds<i></i></div></summary>'
+        f'<div class="sv-subs">{inner}</div></details>'
     )
 
 
@@ -219,25 +285,49 @@ def tennis_rows(st: Any, dash: Any) -> tuple[list[dict], list[tuple]]:
     track = st.cache_resource(show_spinner=False)(dash.track_loader)()
     track_key = (MIN_EV, tuple(dash.BOOKS), FULL_BAND)
     record = track.request_key(track_key)
+    watched = [(track, track_key)]
+    track_stretches = {}
+    for _, band, _ in STRETCHES:
+        key = (MIN_EV, tuple(dash.BOOKS), band)
+        track_stretches[band] = track.request_key(key)
+        watched.append((track, key))
     for book in dash.BOOKS:
         if record is None or book in record:
-            rows.append(track_row(
+            row = track_row(
                 ("Tennis", "Moneyline", "Sharp vs soft"), book, (record or {}).get(book)
-            ))
+            )
+            row["stretches"] = [
+                stretch_row(name, odds, (track_stretches[band] or {}).get(book),
+                            track_stretches[band] is not None)
+                for name, band, odds in STRETCHES
+            ]
+            rows.append(row)
 
     import market_track
 
     markets = st.cache_resource(show_spinner=False)(dash.market_loader)()
     market_key = (MIN_EV, MAX_SPREAD, FULL_BAND)
     market_record = markets.request_key(market_key)
+    watched.append((markets, market_key))
+    market_stretches = {}
+    for _, band, _ in STRETCHES:
+        key = (MIN_EV, MAX_SPREAD, band)
+        market_stretches[band] = markets.request_key(key)
+        watched.append((markets, key))
     for reference in market_track.REFERENCES:
         if market_record is None or reference in market_record:
             name = "Both markets" if reference == market_track.BOTH else reference
-            rows.append(track_row(
+            row = track_row(
                 ("Tennis", "Moneyline", "Prediction markets"), f"Books vs {name}",
                 (market_record or {}).get(reference),
-            ))
-    return rows, [(track, track_key), (markets, market_key)]
+            )
+            row["stretches"] = [
+                stretch_row(stretch, odds, (market_stretches[band] or {}).get(reference),
+                            market_stretches[band] is not None)
+                for stretch, band, odds in STRETCHES
+            ]
+            rows.append(row)
+    return rows, watched
 
 
 def props_rows(store: Any) -> list[dict]:
@@ -253,7 +343,20 @@ def props_rows(store: Any) -> list[dict]:
     for book in dashboard_props.BOOKS:
         stats = dashboard_props.history_stats(flags, book)
         if stats["signals"]:
-            rows.append(props_row(PROPS_PATH, book, stats))
+            row = props_row(PROPS_PATH, book, stats)
+            row["stretches"] = []
+            for name, band, odds in STRETCHES:
+                # Judged on Pinnacle's fair probability, as on the Tennis page.
+                inside = [
+                    flag for flag in flags
+                    if flag["net"] and in_band((1 + flag["ev"]) / flag["net"], band)
+                ]
+                part = dashboard_props.history_stats(inside, book)
+                row["stretches"].append(
+                    props_row((odds,), name, part) if part["signals"]
+                    else stretch_row(name, odds, None, True)
+                )
+            rows.append(row)
     return rows
 
 
@@ -390,6 +493,29 @@ STYLE = """<style>
 .sv-stat b.up { color: #3dd56d; }
 .sv-stat b.down { color: #ff6c6c; }
 .sv-stat span { font-size: 12px; color: var(--muted); }
+details.sv-row > summary { list-style: none; cursor: pointer; }
+details.sv-row > summary::-webkit-details-marker { display: none; }
+.sv-open {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    margin: 8px -14px -4px; padding-top: 6px; font-size: 12px; color: var(--muted);
+    border-top: 1px solid rgba(128, 128, 128, 0.18);
+}
+.sv-open i {
+    width: 7px; height: 7px; border: solid currentColor; border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg); margin-top: -4px; transition: transform 0.15s;
+}
+details[open] .sv-open i { transform: rotate(-135deg); margin-top: 3px; }
+.sv-subs { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.sv-sub { border-radius: 6px; padding: 8px 10px; background: rgba(128, 128, 128, 0.08); }
+.sv-sub .sv-name b { font-size: 14px; }
+.sv-sub .sv-plot { margin: 6px 0 4px; height: 14px; }
+.sv-facts { font-size: 12px; color: var(--muted); }
+.sv-facts b { font-weight: 600; color: var(--text, inherit); }
+.sv-facts b.up { color: #3dd56d; }
+.sv-facts b.down { color: #ff6c6c; }
+.sv-facts small { font-size: 11px; }
+.sv-sub.empty { opacity: 0.55; }
+.sv-none { font-size: 12px; color: var(--muted); }
 @media (max-width: 700px) {
     .sv-stats { grid-template-columns: repeat(3, 1fr); row-gap: 8px; }
     .sv-axis { padding: 0 14px; }

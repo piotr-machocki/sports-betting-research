@@ -82,3 +82,21 @@ def test_props_loader_never_blocks_and_bumps_version(monkeypatch):
     loader.thread.join(5)
     assert loader.version == 1
     assert loader.request()[0]["source"] == "Betclic"
+
+
+def test_cards_open_into_odds_stretches_ranked_by_clv():
+    assert [band for _, band, _ in dv.STRETCHES] == [
+        band for band in dashboard.ALL_BANDS if dashboard.ALL_BANDS.index(band) in (0, 4, 7, 9)
+    ]
+    assert [odds for *_, odds in dv.STRETCHES] == ["∞–6.67", "6.67–2.00", "2.00–1.18", "1.18–1.00"]
+    card = row("Betclic", 0.026, 0.034)
+    card["stretches"] = [
+        dv.stretch_row("Long shots", "∞–6.67", None, True),
+        {**row("Underdogs", 0.077, 0.08), "path": ("6.67–2.00",)},
+        {**row("Favourites", -0.007, 0.02), "path": ("2.00–1.18",)},
+        dv.stretch_row("Heavy favourites", "1.18–1.00", None, False),
+    ]
+    text = dv.page_html([card])
+    assert "<details" in text and "By odds" in text
+    assert text.index("Underdogs") < text.index("Favourites") < text.index("Long shots")
+    assert "No signals" in text and "Loading" in text
