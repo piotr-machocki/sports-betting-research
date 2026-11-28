@@ -732,11 +732,15 @@ OVERVIEW_STYLE = """<style>
     line-height: 16px;
     color: color-mix(in srgb, currentColor 60%, transparent);
 }
-.band-marks .band-pct {
-    top: calc(50% + 10px); font-variant-numeric: tabular-nums;
-    /* A tap flips every checkpoint between decimal odds and percent (user, 28 Nov 2026). */
-    pointer-events: auto; cursor: pointer; user-select: none; padding: 2px 4px; margin-top: -2px;
+.band-marks .band-pct { top: calc(50% + 10px); font-variant-numeric: tabular-nums; }
+/* Odds | % switch under the slider (user, 28 Nov 2026: tapping the labels was clumsy). */
+.band-unit {
+    display: inline-flex; margin-top: -0.4rem; border: 1px solid rgba(128, 128, 128, 0.35);
+    border-radius: 8px; overflow: hidden; font-size: 13px; user-select: none;
 }
+.band-unit span { padding: 4px 12px; cursor: pointer; color: color-mix(in srgb, currentColor 65%, transparent); }
+.band-unit span + span { border-left: 1px solid rgba(128, 128, 128, 0.35); }
+.band-unit span.on { background: rgba(42, 120, 214, 0.22); color: #5aa0f0; font-weight: 600; }
 .band-marks .band-pct.on { color: #2a78d6; font-weight: 600; }
 .band-marks .band-name {
     top: calc(50% + 28px);
@@ -1042,9 +1046,15 @@ TABLE_SCRIPT = """<script>
     const BAND_POINTS = BAND_POINTS_JSON;
     const BAND_NAMES = BAND_NAMES_JSON;
     // Checkpoints as decimal odds by default (user, 28 Nov 2026: 50% = 2.00, 85% = 1.18),
-    // percent after a tap on any of them; the choice is kept in this browser.
+    // percent with the Odds | % switch under the slider; kept in this browser.
     let bandUnit = "odds";
     try { bandUnit = localStorage.getItem("bandUnit") || "odds"; } catch (e) {}
+    document.addEventListener("click", event => {
+        const choice = event.target.closest && event.target.closest(".band-unit [data-unit]");
+        if (!choice) return;
+        bandUnit = choice.dataset.unit;
+        try { localStorage.setItem("bandUnit", bandUnit); } catch (e) {}
+    });
     const bandLabel = point => bandUnit === "percent" ? `${point}%`
         : point === 0 ? "∞" : (100 / point).toFixed(2);
     setInterval(() => {
@@ -1065,15 +1075,6 @@ TABLE_SCRIPT = """<script>
                     pct.className = "band-pct" + (i === 0 ? " first" : i === last ? " last" : "");
                     pct.style.left = left;
                     pct.dataset.point = String(point);
-                    pct.title = "Tap: odds / percent";
-                    // Its own taps must not reach the slider, which would move a handle.
-                    ["pointerdown", "mousedown", "touchstart"].forEach(type =>
-                        pct.addEventListener(type, event => event.stopPropagation()));
-                    pct.addEventListener("click", event => {
-                        event.stopPropagation();
-                        bandUnit = bandUnit === "odds" ? "percent" : "odds";
-                        try { localStorage.setItem("bandUnit", bandUnit); } catch (e) {}
-                    });
                     marks.append(dot, pct);
                 });
                 BAND_NAMES.forEach((name, i) => {
@@ -1089,6 +1090,8 @@ TABLE_SCRIPT = """<script>
                 const text = bandLabel(Number(pct.dataset.point));
                 if (pct.textContent !== text) pct.textContent = text;
             });
+            document.querySelectorAll(".band-unit [data-unit]").forEach(choice =>
+                choice.classList.toggle("on", choice.dataset.unit === bandUnit));
             const [low, high] = Array.from(box.querySelectorAll('input[type="range"]')).map(h => Number(h.value));
             marks.querySelectorAll(".band-dot, .band-pct").forEach(mark => {
                 const index = Math.round(parseFloat(mark.style.left) / (100 / (BAND_POINTS.length - 1)));
@@ -3832,6 +3835,11 @@ def longshots_setting(st: Any, key: str) -> tuple[float, float]:
 
 
 BAND_DEFAULT = (BAND_POINTS[0], BAND_POINTS[-1])
+# Under the slider: its checkpoints as odds or percent (TABLE_SCRIPT does the switching).
+BAND_UNIT_SWITCH = (
+    '<div class="band-unit" title="Show the checkpoints as decimal odds or as percent">'
+    '<span data-unit="odds">Odds</span><span data-unit="percent">%</span></div>'
+)
 
 
 def percent_label(value: int) -> str:
@@ -3965,6 +3973,7 @@ def statistics_section(
             on_change=changed,
             format_func=percent_label, label_visibility="collapsed",
         )
+        st.html(BAND_UNIT_SWITCH)
     # A title over the cards, as big as Signal probability (user, 28 Nov 2026; it
     # replaced "• Betclic: 68 of 68", which the cards' Signals tile already says).
     if cards_title:
