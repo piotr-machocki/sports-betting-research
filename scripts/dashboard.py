@@ -671,7 +671,7 @@ OVERVIEW_STYLE = """<style>
 }
 .longshots-label .tip { width: 260px; font-weight: 400; }
 /* Long-shot signals per source, indented under the box's text (user, 27 Nov 2026). */
-.cards-label { margin-top: -0.6rem; }
+.cards-label { margin-top: -0.25rem; }
 /* The probability slider (user, 27 Nov 2026): a dot on the line at each checkpoint
    with its percent under it, the stretches named below that, all put inside the
    slider's track by TABLE_SCRIPT so they sit where the handles snap (the handles
@@ -746,11 +746,11 @@ OVERVIEW_STYLE = """<style>
    switch sits on the left under the one-line "Long shots", so it goes up into it. */
 /* Moved by its Streamlit wrapper: a margin on the switch itself stays inside it. */
 [data-testid="stElementContainer"]:has(> * .band-unit), .stElementContainer:has(.band-unit) {
-    margin-top: -1.1rem;
+    margin-top: -0.85rem;
 }
 @media (max-width: 400px) {
     [data-testid="stElementContainer"]:has(> * .band-unit), .stElementContainer:has(.band-unit) {
-        margin-top: -2.1rem;
+        margin-top: -1.75rem;
     }
 }
 .band-unit span.on { background: rgba(42, 120, 214, 0.22); color: #5aa0f0; font-weight: 600; }
