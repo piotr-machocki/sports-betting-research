@@ -706,7 +706,9 @@ OVERVIEW_STYLE = """<style>
     align-items: end;
 }
 .band-bars .band-bar { pointer-events: auto; }
-.st-key-track_band.with-bars, .st-key-markets_band.with-bars { padding-top: 92px; }
+/* Room for the bars, by their presence: Streamlit rewrites the box's classes on
+   each redraw, so a class set by the script went missing for a moment (a jump). */
+.st-key-track_band:has(.band-bars), .st-key-markets_band:has(.band-bars) { padding-top: 92px; }
 .band-column { display: flex; justify-content: center; align-items: flex-end; gap: 2px; }
 .band-column.out { opacity: 0.35; }
 .band-bar { display: flex; flex-direction: column; align-items: center; width: 16px; cursor: default; }
@@ -1191,7 +1193,6 @@ TABLE_SCRIPT = """<script>
             } else if (bars && !held) {
                 bars.remove();
             }
-            box.classList.toggle("with-bars", Boolean(plot) || (held && Boolean(bars)));
         });
     }, 150);
 
