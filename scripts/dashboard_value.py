@@ -22,6 +22,8 @@ doubtful; fewer than MIN_CLV_SIGNALS signals with a CLV = too early.
 from __future__ import annotations
 
 import html
+import threading
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -238,10 +240,9 @@ def tennis_rows(st: Any, dash: Any) -> tuple[list[dict], list[tuple]]:
     return rows, [(track, track_key), (markets, market_key)]
 
 
-def props_rows(st: Any) -> list[dict]:
+def props_rows(store: Any) -> list[dict]:
     import dashboard_props
 
-    store = st.cache_resource(show_spinner=False)(dashboard_props.HistoryStore)()
     now = datetime.now(timezone.utc)
     flags = [
         flag for flag in dashboard_props.history_flags(store.update(), MIN_EV, now)
@@ -252,22 +253,75 @@ def props_rows(st: Any) -> list[dict]:
     for book in dashboard_props.BOOKS:
         stats = dashboard_props.history_stats(flags, book)
         if stats["signals"]:
-            rows.append(props_row(("Tennis", "Props", "Sharp vs soft"), book, stats))
+            rows.append(props_row(PROPS_PATH, book, stats))
     return rows
+
+
+PROPS_PATH = ("Tennis", "Props", "Sharp vs soft")
+
+
+class PropsLoader:
+    """The props rows worked out in a thread: the history's first build reads every
+    props snapshot (137 s on the VM on 28 Nov 2026), so the page never waits for it.
+    Held rows are shown at once and worked out again at most every REFRESH_SECONDS."""
+
+    def __init__(self, store: Any) -> None:
+        self.store = store
+        self.rows: list[dict] | None = None
+        self.error: str | None = None
+        self.version = 0
+        self.started = 0.0
+        self.thread: threading.Thread | None = None
+        self.lock = threading.Lock()
+
+    def request(self) -> list[dict] | None:
+        with self.lock:
+            due = time.time() - self.started >= REFRESH_SECONDS
+            if self.thread is None and due:
+                self.started = time.time()
+                self.thread = threading.Thread(target=self.work, daemon=True)
+                self.thread.start()
+            return self.rows
+
+    def work(self) -> None:
+        try:
+            rows, error = props_rows(self.store), None
+        except Exception as exc:  # shown under the page; the other sources still show
+            rows, error = None, f"{type(exc).__name__}: {exc}"
+        with self.lock:
+            if rows is not None and rows != self.rows:
+                self.rows = rows
+                self.version += 1
+            if error != self.error:
+                self.error = error
+                self.version += 1
+            self.thread = None
+
+
+def props_loader() -> PropsLoader:
+    """One per server (st.cache_resource), sharing the Props tab's HistoryStore."""
+    import streamlit as st
+    import dashboard_props
+
+    return PropsLoader(st.cache_resource(show_spinner=False)(dashboard_props.HistoryStore)())
 
 
 def render_value(st: Any, dash: Any) -> None:
     rows, watched = tennis_rows(st, dash)
-    try:
-        rows += props_rows(st)
-    except Exception as exc:  # the other sources still show
-        st.warning(f"Props history could not be read ({type(exc).__name__}).")
+    props = st.cache_resource(show_spinner=False)(props_loader)()
+    held = props.request()
+    if held is None and props.error is None:
+        rows.append({"path": PROPS_PATH, "source": "Betclic and Superbet", "loading": True})
+    rows += held or []
+    if props.error:
+        st.warning(f"Props history could not be read ({props.error}).")
 
-    drawn = [loader.version(key) for loader, key in watched]
+    drawn = [loader.version(key) for loader, key in watched] + [props.version]
 
     @st.fragment(run_every=REFRESH_SECONDS)
     def watch() -> None:
-        if [loader.version(key) for loader, key in watched] != drawn:
+        props.request()  # works the props rows out again every REFRESH_SECONDS
+        if [loader.version(key) for loader, key in watched] + [props.version] != drawn:
             st.rerun(scope="app")
 
     watch()

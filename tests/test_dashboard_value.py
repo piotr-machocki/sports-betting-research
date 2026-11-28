@@ -64,3 +64,21 @@ def test_track_stats_has_clv_margin():
     stats = dashboard.track_stats(flags)
     assert stats["clv_margin"] > 0
     assert dashboard.track_stats(flags[:1])["clv_margin"] is None
+
+
+def test_props_loader_never_blocks_and_bumps_version(monkeypatch):
+    import threading
+
+    gate = threading.Event()
+
+    def slow(store):
+        gate.wait(5)
+        return [row("Betclic", 0.01, 0.02)]
+
+    monkeypatch.setattr(dv, "props_rows", slow)
+    loader = dv.PropsLoader(store=None)
+    assert loader.request() is None  # returns at once while the thread works
+    gate.set()
+    loader.thread.join(5)
+    assert loader.version == 1
+    assert loader.request()[0]["source"] == "Betclic"
