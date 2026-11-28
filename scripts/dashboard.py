@@ -671,7 +671,7 @@ OVERVIEW_STYLE = """<style>
 }
 .longshots-label .tip { width: 260px; font-weight: 400; }
 /* Long-shot signals per source, indented under the box's text (user, 27 Nov 2026). */
-.longshots-counts { margin: 6px 0 0 4px; font-size: 14px; line-height: 22px; user-select: text; }
+.cards-label { margin-top: 0.4rem; }
 /* The probability slider (user, 27 Nov 2026): a dot on the line at each checkpoint
    with its percent under it, the stretches named below that, all put inside the
    slider's track by TABLE_SCRIPT so they sit where the handles snap (the handles
@@ -743,8 +743,6 @@ OVERVIEW_STYLE = """<style>
 /* The end percents hang inwards, so they stay inside the page. */
 .band-marks .band-pct.first { transform: translateX(-25%); }
 .band-marks .band-pct.last { transform: translateX(-75%); }
-.longshots-counts .label { color: color-mix(in srgb, currentColor 65%, transparent); }
-.longshots-counts .dot { margin-right: 7px; }
 .has-tip .tip a { color: inherit; text-decoration: underline; cursor: pointer; }
 .has-tip .tip::before { content: ""; position: absolute; left: 0; right: 0; top: -6px; height: 6px; }
 /* Dotted and grey (user, 15 Nov 2026): a hint that a tap explains it, quieter than the text. */
@@ -2305,24 +2303,6 @@ def band_chart_html(record: dict | None, labels: dict[str, str], band: Any) -> s
         f'<div class="band-chart"><div class="band-legend">{legend}</div>'
         f'<div class="band-plot">{"".join(columns)}</div></div>'
     )
-
-
-def longshots_html(record: dict | None, labels: dict[str, str]) -> str:
-    """Indented lines under the probability range: each shown source's signals in
-    the range out of all its signals, "• Betclic: 60 of 67" (user, 27 Nov 2026).
-    Results saved before the range lack the total."""
-    if not record:
-        return ""
-    lines = []
-    for key, label in labels.items():
-        stats = record.get(key)
-        if not stats or stats.get("all_signals") is None:
-            continue
-        lines.append(
-            f'<div><span class="dot">•</span><span class="label">{html.escape(label)}:</span> '
-            f'{stats["signals"]} of {stats["all_signals"]}</div>'
-        )
-    return f'<div class="longshots-counts">{"".join(lines)}</div>' if lines else ""
 
 
 # TrackLoader's session_flags, kept between server starts: reading every session
@@ -3899,7 +3879,7 @@ def stats_status_html(state: str, detail: str | None) -> str:
 def statistics_section(
     st: Any, key: str, help_key: str, card: str, loading: bool, opening: bool = False,
     state: tuple[str, str | None] | None = None,
-    counts: str = "",
+    cards_title: str = "",
     chart: str = "",
 ) -> None:
     """Statistics (all runs) with Include long shots under its title (user, 22 Nov
@@ -3962,8 +3942,10 @@ def statistics_section(
             on_change=changed,
             format_func=percent_label, label_visibility="collapsed",
         )
-        if counts:
-            st.html(counts)
+    # A title over the cards, as big as Signal probability (user, 28 Nov 2026; it
+    # replaced "• Betclic: 68 of 68", which the cards' Signals tile already says).
+    if cards_title:
+        st.html(f'<div class="longshots-label cards-label">{html.escape(cards_title)}</div>')
     st.html(f'<div class="overview"><div class="overview-cards">{card}</div></div>')
 
 
@@ -5146,7 +5128,7 @@ def render_tennis(st) -> None:
         statistics_section(
             st, "track_band", "tennis", track, track_clicked, track_opening,
             track_state if record is not None or loader.error else None,
-            longshots_html(record, {book: book for book in books}),
+            "Results by bookmaker",
             band_chart_html(record, {book: book for book in books}, longshots),
         )
 

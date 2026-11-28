@@ -2225,10 +2225,6 @@ def test_probability_band_counts_and_filter():
     assert band_of(True) == (0.0, 1.0) and band_of(False) == (0.15, 1.0)
     assert in_band(0.10, (0.0, 0.15)) and not in_band(0.15, (0.0, 0.15))
     assert in_band(1.0, (0.85, 1.0)) and not in_band(0.5, (0.85, 1.0))
-    record = {"Betclic": {"signals": 60, "all_signals": 67}, "Old": {"signals": 3}}
-    html_text = dashboard.longshots_html(record, {"Betclic": "Betclic", "Old": "Old"})
-    assert "Betclic:</span> 60 of 67" in html_text and "Old" not in html_text
-    assert dashboard.longshots_html(None, {"Betclic": "Betclic"}) == ""
 
 
 def test_longshots_setting_reads_percent_as_a_band():

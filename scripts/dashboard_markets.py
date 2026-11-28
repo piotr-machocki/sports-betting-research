@@ -620,7 +620,7 @@ def render_markets(st, dash: Any = None) -> None:
     dash.statistics_section(
         st, "markets_band", "markets", track, track_clicked, track_opening,
         track_state if record is not None or loader.error else None,
-        dash.longshots_html(record, {name: name for name in (record or {})}),
+        "Results by reference",
         dash.band_chart_html(record, {name: name for name in (record or {})}, longshots),
     )
 
