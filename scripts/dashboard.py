@@ -1102,7 +1102,7 @@ TABLE_SCRIPT = """<script>
         // the server gets one change.
         let left = Math.abs(index - Number(input.value));
         box.dataset.lastMoved = String(which);
-        input.focus();
+        input.focus({ preventScroll: true });
         const step = () => {
             press("keydown");
             if (--left > 0) return setTimeout(step, 60);
@@ -1169,6 +1169,11 @@ TABLE_SCRIPT = """<script>
             });
             // The chart's bars (sent hidden over the slider) stand on the line.
             const plot = box.parentElement && box.parentElement.querySelector(".band-chart .band-plot");
+            // A new range redraws the chart, which is missing for a moment; dropping
+            // the room for its bars then made the page jump (user, 28 Nov 2026), so
+            // the room and the old bars stay for up to 2 s without a chart.
+            if (plot) box.dataset.plotSeen = String(Date.now());
+            const held = Date.now() - Number(box.dataset.plotSeen || 0) < 2000;
             let bars = marks.querySelector(".band-bars");
             if (plot) {
                 if (!bars) {
@@ -1183,10 +1188,10 @@ TABLE_SCRIPT = """<script>
                 bars.querySelectorAll(".band-column").forEach((column, i) => {
                     column.classList.toggle("out", !(i >= low && i + 1 <= high));
                 });
-            } else if (bars) {
+            } else if (bars && !held) {
                 bars.remove();
             }
-            box.classList.toggle("with-bars", Boolean(plot));
+            box.classList.toggle("with-bars", Boolean(plot) || (held && Boolean(bars)));
         });
     }, 150);
 
