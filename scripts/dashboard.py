@@ -740,6 +740,9 @@ OVERVIEW_STYLE = """<style>
 }
 .band-unit span { padding: 2px 8px; cursor: pointer; color: color-mix(in srgb, currentColor 65%, transparent); }
 .band-unit span + span { border-left: 1px solid rgba(128, 128, 128, 0.35); }
+/* Under 400 px the slider keeps room for two-line stretch names on the right; the
+   switch sits on the left under the one-line "Long shots", so it goes up into it. */
+@media (max-width: 400px) { .band-unit { margin-top: -2.1rem; } }
 .band-unit span.on { background: rgba(42, 120, 214, 0.22); color: #5aa0f0; font-weight: 600; }
 .band-marks .band-pct.on { color: #2a78d6; font-weight: 600; }
 .band-marks .band-name {
