@@ -1092,16 +1092,22 @@ TABLE_SCRIPT = """<script>
         else which = index - low < high - index ? 0 : 1;
         const input = inputs[which];
         const key = index > Number(input.value) ? "ArrowRight" : "ArrowLeft";
-        input.focus();
-        for (let i = Math.abs(index - Number(input.value)); i > 0; i--) {
-            for (const type of ["keydown", "keyup"]) {
-                input.dispatchEvent(new KeyboardEvent(type, {
-                    key, code: key, keyCode: key === "ArrowRight" ? 39 : 37, bubbles: true,
-                }));
-            }
-        }
+        const press = type => input.dispatchEvent(new KeyboardEvent(type, {
+            key, code: key, keyCode: key === "ArrowRight" ? 39 : 37, bubbles: true,
+        }));
+        // One step at a time: the slider reads its value once per render, so presses
+        // sent together moved it a single step. The key goes up once, at the end, so
+        // the server gets one change.
+        let left = Math.abs(index - Number(input.value));
         box.dataset.lastMoved = String(which);
-        input.blur();
+        input.focus();
+        const step = () => {
+            press("keydown");
+            if (--left > 0) return setTimeout(step, 60);
+            press("keyup");
+            input.blur();
+        };
+        step();
     };
     ["pointerdown", "mousedown", "touchstart"].forEach(type =>
         document.addEventListener(type, bandTap, { capture: true, passive: false }));
