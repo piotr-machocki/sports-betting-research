@@ -4861,6 +4861,13 @@ SPORT_TABS_STYLE = """<style>
     .st-key-sport_tabs a p,
     .st-key-sport_tabs a span { font-size: 1rem !important; }
     .st-key-tennis_tabs a, .st-key-all_tabs a { padding: 0.25rem 0.6rem !important; }
+    /* Streamlit pulls each page link 6px out of its row at the top and bottom; with
+       the row clipped vertically that would cut the buttons, so the row gets 6px of
+       room inside and gives it back outside: same layout, nothing to scroll. */
+    .st-key-tennis_tabs, .st-key-tennis_views, .st-key-all_tabs {
+        padding-top: 6px; padding-bottom: 6px;
+        margin-top: -6px; margin-bottom: calc(0.3rem - 6px);
+    }
 }
 </style>"""
 
