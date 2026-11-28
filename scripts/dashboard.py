@@ -705,7 +705,7 @@ OVERVIEW_STYLE = """<style>
     grid-template-columns: repeat(4, 1fr);
     align-items: end;
 }
-.band-bars .band-bar { pointer-events: auto; }
+.band-bars .band-bar, .band-bars .band-column { pointer-events: auto; cursor: pointer; }
 /* Room for the bars, by their presence: Streamlit rewrites the box's classes on
    each redraw, so a class set by the script went missing for a moment (a jump). */
 .st-key-track_band:has(.band-bars), .st-key-markets_band:has(.band-bars) { padding-top: 92px; }
