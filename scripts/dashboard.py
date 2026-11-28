@@ -2186,6 +2186,10 @@ def track_stats(flags: list[dict]) -> dict:
         "units": sum(profits),
         "ev": mean([record["Best EV"] for record in flags]),
         "clv": mean(clvs),
+        # Half the 95% range of the mean CLV (All > Signal value judges on it).
+        "clv_margin": (
+            1.96 * statistics.pstdev(clvs) / len(clvs) ** 0.5 if len(clvs) > 1 else None
+        ),
         "clv_positive": mean([float(clv > 0) for clv in clvs]),
         "clv_count": len(clvs),
     }
@@ -4879,21 +4883,27 @@ def main() -> None:
         "Moneyline": (tennis, markets),
         "Props": (props, props_markets),
     }
-    all_sports = st.Page(lambda: render_all(st), title="All", icon=":material/apps:",
+    # All's default subtab is Signal value (user, 28 Nov 2026: "the main section in
+    # All"), at /all; Pipeline health moved to its own path.
+    all_sports = st.Page(lambda: render_value(st), title="All", icon=":material/apps:",
                          url_path="all")
+    health = st.Page(lambda: render_all(st), title="Pipeline health",
+                     icon=":material/monitor_heart:", url_path="all-health")
     sports = [
         all_sports,
         tennis,
         st.Page(lambda: render_basketball(st), title="Basketball",
                 icon=":material/sports_basketball:", url_path="basketball"),
     ]
-    page = st.navigation([*sports, markets, props, props_markets], position="hidden")
+    page = st.navigation([*sports, markets, props, props_markets, health], position="hidden")
     group = next((name for name, pages in tennis_groups.items()
                   if page.title in (each.title for each in pages)), None)
     st.html(SPORT_TABS_STYLE)
     with st.container(horizontal=True, key="sport_tabs", gap="small"):
         for each in sports:
-            if each is tennis and group and page.title != tennis.title:
+            if (each is tennis and group and page.title != tennis.title) or (
+                each is all_sports and page.title == health.title
+            ):
                 # Streamlit marks only the page shown; Tennis stays marked on its subtabs.
                 with st.container(key="sport_tab_parent", width="content"):
                     st.page_link(each)
@@ -4913,16 +4923,24 @@ def main() -> None:
         with st.container(horizontal=True, key="tennis_views", gap="small"):
             st.page_link(sharp, label="Sharp vs soft", icon=":material/compare_arrows:")
             st.page_link(versus_markets, label="Prediction markets", icon=":material/query_stats:")
-    # All's subtabs (user, 20 Nov 2026): Pipeline health is the first and the default,
-    # drawn by the All page itself, like Sharp vs soft on Tennis.
-    if page.title == all_sports.title:
+    # All's subtabs (user, 20 Nov 2026; Signal value first since 28 Nov 2026).
+    if page.title in (all_sports.title, health.title):
         with st.container(horizontal=True, key="all_tabs", gap="small"):
-            st.page_link(all_sports, label="Pipeline health", icon=":material/monitor_heart:")
+            st.page_link(all_sports, label="Signal value", icon=":material/trending_up:")
+            st.page_link(health, label="Pipeline health", icon=":material/monitor_heart:")
     page.run()
 
 
+def render_value(st) -> None:
+    """All's default subtab, Signal value: every signal source ranked by average CLV
+    (dashboard_value.py; user, 28 Nov 2026)."""
+    from dashboard_value import render_value as render
+
+    render(st, sys.modules[__name__])
+
+
 def render_all(st) -> None:
-    """All's default subtab, Pipeline health: run and source success across every sport
+    """All's Pipeline health subtab: run and source success across every sport
     (dashboard_runs.py; user, 20 Nov 2026)."""
     from dashboard_runs import render_health
 

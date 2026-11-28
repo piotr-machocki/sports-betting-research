@@ -286,6 +286,7 @@ def history_stats(flags: list[dict], book: str, market: str | None = None) -> di
         "avg_ev": statistics.mean(f["ev"] for f in mine) if mine else None,
         "with_close": len(clvs),
         "avg_clv": statistics.mean(clvs) if clvs else None,
+        "clv_margin": 1.96 * statistics.pstdev(clvs) / len(clvs) ** 0.5 if len(clvs) > 1 else None,
         "clv_positive": sum(c > 0 for c in clvs) / len(clvs) if clvs else None,
     }
 
