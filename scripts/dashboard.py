@@ -1063,6 +1063,49 @@ TABLE_SCRIPT = """<script>
     // percent with the Odds | % switch under the slider; kept in this browser.
     let bandUnit = "odds";
     try { bandUnit = localStorage.getItem("bandUnit") || "odds"; } catch (e) {}
+    // A tap on the slider's line (user, 28 Nov 2026): outside the range it moves the
+    // handle on that side; inside it, the handle not moved last (so after moving the
+    // left handle to 6.67, a tap on 2.00 moves the right one), the nearer one before any
+    // move. The slider itself would always move the nearer handle. Handles are moved
+    // with arrow keys on their inputs, as the keyboard does, so the server sees it.
+    const bandTap = event => {
+        const box = event.target.closest && event.target.closest(LONGSHOT_BOXES);
+        if (!box || (event.button !== undefined && event.button !== 0)) return;
+        const inputs = Array.from(box.querySelectorAll('input[type="range"]'));
+        if (inputs.length !== 2) return;
+        const thumbs = inputs.map(input => input.parentElement.parentElement);
+        const track = thumbs[0].parentElement;
+        if (!track.contains(event.target) || thumbs.some(t => t.contains(event.target))) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (event.type !== "pointerdown") return;
+        const rect = track.getBoundingClientRect();
+        const steps = BAND_POINTS.length - 1;
+        const index = Math.max(0, Math.min(steps,
+            Math.round(((event.clientX - rect.left) / rect.width) * steps)));
+        const [low, high] = inputs.map(input => Number(input.value));
+        let which;
+        if (index < low) which = 0;
+        else if (index > high) which = 1;
+        else if (index === low || index === high) return;
+        else if (box.dataset.lastMoved) which = 1 - Number(box.dataset.lastMoved);
+        else which = index - low < high - index ? 0 : 1;
+        const input = inputs[which];
+        const key = index > Number(input.value) ? "ArrowRight" : "ArrowLeft";
+        input.focus();
+        for (let i = Math.abs(index - Number(input.value)); i > 0; i--) {
+            for (const type of ["keydown", "keyup"]) {
+                input.dispatchEvent(new KeyboardEvent(type, {
+                    key, code: key, keyCode: key === "ArrowRight" ? 39 : 37, bubbles: true,
+                }));
+            }
+        }
+        box.dataset.lastMoved = String(which);
+        input.blur();
+    };
+    ["pointerdown", "mousedown", "touchstart"].forEach(type =>
+        document.addEventListener(type, bandTap, { capture: true, passive: false }));
+
     document.addEventListener("click", event => {
         const choice = event.target.closest && event.target.closest(".band-unit [data-unit]");
         if (!choice) return;
@@ -1107,6 +1150,11 @@ TABLE_SCRIPT = """<script>
             document.querySelectorAll(".band-unit [data-unit]").forEach(choice =>
                 choice.classList.toggle("on", choice.dataset.unit === bandUnit));
             const [low, high] = Array.from(box.querySelectorAll('input[type="range"]')).map(h => Number(h.value));
+            // Which handle moved last, drags included (the tap rule above uses it).
+            const [oldLow, oldHigh] = (box.dataset.values || `${low},${high}`).split(",").map(Number);
+            if (low !== oldLow && high === oldHigh) box.dataset.lastMoved = "0";
+            if (high !== oldHigh && low === oldLow) box.dataset.lastMoved = "1";
+            box.dataset.values = `${low},${high}`;
             marks.querySelectorAll(".band-dot, .band-pct").forEach(mark => {
                 const index = Math.round(parseFloat(mark.style.left) / (100 / (BAND_POINTS.length - 1)));
                 mark.classList.toggle("on", index >= low && index <= high);
