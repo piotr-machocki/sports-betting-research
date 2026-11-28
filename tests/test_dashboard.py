@@ -2150,6 +2150,8 @@ def test_the_refresher_keeps_held_choices_current_in_the_background(monkeypatch,
     monkeypatch.setattr(dashboard, "list_sessions", lambda: [])
     monkeypatch.setattr(dashboard, "track_record", record)
     results_file = tmp_path / "track_results.pkl"
+    # Only the asked choices here; the precomputed ranges have their own test.
+    monkeypatch.setattr(dashboard.TrackLoader, "precompute_keys", lambda self: [])
     loader = dashboard.TrackLoader({}, cache_file=None, results_file=results_file)
     monkeypatch.setattr(loader, "inputs_signature", lambda: inputs["value"])
 
@@ -2250,3 +2252,25 @@ def test_band_chart_counts_signals_per_stretch():
     assert "Betclic · Underdogs (15–50%): 5 signals" in chart
     assert chart.count("band-column out") == 1  # long shots, outside the range
     assert dashboard.band_chart_html({"Old": {"signals": 3}}, {"Old": "Old"}, True) == ""
+
+
+def test_every_probability_range_is_worked_out_after_a_run(monkeypatch):
+    from types import SimpleNamespace
+
+    computed = []
+    monkeypatch.setattr(dashboard, "load_outcome_sources", lambda cache: {})
+    monkeypatch.setattr(dashboard, "list_sessions", lambda: [])
+    monkeypatch.setattr(dashboard, "track_record", lambda *args, longshots=True, **kw: (
+        computed.append(longshots) or {"Betclic": {"signals": 1}}))
+    loader = dashboard.TrackLoader({}, cache_file=None, results_file=None)
+    monkeypatch.setattr(loader, "inputs_signature", lambda: 1)
+    assert loader.refresh_once()
+    loader.thread.join(10)
+    assert len(dashboard.ALL_BANDS) == 10 and sorted(computed) == sorted(dashboard.ALL_BANDS)
+    # The page asks with the same keys: the slider's percents as fractions.
+    state = SimpleNamespace(session_state={"track_band": (15, 50)})
+    band = dashboard.longshots_setting(state, "track_band")
+    key = (dashboard.DEFAULT_MIN_EV_PERCENT / 100, tuple(dashboard.BOOKS), band)
+    assert key in loader.results
+    markets = dashboard.MarketTrackLoader({}, cache_file=None, results_file=None)
+    assert (0.02, 0.04, (0.15, 0.5)) in markets.precompute_keys()

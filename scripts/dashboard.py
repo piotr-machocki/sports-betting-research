@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import calendar
 import csv
+import functools
 import html
 import json
 import os
@@ -1218,8 +1219,11 @@ def pick_sessions(
     return newest, next((old for old in sessions[1:] if has_rows(old)), newest)
 
 
+@functools.lru_cache(maxsize=65536)
 def session_started(session_id: str) -> datetime | None:
-    """The session's start in local time; its ID holds it in UTC."""
+    """The session's start in local time; its ID holds it in UTC. Cached: the
+    Statistics' signal lifetimes ask about 200k times a recount, and strptime was
+    most of its time (19 of 22 s on the VM, 28 Nov 2026)."""
     match = SESSION_ID.match(session_id)
 
     if match is None:
@@ -2436,6 +2440,13 @@ REFRESH_CHECK_SECONDS = 15
 # several seconds on the micro VM. Any other choice is worked out when asked for.
 REFRESH_KEYS = 4
 REFRESH_ASKED_HOURS = 48
+# Every range of the probability slider (checkpoint to checkpoint, as fractions,
+# exactly as longshots_setting gives them), worked out after each run at the default
+# settings too, so picking any range shows its numbers at once (user, 28 Nov 2026).
+ALL_BANDS = [
+    (BAND_POINTS[low] / 100, BAND_POINTS[high] / 100)
+    for low in range(len(BAND_POINTS)) for high in range(low + 1, len(BAND_POINTS))
+]
 
 
 class TrackLoader:
@@ -2578,9 +2589,14 @@ class TrackLoader:
                 (key for key in self.results if self.asked.get(key, 0.0) >= recent),
                 key=lambda key: self.asked.get(key, 0.0), reverse=True,
             )[:REFRESH_KEYS]
+            keys += [key for key in self.precompute_keys() if key not in keys]
             for key in keys:
                 self.enqueue(key)
             return bool(keys)
+
+    def precompute_keys(self) -> list[tuple]:
+        """Kept current whether asked for or not: every range at the defaults."""
+        return [(DEFAULT_MIN_EV_PERCENT / 100, tuple(BOOKS), band) for band in ALL_BANDS]
 
     def compute(self, key: tuple, sources: dict) -> dict:
         """The record for one choice; a subclass works out another card."""
@@ -2667,6 +2683,12 @@ class MarketTrackLoader(TrackLoader):
         results_file: Path | None = MARKET_RESULTS_FILE,
     ) -> None:
         super().__init__(sources_cache, cache_file, results_file)
+
+    def precompute_keys(self) -> list[tuple]:
+        from market_compare import DEFAULT_MAX_SPREAD
+
+        spread = round(DEFAULT_MAX_SPREAD * 100) / 100  # as the markets sidebar gives it
+        return [(DEFAULT_MIN_EV_PERCENT / 100, spread, band) for band in ALL_BANDS]
 
     def compute(self, key: tuple, sources: dict) -> dict:
         import market_track
