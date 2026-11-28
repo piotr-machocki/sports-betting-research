@@ -671,7 +671,7 @@ OVERVIEW_STYLE = """<style>
 }
 .longshots-label .tip { width: 260px; font-weight: 400; }
 /* Long-shot signals per source, indented under the box's text (user, 27 Nov 2026). */
-.cards-label { margin-top: 0.4rem; }
+.cards-label { margin-top: -0.6rem; }
 /* The probability slider (user, 27 Nov 2026): a dot on the line at each checkpoint
    with its percent under it, the stretches named below that, all put inside the
    slider's track by TABLE_SCRIPT so they sit where the handles snap (the handles
@@ -732,7 +732,11 @@ OVERVIEW_STYLE = """<style>
     line-height: 16px;
     color: color-mix(in srgb, currentColor 60%, transparent);
 }
-.band-marks .band-pct { top: calc(50% + 10px); font-variant-numeric: tabular-nums; }
+.band-marks .band-pct {
+    top: calc(50% + 10px); font-variant-numeric: tabular-nums;
+    /* A tap flips every checkpoint between decimal odds and percent (user, 28 Nov 2026). */
+    pointer-events: auto; cursor: pointer; user-select: none; padding: 2px 4px; margin-top: -2px;
+}
 .band-marks .band-pct.on { color: #2a78d6; font-weight: 600; }
 .band-marks .band-name {
     top: calc(50% + 28px);
@@ -1037,6 +1041,12 @@ TABLE_SCRIPT = """<script>
     // (see the CSS above), and which checkpoints are in the chosen range.
     const BAND_POINTS = BAND_POINTS_JSON;
     const BAND_NAMES = BAND_NAMES_JSON;
+    // Checkpoints as decimal odds by default (user, 28 Nov 2026: 50% = 2.00, 85% = 1.18),
+    // percent after a tap on any of them; the choice is kept in this browser.
+    let bandUnit = "odds";
+    try { bandUnit = localStorage.getItem("bandUnit") || "odds"; } catch (e) {}
+    const bandLabel = point => bandUnit === "percent" ? `${point}%`
+        : point === 0 ? "∞" : (100 / point).toFixed(2);
     setInterval(() => {
         document.querySelectorAll(LONGSHOT_BOXES).forEach(box => {
             const track = box.querySelector('[role="group"] > [style*="position: relative"]');
@@ -1054,7 +1064,16 @@ TABLE_SCRIPT = """<script>
                     const pct = document.createElement("span");
                     pct.className = "band-pct" + (i === 0 ? " first" : i === last ? " last" : "");
                     pct.style.left = left;
-                    pct.textContent = `${point}%`;
+                    pct.dataset.point = String(point);
+                    pct.title = "Tap: odds / percent";
+                    // Its own taps must not reach the slider, which would move a handle.
+                    ["pointerdown", "mousedown", "touchstart"].forEach(type =>
+                        pct.addEventListener(type, event => event.stopPropagation()));
+                    pct.addEventListener("click", event => {
+                        event.stopPropagation();
+                        bandUnit = bandUnit === "odds" ? "percent" : "odds";
+                        try { localStorage.setItem("bandUnit", bandUnit); } catch (e) {}
+                    });
                     marks.append(dot, pct);
                 });
                 BAND_NAMES.forEach((name, i) => {
@@ -1066,6 +1085,10 @@ TABLE_SCRIPT = """<script>
                 });
                 track.append(marks);
             }
+            marks.querySelectorAll(".band-pct").forEach(pct => {
+                const text = bandLabel(Number(pct.dataset.point));
+                if (pct.textContent !== text) pct.textContent = text;
+            });
             const [low, high] = Array.from(box.querySelectorAll('input[type="range"]')).map(h => Number(h.value));
             marks.querySelectorAll(".band-dot, .band-pct").forEach(mark => {
                 const index = Math.round(parseFloat(mark.style.left) / (100 / (BAND_POINTS.length - 1)));
